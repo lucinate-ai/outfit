@@ -2,4 +2,7 @@
 .env
 
 # Compiled binary (when built with `go build`)
-/configure-opencode
+/oc-config
+
+# GoReleaser output
+/dist/
