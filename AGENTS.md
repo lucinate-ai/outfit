@@ -21,7 +21,7 @@ Run a single test: `go test -run TestWriteConfig_Idempotent ./...`
 ## Layout
 
 - `main.go` — CLI: command dispatch (`add`/`remove`/`list`), flag parsing (`parseSelection` registers both long and short flags against the same vars), and user-facing output.
-- `catalog.go` — the embedded provider catalogue (`//go:embed providers.yaml`), its types, and `buildProviderBlock`, which turns a provider+family+model selection into an opencode provider block. The catalogue can be overridden at runtime via the `--providers`/`-c` flag or `OC_CONFIG_PROVIDERS` env var (flag > env > embedded; see `resolveCatalogPath`/`loadCatalogFrom`).
+- `catalog.go` — the embedded provider catalogue (`//go:embed providers.yaml`), its types, and `buildProviderBlock`, which turns a provider+family+model selection into an opencode provider block. The catalogue can be overridden at runtime via the `--providers` flag or `OC_CONFIG_PROVIDERS` env var (flag > env > embedded; see `resolveCatalogPath`/`loadCatalogFrom`).
 - `config.go` — opencode config IO: JSONC read/merge/write, env/key resolution, JSON-Pointer helpers.
 - `providers.yaml` — externalised provider/model-family data (URLs, model ids, key env vars). **Add providers/models here, not in Go.** Embedded at build time but kept external for maintenance.
 - `*_test.go` — `catalog_test.go` (catalogue integrity + `buildProviderBlock`), `config_test.go` (merge/remove/IO), `main_test.go` (CLI layer).

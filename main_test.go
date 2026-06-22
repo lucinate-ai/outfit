@@ -79,6 +79,58 @@ func TestParseSelection(t *testing.T) {
 	if s.baseURL != "https://short.example/v1" {
 		t.Errorf("-b parsed wrong: %q", s.baseURL)
 	}
+
+	// Context flag, long and short.
+	s, err = parseSelection("add", []string{"-p", "ollama", "--context", "128k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.context != "128k" {
+		t.Errorf("--context parsed wrong: %+v", s)
+	}
+	s, err = parseSelection("add", []string{"-p", "ollama", "-c", "200000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.context != "200000" {
+		t.Errorf("-c parsed wrong: %+v", s)
+	}
+}
+
+func TestCmdAdd_ContextSize(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
+
+	out := captureStdout(t, func() {
+		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "128k"}); err != nil {
+			t.Fatalf("cmdAdd: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Context window: 128000 tokens") {
+		t.Errorf("missing context summary in output:\n%s", out)
+	}
+
+	path := filepath.Join(dir, "opencode", "opencode.json")
+	models := readConfigMap(t, path)["provider"].(map[string]any)["openrouter"].(map[string]any)["models"].(map[string]any)
+	for key, m := range models {
+		limit, ok := m.(map[string]any)["limit"].(map[string]any)
+		if !ok {
+			t.Fatalf("model %q has no limit block: %v", key, m)
+		}
+		// JSON round-trips numbers as float64.
+		if limit["context"] != float64(128000) {
+			t.Errorf("model %q context = %v, want 128000", key, limit["context"])
+		}
+	}
+}
+
+func TestCmdAdd_ContextSizeInvalid(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
+	if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "not-a-size"}); err == nil {
+		t.Error("expected error for an unparseable context size")
+	}
 }
 
 func TestCmdAdd_EndToEnd(t *testing.T) {

@@ -93,6 +93,13 @@ oc-config add -p llamacpp -m qwen3.6-35b-a3b
 The model name is just a label — `llama-server` serves whichever model it has
 loaded regardless of what's requested — so call it whatever you find readable.
 
+Match opencode's context window to the `--ctx-size` you launched the server
+with, so it doesn't overshoot what `llama-server` will accept:
+
+```sh
+oc-config add -p llamacpp -m qwen3.6-35b-a3b --context 32k
+```
+
 Running on a non-default host or port? Point the provider at it with the
 `--base-url`/`-b` flag (or `LLAMACPP_BASE_URL`):
 

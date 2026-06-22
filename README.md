@@ -56,11 +56,11 @@ Then just run `opencode`.
 
 ```sh
 oc-config list
-oc-config add    --provider <name> [--model-family <family>] [--model <id>] [--base-url <url>]
+oc-config add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--base-url <url>]
 oc-config remove --provider <name> [--model-family <family>] [--model <id>]
 ```
 
-Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-b` (base-url).
+Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-c` (context), `-b` (base-url).
 
 ### Examples
 
@@ -78,6 +78,10 @@ OPENAI_API_KEY=sk-... \
 # Pin a specific default model
 oc-config add -p openrouter -f deepseek-v4 -m deepseek/deepseek-v4-pro
 
+# Set the context window — human suffixes or an absolute count, both fine
+oc-config add -p llamacpp -m my-model -c 128k
+oc-config add -p llamacpp -m my-model --context 200000
+
 # Take a provider back out
 oc-config remove -p ollama
 
@@ -87,6 +91,10 @@ oc-config remove -p openrouter -f deepseek-v4
 
 `add` sets the chosen model as opencode's default. `remove` clears the default
 if it pointed at something you removed.
+
+`--context`/`-c` records each added model's context window. Parsing is
+forgiving: `128k`, `1m`, `1.5m`, `200000`, `128,000`, even `128 K tokens` all
+land where you'd expect (`k`/`m`/`g` are decimal — `128k` is 128,000 tokens).
 
 ## Keys and endpoints
 
@@ -125,7 +133,7 @@ Don't want to rebuild? Point `oc-config` at your own catalogue at runtime — th
 flag wins, then the env var, then the built-in default:
 
 ```sh
-oc-config list --providers ./my-providers.yaml   # or: -c
+oc-config list --providers ./my-providers.yaml
 OC_CONFIG_PROVIDERS=./my-providers.yaml oc-config list
 ```
 

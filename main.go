@@ -12,7 +12,8 @@
 //	oc-config add    --provider <name> [--model-family <family>] [--model <id>]
 //	oc-config remove --provider <name> [--model-family <family>] [--model <id>]
 //
-// Short flags: -p (provider), -f (model-family), -m (model), -b (base-url).
+// Short flags: -p (provider), -f (model-family), -m (model), -c (context),
+// -b (base-url).
 //
 // The API base URL can be overridden for any provider with --base-url/-b or the
 // OC_CONFIG_BASE_URL environment variable; the flag wins over the env var, and
@@ -60,20 +61,23 @@ func usage() {
 
 Usage:
   oc-config list
-  oc-config add    --provider <name> [--model-family <family>] [--model <id>]
+  oc-config add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>]
   oc-config remove --provider <name> [--model-family <family>] [--model <id>]
 
 Flags:
   -p, --provider       provider name (see `+"`oc-config list`"+`)
   -f, --model-family   model family to add or remove
   -m, --model          model id to set as default / to add or remove
+  -c, --context        context window size for the added model(s); accepts
+                       human suffixes (128k, 1m) or an absolute count (200000)
   -b, --base-url       override the provider API base URL
                        (or set OC_CONFIG_BASE_URL)
-  -c, --providers      path to a providers.yaml override
+      --providers      path to a providers.yaml override
                        (or set OC_CONFIG_PROVIDERS)
 
 add: deep-merges the provider into the opencode config, preserving everything
-     else. Specify a family and/or an explicit model.
+     else. Specify a family and/or an explicit model. --context sets the
+     model's limit.context window.
 remove: removes the provider, or just the named models when a family/model is
         given. Clears the default model if it pointed at something removed.
 `)
@@ -84,6 +88,7 @@ type selection struct {
 	provider  string
 	family    string
 	model     string
+	context   string
 	providers string
 	baseURL   string
 }
@@ -97,8 +102,9 @@ func parseSelection(name string, args []string) (selection, error) {
 	fs.StringVar(&s.family, "f", "", "model family (shorthand)")
 	fs.StringVar(&s.model, "model", "", "model id")
 	fs.StringVar(&s.model, "m", "", "model id (shorthand)")
+	fs.StringVar(&s.context, "context", "", "context window size (e.g. 128k, 1m, 200000)")
+	fs.StringVar(&s.context, "c", "", "context window size (shorthand)")
 	fs.StringVar(&s.providers, "providers", "", "path to a providers.yaml override")
-	fs.StringVar(&s.providers, "c", "", "providers.yaml override (shorthand)")
 	fs.StringVar(&s.baseURL, "base-url", "", "override the provider API base URL")
 	fs.StringVar(&s.baseURL, "b", "", "API base URL override (shorthand)")
 	if err := fs.Parse(args); err != nil {
@@ -133,6 +139,19 @@ func cmdAdd(args []string) error {
 		return err
 	}
 
+	var contextSize int
+	if sel.context != "" {
+		contextSize, err = parseContextSize(sel.context)
+		if err != nil {
+			return err
+		}
+		models, _ := block["models"].(map[string]any)
+		if len(models) == 0 {
+			return fmt.Errorf("--context/-c needs a model: specify --model-family/-f and/or --model/-m")
+		}
+		applyContextSize(models, contextSize)
+	}
+
 	configFile, err := resolveConfigFile()
 	if err != nil {
 		return err
@@ -149,6 +168,9 @@ func cmdAdd(args []string) error {
 	fmt.Println(line + ".")
 	if defaultModel != "" {
 		fmt.Printf("Default model: %s\n", defaultModel)
+	}
+	if contextSize > 0 {
+		fmt.Printf("Context window: %d tokens\n", contextSize)
 	}
 	if opts, ok := block["options"].(map[string]any); ok {
 		if _, ok := opts["apiKey"]; ok {
@@ -217,7 +239,6 @@ func cmdList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	var providers string
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
-	fs.StringVar(&providers, "c", "", "providers.yaml override (shorthand)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
