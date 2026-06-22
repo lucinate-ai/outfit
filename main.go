@@ -12,7 +12,11 @@
 //	oc-config add    --provider <name> [--model-family <family>] [--model <id>]
 //	oc-config remove --provider <name> [--model-family <family>] [--model <id>]
 //
-// Short flags: -p (provider), -f (model-family), -m (model).
+// Short flags: -p (provider), -f (model-family), -m (model), -b (base-url).
+//
+// The API base URL can be overridden for any provider with --base-url/-b or the
+// OC_CONFIG_BASE_URL environment variable; the flag wins over the env var, and
+// either wins over the catalogue's defaults.
 package main
 
 import (
@@ -63,6 +67,8 @@ Flags:
   -p, --provider       provider name (see `+"`oc-config list`"+`)
   -f, --model-family   model family to add or remove
   -m, --model          model id to set as default / to add or remove
+  -b, --base-url       override the provider API base URL
+                       (or set OC_CONFIG_BASE_URL)
   -c, --providers      path to a providers.yaml override
                        (or set OC_CONFIG_PROVIDERS)
 
@@ -79,6 +85,7 @@ type selection struct {
 	family    string
 	model     string
 	providers string
+	baseURL   string
 }
 
 func parseSelection(name string, args []string) (selection, error) {
@@ -92,6 +99,8 @@ func parseSelection(name string, args []string) (selection, error) {
 	fs.StringVar(&s.model, "m", "", "model id (shorthand)")
 	fs.StringVar(&s.providers, "providers", "", "path to a providers.yaml override")
 	fs.StringVar(&s.providers, "c", "", "providers.yaml override (shorthand)")
+	fs.StringVar(&s.baseURL, "base-url", "", "override the provider API base URL")
+	fs.StringVar(&s.baseURL, "b", "", "API base URL override (shorthand)")
 	if err := fs.Parse(args); err != nil {
 		return s, err
 	}
@@ -119,7 +128,7 @@ func cmdAdd(args []string) error {
 		return fmt.Errorf("unknown provider %q (see `oc-config list`)", sel.provider)
 	}
 
-	block, defaultModel, err := buildProviderBlock(sel.provider, p, sel.family, sel.model, resolveEnv)
+	block, defaultModel, err := buildProviderBlock(sel.provider, p, sel.family, sel.model, sel.baseURL, resolveEnv)
 	if err != nil {
 		return err
 	}

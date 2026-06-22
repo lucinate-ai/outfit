@@ -63,6 +63,22 @@ func TestParseSelection(t *testing.T) {
 	if _, err := parseSelection("add", []string{"-f", "llama"}); err == nil {
 		t.Error("expected error when --provider is missing")
 	}
+
+	// Base URL flag, long and short forms.
+	s, err = parseSelection("add", []string{"-p", "ollama", "--base-url", "https://long.example/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.baseURL != "https://long.example/v1" {
+		t.Errorf("--base-url parsed wrong: %q", s.baseURL)
+	}
+	s, err = parseSelection("add", []string{"-p", "ollama", "-b", "https://short.example/v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.baseURL != "https://short.example/v1" {
+		t.Errorf("-b parsed wrong: %q", s.baseURL)
+	}
 }
 
 func TestCmdAdd_EndToEnd(t *testing.T) {
@@ -89,6 +105,29 @@ func TestCmdAdd_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestCmdAdd_BaseURLOverride(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+
+	out := captureStdout(t, func() {
+		if err := cmdAdd([]string{"-p", "openai-compatible", "-f", "gpt", "-b", "https://proxy.example/v1"}); err != nil {
+			t.Fatalf("cmdAdd: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Base URL: https://proxy.example/v1") {
+		t.Errorf("missing base URL in summary:\n%s", out)
+	}
+
+	path := filepath.Join(dir, "opencode", "opencode.json")
+	m := readConfigMap(t, path)
+	prov := m["provider"].(map[string]any)["openai-compatible"].(map[string]any)
+	opts := prov["options"].(map[string]any)
+	if opts["baseURL"] != "https://proxy.example/v1" {
+		t.Errorf("baseURL = %v, want the flag override written to config", opts["baseURL"])
+	}
+}
+
 func TestCmdAdd_Errors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
@@ -110,7 +149,7 @@ func TestCmdRemove_EndToEnd(t *testing.T) {
 
 	// Seed a family, then remove the whole provider via the CLI.
 	cat, _ := loadCatalog()
-	block, dm, _ := buildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", envMap(map[string]string{
+	block, dm, _ := buildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-x",
 	}))
 	if err := writeConfig(path, "openrouter", block, dm); err != nil {
@@ -137,7 +176,7 @@ func TestCmdRemove_FamilyAndNoOp(t *testing.T) {
 	path, _ := resolveConfigFile()
 
 	cat, _ := loadCatalog()
-	block, dm, _ := buildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", envMap(map[string]string{
+	block, dm, _ := buildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-x",
 	}))
 	writeConfig(path, "openrouter", block, dm)

@@ -56,11 +56,11 @@ Then just run `opencode`.
 
 ```sh
 oc-config list
-oc-config add    --provider <name> [--model-family <family>] [--model <id>]
+oc-config add    --provider <name> [--model-family <family>] [--model <id>] [--base-url <url>]
 oc-config remove --provider <name> [--model-family <family>] [--model <id>]
 ```
 
-Short flags: `-p` (provider), `-f` (model-family), `-m` (model).
+Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-b` (base-url).
 
 ### Examples
 
@@ -71,9 +71,9 @@ oc-config add -p ollama -f llama
 # Claude on AWS Bedrock (uses your AWS credentials)
 oc-config add -p amazon-bedrock -f claude
 
-# Any OpenAI-compatible endpoint, set via env
-OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://my-endpoint/v1 \
-  oc-config add -p openai-compatible -m my-model
+# Any OpenAI-compatible endpoint, base URL via flag
+OPENAI_API_KEY=sk-... \
+  oc-config add -p openai-compatible -m my-model --base-url https://my-endpoint/v1
 
 # Pin a specific default model
 oc-config add -p openrouter -f deepseek-v4 -m deepseek/deepseek-v4-pro
@@ -95,8 +95,18 @@ list` shows them). Values are looked up in `.env` next to the tool first, then
 your shell environment. Local providers like Ollama and llama.cpp need no key;
 Bedrock authenticates through your AWS credentials.
 
-Base URLs default to the usual local ports and can be overridden via env
-(`OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`, `OPENAI_BASE_URL`).
+Base URLs default to the usual local ports. Override the endpoint for **any**
+provider with `--base-url`/`-b` or the `OC_CONFIG_BASE_URL` env var — handy for
+proxies, gateways, or a server on a non-default host:
+
+```sh
+oc-config add -p openai-compatible -m my-model --base-url https://gateway/v1
+OC_CONFIG_BASE_URL=https://gateway/v1 oc-config add -p openai-compatible -m my-model
+```
+
+The flag wins over the env var, and either wins over the catalogue's defaults
+and the per-provider variables (`OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`,
+`OPENAI_BASE_URL`).
 
 ## Guides
 

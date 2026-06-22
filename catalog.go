@@ -14,6 +14,12 @@ import (
 // override.
 const providersEnv = "OC_CONFIG_PROVIDERS"
 
+// baseURLEnv names the environment variable that overrides the provider's API
+// base URL, regardless of which provider is selected. The --base-url flag takes
+// precedence over it; both win over the catalogue's static and per-provider
+// (optionsFromEnv) base URLs.
+const baseURLEnv = "OC_CONFIG_BASE_URL"
+
 // providersYAML is the externalised provider/model-family catalogue, embedded
 // into the binary at build time but maintained as a plain file.
 //
@@ -111,7 +117,12 @@ func (f *Family) modelKeys() []string {
 // model into an opencode provider block, returning the block and the
 // fully-qualified default model (provider/model), or "" if none was selected.
 // resolve looks up env vars (typically from .env, then the environment).
-func buildProviderBlock(id string, p *Provider, familyName, modelOverride string, resolve func(string) string) (block map[string]any, defaultModel string, err error) {
+//
+// baseURLOverride, when non-empty, sets options.baseURL for any provider. It
+// comes from the --base-url flag; when empty, the OC_CONFIG_BASE_URL env var is
+// consulted via resolve. Either wins over the catalogue's static baseURL and
+// any per-provider optionsFromEnv mapping.
+func buildProviderBlock(id string, p *Provider, familyName, modelOverride, baseURLOverride string, resolve func(string) string) (block map[string]any, defaultModel string, err error) {
 	block = map[string]any{}
 	if p.Name != "" {
 		block["name"] = p.Name
@@ -128,6 +139,12 @@ func buildProviderBlock(id string, p *Provider, familyName, modelOverride string
 		if v := resolve(envVar); v != "" {
 			options[optKey] = v
 		}
+	}
+	if baseURLOverride == "" {
+		baseURLOverride = resolve(baseURLEnv)
+	}
+	if baseURLOverride != "" {
+		options["baseURL"] = baseURLOverride
 	}
 	if p.APIKeyEnv != "" {
 		key := resolve(p.APIKeyEnv)

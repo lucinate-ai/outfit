@@ -118,10 +118,11 @@ oc-config add -p llamacpp -m gemma-4-12b-it
 The model name is just a label — `llama-server` serves whichever model it has
 loaded regardless of what's requested — so call it whatever you find readable.
 
-Running on a non-default host or port? Tell the provider via `LLAMACPP_BASE_URL`:
+Running on a non-default host or port? Point the provider at it with the
+`--base-url`/`-b` flag (or `LLAMACPP_BASE_URL`):
 
 ```sh
-LLAMACPP_BASE_URL=http://127.0.0.1:9090/v1 oc-config add -p llamacpp -m gemma-4-12b-it
+oc-config add -p llamacpp -m gemma-4-12b-it --base-url http://127.0.0.1:9090/v1
 ```
 
 Now start `opencode` and select `llamacpp/gemma-4-12b-it`.

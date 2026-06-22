@@ -117,7 +117,7 @@ func TestBuildProviderBlock_OpenRouterKeyInjected(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["openrouter"]
 
-	block, model, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", envMap(map[string]string{
+	block, model, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-abc",
 	}))
 	if err != nil {
@@ -138,7 +138,7 @@ func TestBuildProviderBlock_OpenRouterKeyInjected(t *testing.T) {
 func TestBuildProviderBlock_RequiredKeyMissing(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["openrouter"]
-	if _, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", noEnv); err == nil {
+	if _, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "", noEnv); err == nil {
 		t.Fatal("expected error when required key is missing")
 	}
 }
@@ -146,7 +146,7 @@ func TestBuildProviderBlock_RequiredKeyMissing(t *testing.T) {
 func TestBuildProviderBlock_KeyPrefixMismatch(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["openrouter"]
-	_, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", envMap(map[string]string{
+	_, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "wrong-prefix-key",
 	}))
 	if err == nil || !strings.Contains(err.Error(), "start with") {
@@ -158,7 +158,7 @@ func TestBuildProviderBlock_BedrockNoKeyRegionFromEnv(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["amazon-bedrock"]
 
-	block, model, err := buildProviderBlock("amazon-bedrock", p, "claude", "", envMap(map[string]string{
+	block, model, err := buildProviderBlock("amazon-bedrock", p, "claude", "", "", envMap(map[string]string{
 		"AWS_REGION": "eu-west-2",
 	}))
 	if err != nil {
@@ -180,7 +180,7 @@ func TestBuildProviderBlock_CustomProviderDefaults(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["ollama"]
 
-	block, model, err := buildProviderBlock("ollama", p, "llama", "", noEnv)
+	block, model, err := buildProviderBlock("ollama", p, "llama", "", "", noEnv)
 	if err != nil {
 		t.Fatalf("buildProviderBlock: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestBuildProviderBlock_ModelOverrideAddsEntry(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["ollama"]
 
-	block, model, err := buildProviderBlock("ollama", p, "", "my-model", noEnv)
+	block, model, err := buildProviderBlock("ollama", p, "", "my-model", "", noEnv)
 	if err != nil {
 		t.Fatalf("buildProviderBlock: %v", err)
 	}
@@ -217,7 +217,97 @@ func TestBuildProviderBlock_ModelOverrideAddsEntry(t *testing.T) {
 func TestBuildProviderBlock_UnknownFamily(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["openrouter"]
-	if _, _, err := buildProviderBlock("openrouter", p, "nope", "", noEnv); err == nil {
+	if _, _, err := buildProviderBlock("openrouter", p, "nope", "", "", noEnv); err == nil {
 		t.Fatal("expected error for unknown family")
+	}
+}
+
+// TestBuildProviderBlock_BaseURLFlagOverrides checks that the --base-url value
+// wins over both the catalogue's static baseURL and the per-provider
+// optionsFromEnv mapping (here OLLAMA_BASE_URL).
+func TestBuildProviderBlock_BaseURLFlagOverrides(t *testing.T) {
+	cat, _ := loadCatalog()
+	p := cat.Providers["ollama"]
+
+	block, _, err := buildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
+		"OLLAMA_BASE_URL": "https://per-provider.example/v1",
+	}))
+	if err != nil {
+		t.Fatalf("buildProviderBlock: %v", err)
+	}
+	opts := block["options"].(map[string]any)
+	if opts["baseURL"] != "https://flag.example/v1" {
+		t.Errorf("baseURL = %v, want the --base-url flag value", opts["baseURL"])
+	}
+}
+
+// TestBuildProviderBlock_BaseURLFromEnv checks that, with no flag, the general
+// OC_CONFIG_BASE_URL env var overrides the catalogue's static baseURL.
+func TestBuildProviderBlock_BaseURLFromEnv(t *testing.T) {
+	cat, _ := loadCatalog()
+	p := cat.Providers["ollama"]
+
+	block, _, err := buildProviderBlock("ollama", p, "llama", "", "", envMap(map[string]string{
+		baseURLEnv: "https://from-env.example/v1",
+	}))
+	if err != nil {
+		t.Fatalf("buildProviderBlock: %v", err)
+	}
+	opts := block["options"].(map[string]any)
+	if opts["baseURL"] != "https://from-env.example/v1" {
+		t.Errorf("baseURL = %v, want the OC_CONFIG_BASE_URL value", opts["baseURL"])
+	}
+}
+
+// TestBuildProviderBlock_BaseURLFlagBeatsEnv checks the precedence: an explicit
+// --base-url flag wins over OC_CONFIG_BASE_URL.
+func TestBuildProviderBlock_BaseURLFlagBeatsEnv(t *testing.T) {
+	cat, _ := loadCatalog()
+	p := cat.Providers["ollama"]
+
+	block, _, err := buildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
+		baseURLEnv: "https://from-env.example/v1",
+	}))
+	if err != nil {
+		t.Fatalf("buildProviderBlock: %v", err)
+	}
+	opts := block["options"].(map[string]any)
+	if opts["baseURL"] != "https://flag.example/v1" {
+		t.Errorf("baseURL = %v, want the flag to win over the env var", opts["baseURL"])
+	}
+}
+
+// TestBuildProviderBlock_BaseURLOnPlainProvider checks that the override applies
+// even to a provider that carries no baseURL in the catalogue, injecting a fresh
+// options.baseURL.
+func TestBuildProviderBlock_BaseURLOnPlainProvider(t *testing.T) {
+	cat, _ := loadCatalog()
+	p := cat.Providers["openrouter"]
+
+	block, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "https://gateway.example/v1", envMap(map[string]string{
+		"DEEPSEEK_API_KEY": "sk-or-v1-abc",
+	}))
+	if err != nil {
+		t.Fatalf("buildProviderBlock: %v", err)
+	}
+	opts := block["options"].(map[string]any)
+	if opts["baseURL"] != "https://gateway.example/v1" {
+		t.Errorf("baseURL = %v, want it injected on a provider without a default", opts["baseURL"])
+	}
+}
+
+// TestBuildProviderBlock_NoBaseURLOverride confirms the catalogue's static
+// baseURL is left untouched when neither flag nor env var is set.
+func TestBuildProviderBlock_NoBaseURLOverride(t *testing.T) {
+	cat, _ := loadCatalog()
+	p := cat.Providers["ollama"]
+
+	block, _, err := buildProviderBlock("ollama", p, "llama", "", "", noEnv)
+	if err != nil {
+		t.Fatalf("buildProviderBlock: %v", err)
+	}
+	opts := block["options"].(map[string]any)
+	if opts["baseURL"] != "http://localhost:11434/v1" {
+		t.Errorf("baseURL = %v, want the catalogue default", opts["baseURL"])
 	}
 }
