@@ -17,6 +17,16 @@ already have.
 
 ## Install
 
+With [Homebrew](https://brew.sh):
+
+```sh
+brew install outofcoffee/tap/oc-config
+```
+
+To upgrade later, run `brew upgrade oc-config`.
+
+### From source
+
 ```sh
 go build -o oc-config .
 ```
