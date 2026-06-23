@@ -73,6 +73,19 @@ func TestRunDispatch(t *testing.T) {
 	}
 }
 
+func TestVersionFlag(t *testing.T) {
+	for _, arg := range []string{"version", "-v", "--version"} {
+		out := captureStdout(t, func() {
+			if err := run([]string{arg}); err != nil {
+				t.Fatalf("run(%q): %v", arg, err)
+			}
+		})
+		if strings.TrimSpace(out) != version {
+			t.Errorf("run(%q) printed %q, want %q", arg, strings.TrimSpace(out), version)
+		}
+	}
+}
+
 func TestParseSelection(t *testing.T) {
 	// Long flags.
 	s, err := parseSelection("add", []string{"--provider", "openrouter", "--model-family", "deepseek-v4", "--model", "m"})

@@ -39,6 +39,11 @@ import (
 	"github.com/lucinate-ai/outfit/internal/outfit"
 )
 
+// version is the binary's version. It defaults to "dev" and is overridden at
+// build time via -ldflags "-X main.version=...", set by the Makefile and
+// goreleaser.
+var version = "dev"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -63,6 +68,9 @@ func run(args []string) error {
 		return cmdApply(rest)
 	case "export":
 		return cmdExport(rest)
+	case "version", "-v", "--version":
+		fmt.Println(version)
+		return nil
 	case "help", "-h", "--help":
 		usage()
 		return nil
@@ -81,6 +89,7 @@ Usage:
   outfit remove --provider <name> [--model-family <family>] [--model <id>]
   outfit apply  [path]              (defaults to ./Outfit)
   outfit export [--provider <name>]
+  outfit version                    (or -v/--version)
 
 Flags:
   -p, --provider       provider name (see `+"`outfit list`"+`)
