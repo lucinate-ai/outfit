@@ -22,7 +22,7 @@
 // either wins over the catalogue's defaults.
 //
 // An Outfit is a declarative, Dockerfile-style file describing one provider
-// selection, applied with `outfit apply`; see outfit.go.
+// selection, applied with `outfit apply`; see the internal/outfit package.
 package main
 
 import (
@@ -32,6 +32,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lucinate-ai/outfit/internal/catalog"
+	"github.com/lucinate-ai/outfit/internal/contextsize"
+	"github.com/lucinate-ai/outfit/internal/opencode"
+	"github.com/lucinate-ai/outfit/internal/outfit"
 )
 
 func main() {
@@ -99,34 +104,24 @@ export: prints the current config as an Outfit (outfit export > Outfit).
 `)
 }
 
-// selection holds the common flags shared by add and remove.
-type selection struct {
-	provider  string
-	family    string
-	model     string
-	context   string
-	providers string
-	baseURL   string
-}
-
-func parseSelection(name string, args []string) (selection, error) {
-	var s selection
+func parseSelection(name string, args []string) (outfit.Selection, error) {
+	var s outfit.Selection
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.StringVar(&s.provider, "provider", "", "provider name")
-	fs.StringVar(&s.provider, "p", "", "provider name (shorthand)")
-	fs.StringVar(&s.family, "model-family", "", "model family")
-	fs.StringVar(&s.family, "f", "", "model family (shorthand)")
-	fs.StringVar(&s.model, "model", "", "model id")
-	fs.StringVar(&s.model, "m", "", "model id (shorthand)")
-	fs.StringVar(&s.context, "context", "", "context window size (e.g. 128k, 1m, 200000)")
-	fs.StringVar(&s.context, "c", "", "context window size (shorthand)")
-	fs.StringVar(&s.providers, "providers", "", "path to a providers.yaml override")
-	fs.StringVar(&s.baseURL, "base-url", "", "override the provider API base URL")
-	fs.StringVar(&s.baseURL, "b", "", "API base URL override (shorthand)")
+	fs.StringVar(&s.Provider, "provider", "", "provider name")
+	fs.StringVar(&s.Provider, "p", "", "provider name (shorthand)")
+	fs.StringVar(&s.Family, "model-family", "", "model family")
+	fs.StringVar(&s.Family, "f", "", "model family (shorthand)")
+	fs.StringVar(&s.Model, "model", "", "model id")
+	fs.StringVar(&s.Model, "m", "", "model id (shorthand)")
+	fs.StringVar(&s.Context, "context", "", "context window size (e.g. 128k, 1m, 200000)")
+	fs.StringVar(&s.Context, "c", "", "context window size (shorthand)")
+	fs.StringVar(&s.Providers, "providers", "", "path to a providers.yaml override")
+	fs.StringVar(&s.BaseURL, "base-url", "", "override the provider API base URL")
+	fs.StringVar(&s.BaseURL, "b", "", "API base URL override (shorthand)")
 	if err := fs.Parse(args); err != nil {
 		return s, err
 	}
-	if s.provider == "" {
+	if s.Provider == "" {
 		return s, fmt.Errorf("--provider/-p is required (see `outfit list`)")
 	}
 	return s, nil
@@ -143,28 +138,28 @@ func cmdAdd(args []string) error {
 // applySelection writes a single provider selection into the opencode config.
 // It is the shared core of `add` and `apply`: both resolve a selection (from
 // flags or an Outfit file) and hand it here.
-func applySelection(sel selection) error {
-	if sel.family == "" && sel.model == "" {
+func applySelection(sel outfit.Selection) error {
+	if sel.Family == "" && sel.Model == "" {
 		return fmt.Errorf("a provider selection needs a model family and/or a model")
 	}
 
-	cat, err := loadCatalogFrom(resolveCatalogPath(sel.providers))
+	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(sel.Providers))
 	if err != nil {
 		return err
 	}
-	p, ok := cat.Providers[sel.provider]
+	p, ok := cat.Providers[sel.Provider]
 	if !ok {
-		return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.provider)
+		return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.Provider)
 	}
 
-	block, defaultModel, err := buildProviderBlock(sel.provider, p, sel.family, sel.model, sel.baseURL, resolveEnv)
+	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, sel.Model, sel.BaseURL, opencode.ResolveEnv)
 	if err != nil {
 		return err
 	}
 
 	var contextSize int
-	if sel.context != "" {
-		contextSize, err = parseContextSize(sel.context)
+	if sel.Context != "" {
+		contextSize, err = contextsize.Parse(sel.Context)
 		if err != nil {
 			return err
 		}
@@ -172,21 +167,21 @@ func applySelection(sel selection) error {
 		if len(models) == 0 {
 			return fmt.Errorf("--context/-c needs a model: specify --model-family/-f and/or --model/-m")
 		}
-		applyContextSize(models, contextSize)
+		contextsize.Apply(models, contextSize)
 	}
 
-	configFile, err := resolveConfigFile()
+	configFile, err := opencode.ResolveConfigFile()
 	if err != nil {
 		return err
 	}
-	if err := writeConfig(configFile, sel.provider, block, defaultModel); err != nil {
+	if err := opencode.WriteConfig(configFile, sel.Provider, block, defaultModel); err != nil {
 		return err
 	}
 
 	fmt.Printf("Updated %s\n\n", configFile)
-	line := fmt.Sprintf("Configured provider %q", sel.provider)
-	if sel.family != "" {
-		line += fmt.Sprintf(" with family %q", sel.family)
+	line := fmt.Sprintf("Configured provider %q", sel.Provider)
+	if sel.Family != "" {
+		line += fmt.Sprintf(" with family %q", sel.Family)
 	}
 	fmt.Println(line + ".")
 	if defaultModel != "" {
@@ -218,23 +213,23 @@ func cmdApply(args []string) error {
 		return err
 	}
 
-	path := DefaultOutfitFile
+	path := outfit.DefaultFile
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) && path == DefaultOutfitFile {
-			return fmt.Errorf("no %s found in the current directory (pass a path: outfit apply <file>)", DefaultOutfitFile)
+		if os.IsNotExist(err) && path == outfit.DefaultFile {
+			return fmt.Errorf("no %s found in the current directory (pass a path: outfit apply <file>)", outfit.DefaultFile)
 		}
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
-	sel, err := parseOutfit(data)
+	sel, err := outfit.Parse(data)
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	sel.providers = providers
+	sel.Providers = providers
 	return applySelection(sel)
 }
 
@@ -250,11 +245,11 @@ func cmdExport(args []string) error {
 		return err
 	}
 
-	configFile, err := resolveConfigFile()
+	configFile, err := opencode.ResolveConfigFile()
 	if err != nil {
 		return err
 	}
-	states, defaultModel, err := loadConfigState(configFile)
+	states, defaultModel, err := opencode.LoadConfigState(configFile)
 	if err != nil {
 		return err
 	}
@@ -284,41 +279,41 @@ func cmdExport(args []string) error {
 		return fmt.Errorf("provider %q is not configured in %s (have: %s)", provider, configFile, strings.Join(names, ", "))
 	}
 
-	sel := selection{provider: provider, baseURL: st.baseURL}
+	sel := outfit.Selection{Provider: provider, BaseURL: st.BaseURL}
 	if prefix := provider + "/"; strings.HasPrefix(defaultModel, prefix) {
-		sel.model = strings.TrimPrefix(defaultModel, prefix)
+		sel.Model = strings.TrimPrefix(defaultModel, prefix)
 	}
 
-	cat, catErr := loadCatalogFrom(resolveCatalogPath(providers))
+	cat, catErr := catalog.LoadFrom(catalog.ResolveCatalogPath(providers))
 
 	// Prefer naming a family when the configured models match one, and drop a
 	// MODEL line that would only restate that family's default.
 	if catErr == nil {
 		if p, ok := cat.Providers[provider]; ok {
-			if fam := matchFamily(p, st.modelKeys); fam != "" {
-				sel.family = fam
-				if p.Families[fam].DefaultModel == sel.model {
-					sel.model = ""
+			if fam := catalog.MatchFamily(p, st.ModelKeys); fam != "" {
+				sel.Family = fam
+				if p.Families[fam].DefaultModel == sel.Model {
+					sel.Model = ""
 				}
 			}
 			// Drop a baseURL that only restates the catalogue's default — keep it
 			// only when it is a genuine override worth recording.
-			if def, _ := p.Options["baseURL"].(string); sel.baseURL == def {
-				sel.baseURL = ""
+			if def, _ := p.Options["baseURL"].(string); sel.BaseURL == def {
+				sel.BaseURL = ""
 			}
 		}
 	}
 
 	// Ensure the Outfit still selects something if we recognised neither a
 	// family nor a default model.
-	if sel.family == "" && sel.model == "" && len(st.modelKeys) > 0 {
-		sel.model = st.modelKeys[0]
+	if sel.Family == "" && sel.Model == "" && len(st.ModelKeys) > 0 {
+		sel.Model = st.ModelKeys[0]
 	}
 
 	// Reconstruct the context window when the exported models agree on one.
-	sel.context = exportContext(sel, st)
+	sel.Context = exportContext(sel, st)
 
-	fmt.Print(formatOutfit(sel))
+	fmt.Print(outfit.Format(sel))
 	return nil
 }
 
@@ -326,17 +321,17 @@ func cmdExport(args []string) error {
 // count string, when the models the Outfit selects all share a single value.
 // It returns "" when no context was set or the models disagree (e.g. a config
 // hand-edited to differ), so export never invents or guesses a value.
-func exportContext(sel selection, st providerState) string {
+func exportContext(sel outfit.Selection, st opencode.ProviderState) string {
 	var keys []string
 	switch {
-	case sel.family != "":
-		keys = st.modelKeys // a matched family covers exactly these models
-	case sel.model != "":
-		keys = []string{sel.model}
+	case sel.Family != "":
+		keys = st.ModelKeys // a matched family covers exactly these models
+	case sel.Model != "":
+		keys = []string{sel.Model}
 	}
 	distinct := map[int]bool{}
 	for _, k := range keys {
-		if c, ok := st.contexts[k]; ok {
+		if c, ok := st.Contexts[k]; ok {
 			distinct[c] = true
 		}
 	}
@@ -355,7 +350,7 @@ func cmdRemove(args []string) error {
 		return err
 	}
 
-	cat, err := loadCatalogFrom(resolveCatalogPath(sel.providers))
+	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(sel.Providers))
 	if err != nil {
 		return err
 	}
@@ -363,39 +358,39 @@ func cmdRemove(args []string) error {
 	// Resolve the model keys to remove. With no family/model, the whole
 	// provider is removed.
 	var modelKeys []string
-	if sel.model != "" {
-		modelKeys = append(modelKeys, sel.model)
+	if sel.Model != "" {
+		modelKeys = append(modelKeys, sel.Model)
 	}
-	if sel.family != "" {
-		p, ok := cat.Providers[sel.provider]
+	if sel.Family != "" {
+		p, ok := cat.Providers[sel.Provider]
 		if !ok {
-			return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.provider)
+			return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.Provider)
 		}
-		fam, ok := p.Families[sel.family]
+		fam, ok := p.Families[sel.Family]
 		if !ok {
-			return fmt.Errorf("provider %q has no model family %q (see `outfit list`)", sel.provider, sel.family)
+			return fmt.Errorf("provider %q has no model family %q (see `outfit list`)", sel.Provider, sel.Family)
 		}
-		modelKeys = append(modelKeys, fam.modelKeys()...)
+		modelKeys = append(modelKeys, fam.ModelKeys()...)
 	}
 
-	configFile, err := resolveConfigFile()
+	configFile, err := opencode.ResolveConfigFile()
 	if err != nil {
 		return err
 	}
-	removed, err := removeConfig(configFile, sel.provider, modelKeys)
+	removed, err := opencode.RemoveConfig(configFile, sel.Provider, modelKeys)
 	if err != nil {
 		return err
 	}
 
 	if removed == 0 {
-		fmt.Printf("Nothing to remove for provider %q in %s.\n", sel.provider, configFile)
+		fmt.Printf("Nothing to remove for provider %q in %s.\n", sel.Provider, configFile)
 		return nil
 	}
 	fmt.Printf("Updated %s\n\n", configFile)
 	if len(modelKeys) == 0 {
-		fmt.Printf("Removed provider %q.\n", sel.provider)
+		fmt.Printf("Removed provider %q.\n", sel.Provider)
 	} else {
-		fmt.Printf("Removed %d model(s) from provider %q.\n", removed, sel.provider)
+		fmt.Printf("Removed %d model(s) from provider %q.\n", removed, sel.Provider)
 	}
 	return nil
 }
@@ -408,13 +403,13 @@ func cmdList(args []string) error {
 		return err
 	}
 
-	cat, err := loadCatalogFrom(resolveCatalogPath(providers))
+	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(providers))
 	if err != nil {
 		return err
 	}
 	var b strings.Builder
 	b.WriteString("Available providers:\n")
-	for _, name := range cat.sortedProviderNames() {
+	for _, name := range cat.SortedProviderNames() {
 		p := cat.Providers[name]
 		fmt.Fprintf(&b, "\n  %s — %s\n", name, p.Description)
 		if p.APIKeyEnv != "" {
@@ -424,7 +419,7 @@ func cmdList(args []string) error {
 			}
 			fmt.Fprintf(&b, "    api key: %s%s\n", p.APIKeyEnv, req)
 		}
-		for _, f := range p.sortedFamilyNames() {
+		for _, f := range p.SortedFamilyNames() {
 			fam := p.Families[f]
 			fmt.Fprintf(&b, "    family %s — %s (default: %s)\n", f, fam.Description, fam.DefaultModel)
 		}

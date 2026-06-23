@@ -1,4 +1,6 @@
-package main
+// Package contextsize parses human-friendly context window sizes and applies
+// them to opencode model blocks.
+package contextsize
 
 import (
 	"fmt"
@@ -6,14 +8,13 @@ import (
 	"strings"
 )
 
-// parseContextSize parses a human-friendly context window size into a token
-// count. It is deliberately lenient: surrounding whitespace, commas, and
-// underscores are ignored, an optional k/m/g/t suffix is honoured
-// (case-insensitive, decimal — k=1e3, m=1e6, g/b=1e9, t=1e12), a fractional
-// value may precede a suffix (e.g. "1.5m"), and a trailing "tokens"/"tok" word
-// is tolerated. So "128k", "128,000", "128_000", "  128 K tokens ", and
-// "0.128m" all parse to 128000.
-func parseContextSize(s string) (int, error) {
+// Parse parses a human-friendly context window size into a token count. It is
+// deliberately lenient: surrounding whitespace, commas, and underscores are
+// ignored, an optional k/m/g/t suffix is honoured (case-insensitive, decimal —
+// k=1e3, m=1e6, g/b=1e9, t=1e12), a fractional value may precede a suffix
+// (e.g. "1.5m"), and a trailing "tokens"/"tok" word is tolerated. So "128k",
+// "128,000", "128_000", "  128 K tokens ", and "0.128m" all parse to 128000.
+func Parse(s string) (int, error) {
 	orig := s
 	// Normalise: drop separators, lowercase, strip a trailing "tokens" word.
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -53,10 +54,10 @@ func parseContextSize(s string) (int, error) {
 	return int(tokens), nil
 }
 
-// applyContextSize sets limit.context on every model in models, merging into
-// any existing limit map rather than replacing it. The model values are the
-// map[string]any entries produced by buildProviderBlock.
-func applyContextSize(models map[string]any, ctx int) {
+// Apply sets limit.context on every model in models, merging into any existing
+// limit map rather than replacing it. The model values are the map[string]any
+// entries produced by catalog.BuildProviderBlock.
+func Apply(models map[string]any, ctx int) {
 	for k, v := range models {
 		m, ok := v.(map[string]any)
 		if !ok {

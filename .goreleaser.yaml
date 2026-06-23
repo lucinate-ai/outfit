@@ -5,7 +5,7 @@ project_name: outfit
 builds:
   - id: outfit
     binary: outfit
-    main: .
+    main: ./cmd/outfit
     env:
       - CGO_ENABLED=0
     goos:

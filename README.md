@@ -154,9 +154,9 @@ with a ready-to-apply `Outfit`:
 
 ## Adding providers and models
 
-Everything `outfit` knows lives in `providers.yaml`. Add a provider, a model
-family, or a new model there and rebuild — no Go required. The file is commented
-with the schema.
+Everything `outfit` knows lives in `internal/catalog/providers.yaml`. Add a
+provider, a model family, or a new model there and rebuild — no Go required. The
+file is commented with the schema.
 
 Don't want to rebuild? Point `outfit` at your own catalogue at runtime — the
 flag wins, then the env var, then the built-in default:

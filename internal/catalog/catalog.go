@@ -1,4 +1,6 @@
-package main
+// Package catalog holds the provider/model-family catalogue (providers.yaml)
+// and turns a provider selection into an opencode provider block.
+package catalog
 
 import (
 	_ "embed"
@@ -10,9 +12,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// providersEnv names the environment variable that points at a providers.yaml
+// ProvidersEnv names the environment variable that points at a providers.yaml
 // override.
-const providersEnv = "OUTFIT_PROVIDERS"
+const ProvidersEnv = "OUTFIT_PROVIDERS"
 
 // baseURLEnv names the environment variable that overrides the provider's API
 // base URL, regardless of which provider is selected. The --base-url flag takes
@@ -51,23 +53,23 @@ type Family struct {
 	Models       map[string]map[string]any `yaml:"models"`
 }
 
-// resolveCatalogPath determines which catalogue file to use: the flag value if
+// ResolveCatalogPath determines which catalogue file to use: the flag value if
 // given, otherwise the OUTFIT_PROVIDERS env var, otherwise "" (embedded).
-func resolveCatalogPath(flagPath string) string {
+func ResolveCatalogPath(flagPath string) string {
 	if flagPath != "" {
 		return flagPath
 	}
-	return os.Getenv(providersEnv)
+	return os.Getenv(ProvidersEnv)
 }
 
-// loadCatalog parses the embedded catalogue.
-func loadCatalog() (*Catalog, error) {
-	return loadCatalogFrom("")
+// Load parses the embedded catalogue.
+func Load() (*Catalog, error) {
+	return LoadFrom("")
 }
 
-// loadCatalogFrom parses the catalogue from path, falling back to the embedded
+// LoadFrom parses the catalogue from path, falling back to the embedded
 // catalogue when path is empty.
-func loadCatalogFrom(path string) (*Catalog, error) {
+func LoadFrom(path string) (*Catalog, error) {
 	data := providersYAML
 	if path != "" {
 		b, err := os.ReadFile(path)
@@ -83,8 +85,8 @@ func loadCatalogFrom(path string) (*Catalog, error) {
 	return &c, nil
 }
 
-// sortedProviderNames returns provider keys in stable order.
-func (c *Catalog) sortedProviderNames() []string {
+// SortedProviderNames returns provider keys in stable order.
+func (c *Catalog) SortedProviderNames() []string {
 	names := make([]string, 0, len(c.Providers))
 	for n := range c.Providers {
 		names = append(names, n)
@@ -93,8 +95,8 @@ func (c *Catalog) sortedProviderNames() []string {
 	return names
 }
 
-// sortedFamilyNames returns a provider's family names in stable order.
-func (p *Provider) sortedFamilyNames() []string {
+// SortedFamilyNames returns a provider's family names in stable order.
+func (p *Provider) SortedFamilyNames() []string {
 	names := make([]string, 0, len(p.Families))
 	for n := range p.Families {
 		names = append(names, n)
@@ -103,8 +105,8 @@ func (p *Provider) sortedFamilyNames() []string {
 	return names
 }
 
-// modelKeys returns a family's model keys in stable order.
-func (f *Family) modelKeys() []string {
+// ModelKeys returns a family's model keys in stable order.
+func (f *Family) ModelKeys() []string {
 	keys := make([]string, 0, len(f.Models))
 	for k := range f.Models {
 		keys = append(keys, k)
@@ -113,16 +115,16 @@ func (f *Family) modelKeys() []string {
 	return keys
 }
 
-// matchFamily returns the name of the provider family whose model set exactly
+// MatchFamily returns the name of the provider family whose model set exactly
 // matches keys, or "" if none does. It lets `outfit export` name a family
 // instead of listing the individual models it expands to.
-func matchFamily(p *Provider, keys []string) string {
+func MatchFamily(p *Provider, keys []string) string {
 	want := make(map[string]bool, len(keys))
 	for _, k := range keys {
 		want[k] = true
 	}
-	for _, name := range p.sortedFamilyNames() {
-		fk := p.Families[name].modelKeys()
+	for _, name := range p.SortedFamilyNames() {
+		fk := p.Families[name].ModelKeys()
 		if len(fk) != len(want) {
 			continue
 		}
@@ -140,7 +142,7 @@ func matchFamily(p *Provider, keys []string) string {
 	return ""
 }
 
-// buildProviderBlock turns a provider plus an optional family and/or explicit
+// BuildProviderBlock turns a provider plus an optional family and/or explicit
 // model into an opencode provider block, returning the block and the
 // fully-qualified default model (provider/model), or "" if none was selected.
 // resolve looks up env vars (typically from .env, then the environment).
@@ -149,7 +151,7 @@ func matchFamily(p *Provider, keys []string) string {
 // comes from the --base-url flag; when empty, the OUTFIT_BASE_URL env var is
 // consulted via resolve. Either wins over the catalogue's static baseURL and
 // any per-provider optionsFromEnv mapping.
-func buildProviderBlock(id string, p *Provider, familyName, modelOverride, baseURLOverride string, resolve func(string) string) (block map[string]any, defaultModel string, err error) {
+func BuildProviderBlock(id string, p *Provider, familyName, modelOverride, baseURLOverride string, resolve func(string) string) (block map[string]any, defaultModel string, err error) {
 	block = map[string]any{}
 	if p.Name != "" {
 		block["name"] = p.Name

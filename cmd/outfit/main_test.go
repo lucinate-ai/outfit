@@ -2,11 +2,16 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lucinate-ai/outfit/internal/catalog"
+	"github.com/lucinate-ai/outfit/internal/opencode"
+	"github.com/tailscale/hujson"
 )
 
 // captureStdout runs fn with os.Stdout redirected and returns what it wrote.
@@ -28,6 +33,34 @@ func captureStdout(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
+// readConfigMap reads a config file, standardises the JSONC, and unmarshals it
+// into a map for assertions.
+func readConfigMap(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	v, err := hujson.Parse(data)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	v.Standardize()
+	var m map[string]any
+	if err := json.Unmarshal(v.Pack(), &m); err != nil {
+		t.Fatalf("output is not valid JSON: %v", err)
+	}
+	return m
+}
+
+// noEnv is a resolver that finds nothing.
+func noEnv(string) string { return "" }
+
+// envMap returns a resolver backed by a map.
+func envMap(m map[string]string) func(string) string {
+	return func(k string) string { return m[k] }
+}
+
 func TestRunDispatch(t *testing.T) {
 	if err := run(nil); err != nil {
 		t.Errorf("no args should print usage, got %v", err)
@@ -46,7 +79,7 @@ func TestParseSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.provider != "openrouter" || s.family != "deepseek-v4" || s.model != "m" {
+	if s.Provider != "openrouter" || s.Family != "deepseek-v4" || s.Model != "m" {
 		t.Errorf("long flags parsed wrong: %+v", s)
 	}
 
@@ -55,7 +88,7 @@ func TestParseSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.provider != "ollama" || s.family != "llama" || s.model != "x" {
+	if s.Provider != "ollama" || s.Family != "llama" || s.Model != "x" {
 		t.Errorf("short flags parsed wrong: %+v", s)
 	}
 
@@ -69,15 +102,15 @@ func TestParseSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.baseURL != "https://long.example/v1" {
-		t.Errorf("--base-url parsed wrong: %q", s.baseURL)
+	if s.BaseURL != "https://long.example/v1" {
+		t.Errorf("--base-url parsed wrong: %q", s.BaseURL)
 	}
 	s, err = parseSelection("add", []string{"-p", "ollama", "-b", "https://short.example/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.baseURL != "https://short.example/v1" {
-		t.Errorf("-b parsed wrong: %q", s.baseURL)
+	if s.BaseURL != "https://short.example/v1" {
+		t.Errorf("-b parsed wrong: %q", s.BaseURL)
 	}
 
 	// Context flag, long and short.
@@ -85,14 +118,14 @@ func TestParseSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.context != "128k" {
+	if s.Context != "128k" {
 		t.Errorf("--context parsed wrong: %+v", s)
 	}
 	s, err = parseSelection("add", []string{"-p", "ollama", "-c", "200000"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.context != "200000" {
+	if s.Context != "200000" {
 		t.Errorf("-c parsed wrong: %+v", s)
 	}
 }
@@ -194,17 +227,17 @@ func TestCmdAdd_Errors(t *testing.T) {
 func TestCmdRemove_EndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	path, err := resolveConfigFile()
+	path, err := opencode.ResolveConfigFile()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Seed a family, then remove the whole provider via the CLI.
-	cat, _ := loadCatalog()
-	block, dm, _ := buildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
+	cat, _ := catalog.Load()
+	block, dm, _ := catalog.BuildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-x",
 	}))
-	if err := writeConfig(path, "openrouter", block, dm); err != nil {
+	if err := opencode.WriteConfig(path, "openrouter", block, dm); err != nil {
 		t.Fatal(err)
 	}
 
@@ -225,13 +258,13 @@ func TestCmdRemove_EndToEnd(t *testing.T) {
 func TestCmdRemove_FamilyAndNoOp(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
-	path, _ := resolveConfigFile()
+	path, _ := opencode.ResolveConfigFile()
 
-	cat, _ := loadCatalog()
-	block, dm, _ := buildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
+	cat, _ := catalog.Load()
+	block, dm, _ := catalog.BuildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-x",
 	}))
-	writeConfig(path, "openrouter", block, dm)
+	opencode.WriteConfig(path, "openrouter", block, dm)
 
 	// Removing the family should clear all its models (and the default model,
 	// which pointed at one of them).
@@ -286,7 +319,7 @@ func TestCmdList_ProvidersOverride(t *testing.T) {
 	}
 
 	// Via the env var.
-	t.Setenv(providersEnv, path)
+	t.Setenv(catalog.ProvidersEnv, path)
 	out = captureStdout(t, func() {
 		if err := cmdList(nil); err != nil {
 			t.Fatalf("cmdList: %v", err)

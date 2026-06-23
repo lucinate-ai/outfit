@@ -1,12 +1,6 @@
-package main
-
-import (
-	"bufio"
-	"bytes"
-	"fmt"
-	"strings"
-)
-
+// Package outfit defines a provider Selection and the declarative, Dockerfile-
+// style Outfit file that describes one.
+//
 // An Outfit is a declarative description of a single opencode provider plus an
 // optional model family and/or model — the file equivalent of one `outfit
 // add` invocation. It uses a flat, Dockerfile-style syntax:
@@ -21,6 +15,26 @@ import (
 // Keywords are matched case-insensitively, but UPPERCASE is canonical (it is
 // what `outfit export` emits). Blank lines, full-line `#` comments, and
 // trailing ` #` comments are ignored.
+package outfit
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"strings"
+)
+
+// Selection holds the provider, model family and/or model, and optional
+// overrides that describe one opencode provider configuration. It is the shared
+// currency between the CLI flags, the Outfit file, and the apply/export paths.
+type Selection struct {
+	Provider  string
+	Family    string
+	Model     string
+	Context   string
+	Providers string
+	BaseURL   string
+}
 
 // Outfit keywords, in their canonical (lower-cased) form for matching.
 const (
@@ -45,14 +59,13 @@ func canonicalKeyword(kw string) string {
 	}
 }
 
-// DefaultOutfitFile is the filename `outfit apply` looks for when no path is
-// given.
-const DefaultOutfitFile = "Outfit"
+// DefaultFile is the filename `outfit apply` looks for when no path is given.
+const DefaultFile = "Outfit"
 
-// parseOutfit parses an Outfit file into a selection. It enforces that the file
-// names exactly one provider and sets each instruction at most once.
-func parseOutfit(data []byte) (selection, error) {
-	var sel selection
+// Parse parses an Outfit file into a Selection. It enforces that the file names
+// exactly one provider and sets each instruction at most once.
+func Parse(data []byte) (Selection, error) {
+	var sel Selection
 	seen := map[string]int{} // keyword -> line it first appeared on
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
@@ -65,40 +78,40 @@ func parseOutfit(data []byte) (selection, error) {
 		fields := strings.Fields(text)
 		canon := canonicalKeyword(strings.ToLower(fields[0]))
 		if canon == "" {
-			return selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, CONTEXT, or BASEURL)", line, fields[0])
+			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, CONTEXT, or BASEURL)", line, fields[0])
 		}
 		switch {
 		case len(fields) < 2:
-			return selection{}, fmt.Errorf("line %d: %s needs a value", line, strings.ToUpper(canon))
+			return Selection{}, fmt.Errorf("line %d: %s needs a value", line, strings.ToUpper(canon))
 		case len(fields) > 2:
-			return selection{}, fmt.Errorf("line %d: %s takes a single value, got %d", line, strings.ToUpper(canon), len(fields)-1)
+			return Selection{}, fmt.Errorf("line %d: %s takes a single value, got %d", line, strings.ToUpper(canon), len(fields)-1)
 		}
 		value := fields[1]
 
 		if prev, ok := seen[canon]; ok {
-			return selection{}, fmt.Errorf("line %d: duplicate %s (already set on line %d)", line, strings.ToUpper(canon), prev)
+			return Selection{}, fmt.Errorf("line %d: duplicate %s (already set on line %d)", line, strings.ToUpper(canon), prev)
 		}
 		seen[canon] = line
 
 		switch canon {
 		case kwProvider:
-			sel.provider = value
+			sel.Provider = value
 		case kwFamily:
-			sel.family = value
+			sel.Family = value
 		case kwModel:
-			sel.model = value
+			sel.Model = value
 		case kwContext:
-			sel.context = value
+			sel.Context = value
 		case kwBaseURL:
-			sel.baseURL = value
+			sel.BaseURL = value
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return selection{}, err
+		return Selection{}, err
 	}
 
-	if sel.provider == "" {
-		return selection{}, fmt.Errorf("Outfit is missing a PROVIDER instruction")
+	if sel.Provider == "" {
+		return Selection{}, fmt.Errorf("Outfit is missing a PROVIDER instruction")
 	}
 	return sel, nil
 }
@@ -119,19 +132,19 @@ func stripComment(s string) string {
 	return s
 }
 
-// formatOutfit renders a selection as a canonical, UPPERCASE Outfit file. The
-// "%-8s" padding aligns every value at the same column.
-func formatOutfit(sel selection) string {
+// Format renders a Selection as a canonical, UPPERCASE Outfit file. The "%-8s"
+// padding aligns every value at the same column.
+func Format(sel Selection) string {
 	var b strings.Builder
 	line := func(keyword, value string) {
 		if value != "" {
 			fmt.Fprintf(&b, "%-8s %s\n", keyword, value)
 		}
 	}
-	line("PROVIDER", sel.provider)
-	line("FAMILY", sel.family)
-	line("MODEL", sel.model)
-	line("CONTEXT", sel.context)
-	line("BASEURL", sel.baseURL)
+	line("PROVIDER", sel.Provider)
+	line("FAMILY", sel.Family)
+	line("MODEL", sel.Model)
+	line("CONTEXT", sel.Context)
+	line("BASEURL", sel.BaseURL)
 	return b.String()
 }

@@ -1,8 +1,8 @@
-package main
+package contextsize
 
 import "testing"
 
-func TestParseContextSize_Lenient(t *testing.T) {
+func TestParse_Lenient(t *testing.T) {
 	// Each input must parse to the same 128000-token window, exercising the
 	// suffix, separator, whitespace, fraction, and trailing-word leniency.
 	for _, in := range []string{
@@ -16,18 +16,18 @@ func TestParseContextSize_Lenient(t *testing.T) {
 		"128ktok",
 		"0.128m",
 	} {
-		got, err := parseContextSize(in)
+		got, err := Parse(in)
 		if err != nil {
-			t.Errorf("parseContextSize(%q) errored: %v", in, err)
+			t.Errorf("Parse(%q) errored: %v", in, err)
 			continue
 		}
 		if got != 128000 {
-			t.Errorf("parseContextSize(%q) = %d, want 128000", in, got)
+			t.Errorf("Parse(%q) = %d, want 128000", in, got)
 		}
 	}
 }
 
-func TestParseContextSize_Suffixes(t *testing.T) {
+func TestParse_Suffixes(t *testing.T) {
 	cases := map[string]int{
 		"200000": 200000,
 		"1m":     1_000_000,
@@ -39,18 +39,18 @@ func TestParseContextSize_Suffixes(t *testing.T) {
 		"32k":    32_000,
 	}
 	for in, want := range cases {
-		got, err := parseContextSize(in)
+		got, err := Parse(in)
 		if err != nil {
-			t.Errorf("parseContextSize(%q) errored: %v", in, err)
+			t.Errorf("Parse(%q) errored: %v", in, err)
 			continue
 		}
 		if got != want {
-			t.Errorf("parseContextSize(%q) = %d, want %d", in, got, want)
+			t.Errorf("Parse(%q) = %d, want %d", in, got, want)
 		}
 	}
 }
 
-func TestParseContextSize_Invalid(t *testing.T) {
+func TestParse_Invalid(t *testing.T) {
 	for _, in := range []string{
 		"",        // empty
 		"   ",     // blank
@@ -61,20 +61,20 @@ func TestParseContextSize_Invalid(t *testing.T) {
 		"-5k",     // negative
 		"0.0001k", // rounds below one token
 	} {
-		if got, err := parseContextSize(in); err == nil {
-			t.Errorf("parseContextSize(%q) = %d, want error", in, got)
+		if got, err := Parse(in); err == nil {
+			t.Errorf("Parse(%q) = %d, want error", in, got)
 		}
 	}
 }
 
-func TestApplyContextSize(t *testing.T) {
+func TestApply(t *testing.T) {
 	// A model with an existing limit must keep sibling limit keys.
 	models := map[string]any{
 		"a": map[string]any{"name": "A"},
 		"b": map[string]any{"name": "B", "limit": map[string]any{"output": 8192}},
 		"c": "not-a-map", // hardened against unexpected shapes
 	}
-	applyContextSize(models, 200000)
+	Apply(models, 200000)
 
 	a := models["a"].(map[string]any)["limit"].(map[string]any)
 	if a["context"] != 200000 {

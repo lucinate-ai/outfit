@@ -1,4 +1,4 @@
-package main
+package opencode
 
 import (
 	"encoding/json"
@@ -99,8 +99,8 @@ func TestReadEnvFileVar(t *testing.T) {
 
 func TestWriteConfig_FreshFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
-	if err := writeConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
-		t.Fatalf("writeConfig: %v", err)
+	if err := WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
 	}
 
 	m := readConfigMap(t, path)
@@ -132,8 +132,8 @@ func TestWriteConfig_PreservesExistingAndComments(t *testing.T) {
 }`
 	os.WriteFile(path, []byte(seed), 0o600)
 
-	if err := writeConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
-		t.Fatalf("writeConfig: %v", err)
+	if err := WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
+		t.Fatalf("WriteConfig: %v", err)
 	}
 
 	raw, _ := os.ReadFile(path)
@@ -157,12 +157,12 @@ func TestWriteConfig_PreservesExistingAndComments(t *testing.T) {
 func TestWriteConfig_Idempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
 	for i := 0; i < 2; i++ {
-		if err := writeConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
-			t.Fatalf("writeConfig run %d: %v", i, err)
+		if err := WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
+			t.Fatalf("WriteConfig run %d: %v", i, err)
 		}
 	}
 	first, _ := os.ReadFile(path)
-	if err := writeConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
+	if err := WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := os.ReadFile(path)
@@ -174,12 +174,12 @@ func TestWriteConfig_Idempotent(t *testing.T) {
 func TestWriteConfig_DeepMergesProvider(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
 	// First add with model a.
-	writeConfig(path, "openrouter", map[string]any{
+	WriteConfig(path, "openrouter", map[string]any{
 		"options": map[string]any{"apiKey": "k", "custom": "keepme"},
 		"models":  map[string]any{"a": map[string]any{"name": "A"}},
 	}, "openrouter/a")
 	// Second add with model b; existing custom option and model a must survive.
-	writeConfig(path, "openrouter", map[string]any{
+	WriteConfig(path, "openrouter", map[string]any{
 		"models": map[string]any{"b": map[string]any{"name": "B"}},
 	}, "openrouter/b")
 
@@ -198,11 +198,11 @@ func TestWriteConfig_DeepMergesProvider(t *testing.T) {
 
 func TestRemoveConfig_WholeProviderClearsDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
-	writeConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1")
+	WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1")
 
-	n, err := removeConfig(path, "openrouter", nil)
+	n, err := RemoveConfig(path, "openrouter", nil)
 	if err != nil || n != 1 {
-		t.Fatalf("removeConfig = %d, %v; want 1, nil", n, err)
+		t.Fatalf("RemoveConfig = %d, %v; want 1, nil", n, err)
 	}
 	m := readConfigMap(t, path)
 	if _, ok := m["provider"].(map[string]any)["openrouter"]; ok {
@@ -215,7 +215,7 @@ func TestRemoveConfig_WholeProviderClearsDefault(t *testing.T) {
 
 func TestRemoveConfig_ModelKeysWithSlash(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
-	writeConfig(path, "openrouter", map[string]any{
+	WriteConfig(path, "openrouter", map[string]any{
 		"models": map[string]any{
 			"deepseek/flash": map[string]any{"name": "Flash"},
 			"deepseek/pro":   map[string]any{"name": "Pro"},
@@ -223,9 +223,9 @@ func TestRemoveConfig_ModelKeysWithSlash(t *testing.T) {
 	}, "openrouter/deepseek/flash")
 
 	// Remove the non-default model; default must remain.
-	n, err := removeConfig(path, "openrouter", []string{"deepseek/pro"})
+	n, err := RemoveConfig(path, "openrouter", []string{"deepseek/pro"})
 	if err != nil || n != 1 {
-		t.Fatalf("removeConfig = %d, %v; want 1, nil", n, err)
+		t.Fatalf("RemoveConfig = %d, %v; want 1, nil", n, err)
 	}
 	m := readConfigMap(t, path)
 	models := m["provider"].(map[string]any)["openrouter"].(map[string]any)["models"].(map[string]any)
@@ -240,7 +240,7 @@ func TestRemoveConfig_ModelKeysWithSlash(t *testing.T) {
 	}
 
 	// Remove the default model; default must be cleared.
-	if _, err := removeConfig(path, "openrouter", []string{"deepseek/flash"}); err != nil {
+	if _, err := RemoveConfig(path, "openrouter", []string{"deepseek/flash"}); err != nil {
 		t.Fatal(err)
 	}
 	m = readConfigMap(t, path)
@@ -251,11 +251,11 @@ func TestRemoveConfig_ModelKeysWithSlash(t *testing.T) {
 
 func TestRemoveConfig_NoOp(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
-	writeConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1")
+	WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1")
 
-	n, err := removeConfig(path, "does-not-exist", nil)
+	n, err := RemoveConfig(path, "does-not-exist", nil)
 	if err != nil || n != 0 {
-		t.Fatalf("removeConfig = %d, %v; want 0, nil", n, err)
+		t.Fatalf("RemoveConfig = %d, %v; want 0, nil", n, err)
 	}
 }
 
@@ -266,7 +266,7 @@ func TestResolveConfigFile(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "opencode"), 0o755)
 	jsonc := filepath.Join(dir, "opencode", "opencode.jsonc")
 	os.WriteFile(jsonc, []byte("{}"), 0o600)
-	got, err := resolveConfigFile()
+	got, err := ResolveConfigFile()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestResolveConfigFile(t *testing.T) {
 	// Defaults to opencode.json when none exist.
 	dir2 := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir2)
-	got, err = resolveConfigFile()
+	got, err = ResolveConfigFile()
 	if err != nil {
 		t.Fatal(err)
 	}

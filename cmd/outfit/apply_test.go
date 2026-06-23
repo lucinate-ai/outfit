@@ -5,6 +5,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lucinate-ai/outfit/internal/catalog"
+	"github.com/lucinate-ai/outfit/internal/opencode"
+	"github.com/lucinate-ai/outfit/internal/outfit"
 )
 
 // mustWrite writes content to path or fails the test.
@@ -15,110 +19,16 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 }
 
-func TestParseOutfit(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want selection
-	}{
-		{
-			name: "provider and family",
-			in:   "PROVIDER openrouter\nFAMILY deepseek-v4\n",
-			want: selection{provider: "openrouter", family: "deepseek-v4"},
-		},
-		{
-			name: "case-insensitive keywords",
-			in:   "provider ollama\nFamily llama\n",
-			want: selection{provider: "ollama", family: "llama"},
-		},
-		{
-			name: "model only",
-			in:   "PROVIDER llamacpp\nMODEL gemma-4-12b-it\n",
-			want: selection{provider: "llamacpp", model: "gemma-4-12b-it"},
-		},
-		{
-			name: "comments, blanks, and inline comments",
-			in:   "# my Outfit\n\nPROVIDER openrouter   # the provider\nMODEL  m1\t# inline tab comment\n",
-			want: selection{provider: "openrouter", model: "m1"},
-		},
-		{
-			name: "extra whitespace and tabs as separator",
-			in:   "PROVIDER\tollama\nFAMILY     llama\n",
-			want: selection{provider: "ollama", family: "llama"},
-		},
-		{
-			name: "context and base url",
-			in:   "PROVIDER llamacpp\nMODEL gemma\nCONTEXT 128k\nBASEURL http://localhost:9090/v1\n",
-			want: selection{provider: "llamacpp", model: "gemma", context: "128k", baseURL: "http://localhost:9090/v1"},
-		},
-		{
-			name: "base url aliases",
-			in:   "PROVIDER openai-compatible\nMODEL m\nURL https://gw/v1\n",
-			want: selection{provider: "openai-compatible", model: "m", baseURL: "https://gw/v1"},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseOutfit([]byte(tc.in))
-			if err != nil {
-				t.Fatalf("parseOutfit: %v", err)
-			}
-			if got.provider != tc.want.provider || got.family != tc.want.family || got.model != tc.want.model {
-				t.Errorf("got %+v, want %+v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestParseOutfit_Errors(t *testing.T) {
-	cases := map[string]string{
-		"missing provider":  "FAMILY llama\n",
-		"unknown keyword":   "PROVIDER ollama\nFLAVOUR vanilla\n",
-		"keyword no value":  "PROVIDER\n",
-		"too many values":   "PROVIDER a b\n",
-		"duplicate keyword": "PROVIDER a\nPROVIDER b\n",
-		"duplicate alias":   "PROVIDER a\nMODEL m\nBASEURL u1\nURL u2\n",
-	}
-	for name, in := range cases {
-		t.Run(name, func(t *testing.T) {
-			if _, err := parseOutfit([]byte(in)); err == nil {
-				t.Errorf("expected error for %q", in)
-			}
-		})
-	}
-}
-
-func TestFormatOutfitRoundTrip(t *testing.T) {
-	sel := selection{
-		provider: "openrouter",
-		family:   "deepseek-v4",
-		model:    "deepseek/deepseek-v4-pro",
-		context:  "128000",
-		baseURL:  "https://gateway.example/v1",
-	}
-	out := formatOutfit(sel)
-	if !strings.HasPrefix(out, "PROVIDER openrouter\n") {
-		t.Errorf("export not canonical:\n%s", out)
-	}
-	got, err := parseOutfit([]byte(out))
-	if err != nil {
-		t.Fatalf("re-parse: %v", err)
-	}
-	if got != sel {
-		t.Errorf("round-trip changed selection: %+v -> %+v", sel, got)
-	}
-}
-
 // TestCmdApply_ContextAndBaseURL checks that CONTEXT and BASEURL in an Outfit
 // land as limit.context on the model and options.baseURL on the provider.
 func TestCmdApply_ContextAndBaseURL(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	outfit := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfit, "PROVIDER llamacpp\nMODEL gemma\nCONTEXT 128k\nBASEURL http://127.0.0.1:9090/v1\n")
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nMODEL gemma\nCONTEXT 128k\nBASEURL http://127.0.0.1:9090/v1\n")
 	captureStdout(t, func() {
-		if err := cmdApply([]string{outfit}); err != nil {
+		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
 		}
 	})
@@ -140,10 +50,10 @@ func TestCmdExport_ContextAndBaseURL(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	outfit := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfit, "PROVIDER llamacpp\nMODEL gemma\nCONTEXT 200000\nBASEURL http://127.0.0.1:9090/v1\n")
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nMODEL gemma\nCONTEXT 200000\nBASEURL http://127.0.0.1:9090/v1\n")
 	captureStdout(t, func() {
-		if err := cmdApply([]string{outfit}); err != nil {
+		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
 		}
 	})
@@ -165,11 +75,11 @@ func TestCmdApply_EndToEnd(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
-	outfit := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfit, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
 
 	out := captureStdout(t, func() {
-		if err := cmdApply([]string{outfit}); err != nil {
+		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
 		}
 	})
@@ -201,10 +111,10 @@ func TestCmdExport_RoundTripsWithApply(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
 	// Seed config via apply, then export it back out.
-	outfit := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfit, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
 	captureStdout(t, func() {
-		if err := cmdApply([]string{outfit}); err != nil {
+		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
 		}
 	})
@@ -220,7 +130,7 @@ func TestCmdExport_RoundTripsWithApply(t *testing.T) {
 	}
 
 	// And the exported Outfit must parse cleanly.
-	if _, err := parseOutfit([]byte(out)); err != nil {
+	if _, err := outfit.Parse([]byte(out)); err != nil {
 		t.Errorf("exported Outfit does not parse: %v", err)
 	}
 }
@@ -239,10 +149,10 @@ func TestCmdExport_ModelOnlyFallsBackToModel(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	outfit := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfit, "PROVIDER llamacpp\nMODEL my-local-model\n")
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nMODEL my-local-model\n")
 	captureStdout(t, func() {
-		if err := cmdApply([]string{outfit}); err != nil {
+		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
 		}
 	})
@@ -272,11 +182,11 @@ func TestCmdExport_FamilyPlusNonDefaultModel(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
-	cat, _ := loadCatalog()
+	cat, _ := catalog.Load()
 	fam := cat.Providers["openrouter"].Families["deepseek-v4"]
 	// Find a model in the family that is not its default.
 	var nonDefault string
-	for _, k := range fam.modelKeys() {
+	for _, k := range fam.ModelKeys() {
 		if k != fam.DefaultModel {
 			nonDefault = k
 			break
@@ -286,10 +196,10 @@ func TestCmdExport_FamilyPlusNonDefaultModel(t *testing.T) {
 		t.Skip("family has no non-default model to exercise this path")
 	}
 
-	outfit := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfit, "PROVIDER openrouter\nFAMILY deepseek-v4\nMODEL "+nonDefault+"\n")
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\nMODEL "+nonDefault+"\n")
 	captureStdout(t, func() {
-		if err := cmdApply([]string{outfit}); err != nil {
+		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
 		}
 	})
@@ -312,14 +222,14 @@ func TestCmdExport_MultipleProviders(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
 	// Seed two providers with no default model, so neither is implied.
-	path, _ := resolveConfigFile()
-	cat, _ := loadCatalog()
+	path, _ := opencode.ResolveConfigFile()
+	cat, _ := catalog.Load()
 	for _, id := range []string{"ollama", "llamacpp"} {
-		block, _, err := buildProviderBlock(id, cat.Providers[id], "", "label-"+id, "", noEnv)
+		block, _, err := catalog.BuildProviderBlock(id, cat.Providers[id], "", "label-"+id, "", noEnv)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := writeConfig(path, id, block, ""); err != nil {
+		if err := opencode.WriteConfig(path, id, block, ""); err != nil {
 			t.Fatal(err)
 		}
 	}

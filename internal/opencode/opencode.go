@@ -1,4 +1,7 @@
-package main
+// Package opencode reads and writes the user's global opencode config, deep-
+// merging a managed provider block into it while preserving everything else,
+// and reconstructs provider state from it for export.
+package opencode
 
 import (
 	"encoding/json"
@@ -21,9 +24,9 @@ func envFilePath() string {
 	return ".env"
 }
 
-// resolveEnv looks up an environment variable, preferring the .env file next
+// ResolveEnv looks up an environment variable, preferring the .env file next
 // to the tool and falling back to the process environment.
-func resolveEnv(name string) string {
+func ResolveEnv(name string) string {
 	if v := readEnvFileVar(envFilePath(), name); v != "" {
 		return v
 	}
@@ -55,9 +58,9 @@ func configDir() string {
 	return filepath.Join(home, ".config", "opencode")
 }
 
-// resolveConfigFile picks the config file to update, preferring one that
+// ResolveConfigFile picks the config file to update, preferring one that
 // already exists so we don't leave a competing file alongside it.
-func resolveConfigFile() (string, error) {
+func ResolveConfigFile() (string, error) {
 	dir := configDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -102,10 +105,10 @@ func writeRoot(path string, root *hujson.Value) error {
 	return os.Chmod(path, 0o600)
 }
 
-// writeConfig deep-merges a provider block into the existing config, injecting
+// WriteConfig deep-merges a provider block into the existing config, injecting
 // nothing the caller did not put in the block. Existing settings and comments
 // outside the managed provider block are preserved.
-func writeConfig(path, providerID string, block map[string]any, defaultModel string) error {
+func WriteConfig(path, providerID string, block map[string]any, defaultModel string) error {
 	root, err := loadRoot(path)
 	if err != nil {
 		return err
@@ -138,11 +141,11 @@ func writeConfig(path, providerID string, block map[string]any, defaultModel str
 	return writeRoot(path, &root)
 }
 
-// removeConfig removes a provider, or specific model keys within it, from the
+// RemoveConfig removes a provider, or specific model keys within it, from the
 // config. When modelKeys is empty the whole provider block is removed.
 // Returns the number of removals made. The top-level default model is cleared
 // when it points at something that was removed.
-func removeConfig(path, providerID string, modelKeys []string) (int, error) {
+func RemoveConfig(path, providerID string, modelKeys []string) (int, error) {
 	root, err := loadRoot(path)
 	if err != nil {
 		return 0, err
@@ -198,20 +201,20 @@ func removeConfig(path, providerID string, modelKeys []string) (int, error) {
 	return removed, nil
 }
 
-// providerState is one configured provider, read back from the opencode config:
+// ProviderState is one configured provider, read back from the opencode config:
 // its model keys (sorted), any options.baseURL, and the per-model limit.context
 // for those models that set one. It is what `outfit export` reconstructs an
 // Outfit from.
-type providerState struct {
-	modelKeys []string
-	baseURL   string
-	contexts  map[string]int
+type ProviderState struct {
+	ModelKeys []string
+	BaseURL   string
+	Contexts  map[string]int
 }
 
-// loadConfigState reads the opencode config and reports each configured
+// LoadConfigState reads the opencode config and reports each configured
 // provider's state plus the top-level default model. It is the inverse of
-// writeConfig, used to reconstruct an Outfit on export.
-func loadConfigState(path string) (providers map[string]providerState, defaultModel string, err error) {
+// WriteConfig, used to reconstruct an Outfit on export.
+func LoadConfigState(path string) (providers map[string]ProviderState, defaultModel string, err error) {
 	root, err := loadRoot(path)
 	if err != nil {
 		return nil, "", err
@@ -220,7 +223,7 @@ func loadConfigState(path string) (providers map[string]providerState, defaultMo
 		_ = json.Unmarshal(m.Pack(), &defaultModel)
 	}
 
-	providers = map[string]providerState{}
+	providers = map[string]ProviderState{}
 	pv := root.Find("/provider")
 	if pv == nil {
 		return providers, defaultModel, nil
@@ -248,7 +251,7 @@ func loadConfigState(path string) (providers map[string]providerState, defaultMo
 			}
 		}
 		sort.Strings(keys)
-		providers[name] = providerState{modelKeys: keys, baseURL: p.Options.BaseURL, contexts: contexts}
+		providers[name] = ProviderState{ModelKeys: keys, BaseURL: p.Options.BaseURL, Contexts: contexts}
 	}
 	return providers, defaultModel, nil
 }

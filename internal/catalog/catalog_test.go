@@ -1,4 +1,4 @@
-package main
+package catalog
 
 import (
 	"os"
@@ -21,9 +21,9 @@ func envMap(m map[string]string) func(string) string {
 // be a real model key, custom providers must declare an npm package, and an
 // apiKeyPrefix is meaningless without an apiKeyEnv.
 func TestCatalogIntegrity(t *testing.T) {
-	cat, err := loadCatalog()
+	cat, err := Load()
 	if err != nil {
-		t.Fatalf("loadCatalog: %v", err)
+		t.Fatalf("Load: %v", err)
 	}
 	if len(cat.Providers) == 0 {
 		t.Fatal("no providers in catalogue")
@@ -65,49 +65,49 @@ func TestCatalogIntegrity(t *testing.T) {
 // TestMatchFamily checks the reverse lookup used by `outfit export`: a set of
 // configured model keys maps back to a family only when it matches exactly.
 func TestMatchFamily(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["openrouter"]
-	famKeys := p.Families["deepseek-v4"].modelKeys()
+	famKeys := p.Families["deepseek-v4"].ModelKeys()
 
-	if got := matchFamily(p, famKeys); got != "deepseek-v4" {
+	if got := MatchFamily(p, famKeys); got != "deepseek-v4" {
 		t.Errorf("exact match = %q, want deepseek-v4", got)
 	}
 
 	// A superset (all the family's models plus a stray) is not a match.
-	if got := matchFamily(p, append(append([]string{}, famKeys...), "stray-model")); got != "" {
+	if got := MatchFamily(p, append(append([]string{}, famKeys...), "stray-model")); got != "" {
 		t.Errorf("superset matched %q, want no match", got)
 	}
 
 	// A subset (one model short) is not a match either.
 	if len(famKeys) > 1 {
-		if got := matchFamily(p, famKeys[:len(famKeys)-1]); got != "" {
+		if got := MatchFamily(p, famKeys[:len(famKeys)-1]); got != "" {
 			t.Errorf("subset matched %q, want no match", got)
 		}
 	}
 
 	// Unrelated keys match nothing.
-	if got := matchFamily(p, []string{"something-else"}); got != "" {
+	if got := MatchFamily(p, []string{"something-else"}); got != "" {
 		t.Errorf("unrelated keys matched %q, want no match", got)
 	}
 }
 
 func TestResolveCatalogPath(t *testing.T) {
-	t.Setenv(providersEnv, "/from/env.yaml")
-	if got := resolveCatalogPath("/from/flag.yaml"); got != "/from/flag.yaml" {
+	t.Setenv(ProvidersEnv, "/from/env.yaml")
+	if got := ResolveCatalogPath("/from/flag.yaml"); got != "/from/flag.yaml" {
 		t.Errorf("flag should win, got %q", got)
 	}
-	if got := resolveCatalogPath(""); got != "/from/env.yaml" {
+	if got := ResolveCatalogPath(""); got != "/from/env.yaml" {
 		t.Errorf("env should be used when flag empty, got %q", got)
 	}
-	t.Setenv(providersEnv, "")
-	if got := resolveCatalogPath(""); got != "" {
+	t.Setenv(ProvidersEnv, "")
+	if got := ResolveCatalogPath(""); got != "" {
 		t.Errorf("expected empty (embedded), got %q", got)
 	}
 }
 
 func TestLoadCatalogFrom(t *testing.T) {
 	// Embedded fallback.
-	if _, err := loadCatalogFrom(""); err != nil {
+	if _, err := LoadFrom(""); err != nil {
 		t.Fatalf("embedded catalogue: %v", err)
 	}
 
@@ -125,9 +125,9 @@ func TestLoadCatalogFrom(t *testing.T) {
             name: Model One
 `), 0o600)
 
-	cat, err := loadCatalogFrom(path)
+	cat, err := LoadFrom(path)
 	if err != nil {
-		t.Fatalf("loadCatalogFrom: %v", err)
+		t.Fatalf("LoadFrom: %v", err)
 	}
 	if _, ok := cat.Providers["mine"]; !ok {
 		t.Error("custom provider not loaded from override file")
@@ -137,20 +137,20 @@ func TestLoadCatalogFrom(t *testing.T) {
 	}
 
 	// Missing file is an error.
-	if _, err := loadCatalogFrom(filepath.Join(dir, "nope.yaml")); err == nil {
+	if _, err := LoadFrom(filepath.Join(dir, "nope.yaml")); err == nil {
 		t.Error("expected error for missing override file")
 	}
 }
 
 func TestBuildProviderBlock_OpenRouterKeyInjected(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["openrouter"]
 
-	block, model, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
+	block, model, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-abc",
 	}))
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	if want := "openrouter/deepseek/deepseek-v4-flash"; model != want {
 		t.Errorf("default model = %q, want %q", model, want)
@@ -165,17 +165,17 @@ func TestBuildProviderBlock_OpenRouterKeyInjected(t *testing.T) {
 }
 
 func TestBuildProviderBlock_RequiredKeyMissing(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["openrouter"]
-	if _, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "", noEnv); err == nil {
+	if _, _, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "", noEnv); err == nil {
 		t.Fatal("expected error when required key is missing")
 	}
 }
 
 func TestBuildProviderBlock_KeyPrefixMismatch(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["openrouter"]
-	_, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
+	_, _, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "wrong-prefix-key",
 	}))
 	if err == nil || !strings.Contains(err.Error(), "start with") {
@@ -184,14 +184,14 @@ func TestBuildProviderBlock_KeyPrefixMismatch(t *testing.T) {
 }
 
 func TestBuildProviderBlock_BedrockNoKeyRegionFromEnv(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["amazon-bedrock"]
 
-	block, model, err := buildProviderBlock("amazon-bedrock", p, "claude", "", "", envMap(map[string]string{
+	block, model, err := BuildProviderBlock("amazon-bedrock", p, "claude", "", "", envMap(map[string]string{
 		"AWS_REGION": "eu-west-2",
 	}))
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	opts := block["options"].(map[string]any)
 	if _, ok := opts["apiKey"]; ok {
@@ -206,12 +206,12 @@ func TestBuildProviderBlock_BedrockNoKeyRegionFromEnv(t *testing.T) {
 }
 
 func TestBuildProviderBlock_CustomProviderDefaults(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, model, err := buildProviderBlock("ollama", p, "llama", "", "", noEnv)
+	block, model, err := BuildProviderBlock("ollama", p, "llama", "", "", noEnv)
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	if block["npm"] != "@ai-sdk/openai-compatible" {
 		t.Errorf("npm = %v", block["npm"])
@@ -226,12 +226,12 @@ func TestBuildProviderBlock_CustomProviderDefaults(t *testing.T) {
 }
 
 func TestBuildProviderBlock_ModelOverrideAddsEntry(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, model, err := buildProviderBlock("ollama", p, "", "my-model", "", noEnv)
+	block, model, err := BuildProviderBlock("ollama", p, "", "my-model", "", noEnv)
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	if model != "ollama/my-model" {
 		t.Errorf("model = %q, want ollama/my-model", model)
@@ -244,9 +244,9 @@ func TestBuildProviderBlock_ModelOverrideAddsEntry(t *testing.T) {
 }
 
 func TestBuildProviderBlock_UnknownFamily(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["openrouter"]
-	if _, _, err := buildProviderBlock("openrouter", p, "nope", "", "", noEnv); err == nil {
+	if _, _, err := BuildProviderBlock("openrouter", p, "nope", "", "", noEnv); err == nil {
 		t.Fatal("expected error for unknown family")
 	}
 }
@@ -255,14 +255,14 @@ func TestBuildProviderBlock_UnknownFamily(t *testing.T) {
 // wins over both the catalogue's static baseURL and the per-provider
 // optionsFromEnv mapping (here OLLAMA_BASE_URL).
 func TestBuildProviderBlock_BaseURLFlagOverrides(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := buildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
 		"OLLAMA_BASE_URL": "https://per-provider.example/v1",
 	}))
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	opts := block["options"].(map[string]any)
 	if opts["baseURL"] != "https://flag.example/v1" {
@@ -273,14 +273,14 @@ func TestBuildProviderBlock_BaseURLFlagOverrides(t *testing.T) {
 // TestBuildProviderBlock_BaseURLFromEnv checks that, with no flag, the general
 // OUTFIT_BASE_URL env var overrides the catalogue's static baseURL.
 func TestBuildProviderBlock_BaseURLFromEnv(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := buildProviderBlock("ollama", p, "llama", "", "", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "", envMap(map[string]string{
 		baseURLEnv: "https://from-env.example/v1",
 	}))
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	opts := block["options"].(map[string]any)
 	if opts["baseURL"] != "https://from-env.example/v1" {
@@ -291,14 +291,14 @@ func TestBuildProviderBlock_BaseURLFromEnv(t *testing.T) {
 // TestBuildProviderBlock_BaseURLFlagBeatsEnv checks the precedence: an explicit
 // --base-url flag wins over OUTFIT_BASE_URL.
 func TestBuildProviderBlock_BaseURLFlagBeatsEnv(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := buildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
 		baseURLEnv: "https://from-env.example/v1",
 	}))
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	opts := block["options"].(map[string]any)
 	if opts["baseURL"] != "https://flag.example/v1" {
@@ -310,14 +310,14 @@ func TestBuildProviderBlock_BaseURLFlagBeatsEnv(t *testing.T) {
 // even to a provider that carries no baseURL in the catalogue, injecting a fresh
 // options.baseURL.
 func TestBuildProviderBlock_BaseURLOnPlainProvider(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["openrouter"]
 
-	block, _, err := buildProviderBlock("openrouter", p, "deepseek-v4", "", "https://gateway.example/v1", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "https://gateway.example/v1", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-abc",
 	}))
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	opts := block["options"].(map[string]any)
 	if opts["baseURL"] != "https://gateway.example/v1" {
@@ -328,12 +328,12 @@ func TestBuildProviderBlock_BaseURLOnPlainProvider(t *testing.T) {
 // TestBuildProviderBlock_NoBaseURLOverride confirms the catalogue's static
 // baseURL is left untouched when neither flag nor env var is set.
 func TestBuildProviderBlock_NoBaseURLOverride(t *testing.T) {
-	cat, _ := loadCatalog()
+	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := buildProviderBlock("ollama", p, "llama", "", "", noEnv)
+	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "", noEnv)
 	if err != nil {
-		t.Fatalf("buildProviderBlock: %v", err)
+		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	opts := block["options"].(map[string]any)
 	if opts["baseURL"] != "http://localhost:11434/v1" {

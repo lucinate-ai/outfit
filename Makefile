@@ -2,7 +2,7 @@ export CGO_ENABLED ?= 0
 
 .PHONY: build
 build:
-	go build -ldflags="-s -w" -o outfit
+	go build -ldflags="-s -w" -o outfit ./cmd/outfit
 
 .PHONY: fmt
 fmt:
@@ -10,7 +10,7 @@ fmt:
 
 .PHONY: run
 run:
-	go run . $(filter-out $@,$(MAKECMDGOALS))
+	go run ./cmd/outfit $(filter-out $@,$(MAKECMDGOALS))
 
 .PHONY: test
 test:
