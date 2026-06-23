@@ -6,16 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.0.0] - 2026-06-23
 ### Added
-- feat: add `Outfit` files — declarative, Dockerfile-style provider selections
-  applied with `oc-config apply` (defaults to `./Outfit`). Supports `PROVIDER`,
-  `FAMILY`, `MODEL`, `CONTEXT`, and `BASEURL` instructions
-- feat: add `oc-config export` to capture the current config as an `Outfit`
+- feat: add --context flag to set model context window (#2)
+- feat: add declarative Outfit files for provider config
+- feat: allow API base URL override via flag or env var (#1)
 
 ### Changed
-- docs: document the `Outfit` file format in `docs/outfit-file.md`
-- docs: move the llama.cpp guides under `examples/`, each with an `Outfit`
+- docs: add Homebrew installation instructions
+
+### Other
+- refactor!: rename tool, binary and module to outfit
 
 ## [0.2.0] - 2026-06-22
 ### Added
