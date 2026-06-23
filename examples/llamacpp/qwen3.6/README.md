@@ -86,9 +86,9 @@ curl http://127.0.0.1:8080/v1/models
 the [`Outfit`](Outfit) in this directory:
 
 ```sh
-oc-config apply examples/llamacpp/qwen3.6/Outfit
+outfit apply examples/llamacpp/qwen3.6/Outfit
 # or, from this directory:
-oc-config apply
+outfit apply
 ```
 
 The Outfit is:

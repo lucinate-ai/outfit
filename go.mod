@@ -1,4 +1,4 @@
-module github.com/outofcoffee/configure-opencode
+module github.com/lucinate-ai/outfit
 
 go 1.24.13
 

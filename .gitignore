@@ -1,9 +1,8 @@
 # Secrets — contains the OpenRouter API key
 .env
 
-# Compiled binary (`go build -o oc-config .`, or the default `go build .` name)
-/oc-config
-/configure-opencode
+# Compiled binary (`go build -o outfit .`, or the default `go build .` name)
+/outfit
 
 # GoReleaser output
 /dist/

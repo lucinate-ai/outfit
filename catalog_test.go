@@ -62,7 +62,7 @@ func TestCatalogIntegrity(t *testing.T) {
 	}
 }
 
-// TestMatchFamily checks the reverse lookup used by `oc-config export`: a set of
+// TestMatchFamily checks the reverse lookup used by `outfit export`: a set of
 // configured model keys maps back to a family only when it matches exactly.
 func TestMatchFamily(t *testing.T) {
 	cat, _ := loadCatalog()
@@ -271,7 +271,7 @@ func TestBuildProviderBlock_BaseURLFlagOverrides(t *testing.T) {
 }
 
 // TestBuildProviderBlock_BaseURLFromEnv checks that, with no flag, the general
-// OC_CONFIG_BASE_URL env var overrides the catalogue's static baseURL.
+// OUTFIT_BASE_URL env var overrides the catalogue's static baseURL.
 func TestBuildProviderBlock_BaseURLFromEnv(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["ollama"]
@@ -284,12 +284,12 @@ func TestBuildProviderBlock_BaseURLFromEnv(t *testing.T) {
 	}
 	opts := block["options"].(map[string]any)
 	if opts["baseURL"] != "https://from-env.example/v1" {
-		t.Errorf("baseURL = %v, want the OC_CONFIG_BASE_URL value", opts["baseURL"])
+		t.Errorf("baseURL = %v, want the OUTFIT_BASE_URL value", opts["baseURL"])
 	}
 }
 
 // TestBuildProviderBlock_BaseURLFlagBeatsEnv checks the precedence: an explicit
-// --base-url flag wins over OC_CONFIG_BASE_URL.
+// --base-url flag wins over OUTFIT_BASE_URL.
 func TestBuildProviderBlock_BaseURLFlagBeatsEnv(t *testing.T) {
 	cat, _ := loadCatalog()
 	p := cat.Providers["ollama"]

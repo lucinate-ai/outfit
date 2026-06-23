@@ -2,7 +2,7 @@ export CGO_ENABLED ?= 0
 
 .PHONY: build
 build:
-	go build -ldflags="-s -w" -o oc-config
+	go build -ldflags="-s -w" -o outfit
 
 .PHONY: fmt
 fmt:

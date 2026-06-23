@@ -1,4 +1,4 @@
-# Provider and model-family catalogue for oc-config.
+# Provider and model-family catalogue for outfit.
 #
 # This file is embedded into the binary at build time (see //go:embed in
 # catalog.go) but kept external so providers, model families, and endpoints can
@@ -7,7 +7,7 @@
 # Per provider:
 #   name            display name written into the opencode config (optional)
 #   npm             SDK package for custom providers (e.g. openai-compatible)
-#   description     shown by `oc-config list`
+#   description     shown by `outfit list`
 #   apiKeyEnv       env var (looked up in .env, then the environment) whose
 #                   value is injected as options.apiKey
 #   apiKeyRequired  fail if apiKeyEnv resolves to nothing

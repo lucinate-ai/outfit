@@ -14,17 +14,17 @@ CONTEXT  128k                       # optional; context window
 BASEURL  https://gateway/v1         # optional; API base URL override
 ```
 
-Applying it is the same as running the equivalent `oc-config add`, so everything
+Applying it is the same as running the equivalent `outfit add`, so everything
 you already have in your opencode config is preserved.
 
 ## Applying an Outfit
 
 ```sh
-oc-config apply            # reads ./Outfit in the current directory
-oc-config apply path/to/Outfit
+outfit apply            # reads ./Outfit in the current directory
+outfit apply path/to/Outfit
 ```
 
-Run `oc-config apply` with no arguments and it looks for a file named `Outfit`
+Run `outfit apply` with no arguments and it looks for a file named `Outfit`
 in the current directory. Point it at any path to apply a different file.
 
 After applying, just run `opencode`.
@@ -54,12 +54,12 @@ Rules:
   llama.cpp server on a non-default port. `URL`, `BASE-URL`, and `BASE_URL` are
   accepted as aliases.
 - Keywords are **case-insensitive** — `provider`, `Provider`, and `PROVIDER` are
-  all accepted — but **UPPERCASE is canonical** and is what `oc-config export`
+  all accepted — but **UPPERCASE is canonical** and is what `outfit export`
   writes.
 - **Comments** start with `#`, either on their own line or at the end of a line.
   Blank lines are ignored.
 
-To see the available providers, families, and models, run `oc-config list`.
+To see the available providers, families, and models, run `outfit list`.
 
 ## Examples
 
@@ -71,7 +71,7 @@ MODEL    qwen3.6-35b-a3b
 ```
 
 A whole model family from OpenRouter (its key comes from your `.env` or
-environment, exactly as with `oc-config add`):
+environment, exactly as with `outfit add`):
 
 ```dockerfile
 PROVIDER openrouter
@@ -89,18 +89,18 @@ Ready-to-use Outfits live under [`examples/`](../examples/).
 
 ## Capturing your current setup
 
-`oc-config export` prints your current opencode configuration as an Outfit, so
+`outfit export` prints your current opencode configuration as an Outfit, so
 you can save a setup you built by hand:
 
 ```sh
-oc-config export > Outfit
+outfit export > Outfit
 ```
 
 By default it exports the provider behind your default model (or the only
 configured provider). If you have several, choose one with `-p`:
 
 ```sh
-oc-config export -p openrouter > Outfit
+outfit export -p openrouter > Outfit
 ```
 
 Where the configured models match a known family, export names the `FAMILY`;

@@ -1,4 +1,4 @@
-// Command oc-config configures the current user's global opencode installation
+// Command outfit configures the current user's global opencode installation
 // to use a model provider, by deep-merging provider settings into the opencode
 // config under ${XDG_CONFIG_HOME:-$HOME/.config}/opencode.
 //
@@ -8,21 +8,21 @@
 //
 // Usage:
 //
-//	oc-config list
-//	oc-config add    --provider <name> [--model-family <family>] [--model <id>]
-//	oc-config remove --provider <name> [--model-family <family>] [--model <id>]
-//	oc-config apply  [path]   # apply an Outfit file (defaults to ./Outfit)
-//	oc-config export [-p name] # print the current config as an Outfit
+//	outfit list
+//	outfit add    --provider <name> [--model-family <family>] [--model <id>]
+//	outfit remove --provider <name> [--model-family <family>] [--model <id>]
+//	outfit apply  [path]   # apply an Outfit file (defaults to ./Outfit)
+//	outfit export [-p name] # print the current config as an Outfit
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -c (context),
 // -b (base-url).
 //
 // The API base URL can be overridden for any provider with --base-url/-b or the
-// OC_CONFIG_BASE_URL environment variable; the flag wins over the env var, and
+// OUTFIT_BASE_URL environment variable; the flag wins over the env var, and
 // either wins over the catalogue's defaults.
 //
 // An Outfit is a declarative, Dockerfile-style file describing one provider
-// selection, applied with `oc-config apply`; see outfit.go.
+// selection, applied with `outfit apply`; see outfit.go.
 package main
 
 import (
@@ -68,25 +68,25 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `oc-config — configure opencode model providers
+	fmt.Fprint(os.Stderr, `outfit — configure opencode model providers
 
 Usage:
-  oc-config list
-  oc-config add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>]
-  oc-config remove --provider <name> [--model-family <family>] [--model <id>]
-  oc-config apply  [path]              (defaults to ./Outfit)
-  oc-config export [--provider <name>]
+  outfit list
+  outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>]
+  outfit remove --provider <name> [--model-family <family>] [--model <id>]
+  outfit apply  [path]              (defaults to ./Outfit)
+  outfit export [--provider <name>]
 
 Flags:
-  -p, --provider       provider name (see `+"`oc-config list`"+`)
+  -p, --provider       provider name (see `+"`outfit list`"+`)
   -f, --model-family   model family to add or remove
   -m, --model          model id to set as default / to add or remove
   -c, --context        context window size for the added model(s); accepts
                        human suffixes (128k, 1m) or an absolute count (200000)
   -b, --base-url       override the provider API base URL
-                       (or set OC_CONFIG_BASE_URL)
+                       (or set OUTFIT_BASE_URL)
       --providers      path to a providers.yaml override
-                       (or set OC_CONFIG_PROVIDERS)
+                       (or set OUTFIT_PROVIDERS)
 
 add: deep-merges the provider into the opencode config, preserving everything
      else. Specify a family and/or an explicit model. --context sets the
@@ -95,7 +95,7 @@ remove: removes the provider, or just the named models when a family/model is
         given. Clears the default model if it pointed at something removed.
 apply: applies an Outfit file — a declarative, Dockerfile-style description of
        one provider selection — as if you had run the equivalent add.
-export: prints the current config as an Outfit (oc-config export > Outfit).
+export: prints the current config as an Outfit (outfit export > Outfit).
 `)
 }
 
@@ -127,7 +127,7 @@ func parseSelection(name string, args []string) (selection, error) {
 		return s, err
 	}
 	if s.provider == "" {
-		return s, fmt.Errorf("--provider/-p is required (see `oc-config list`)")
+		return s, fmt.Errorf("--provider/-p is required (see `outfit list`)")
 	}
 	return s, nil
 }
@@ -154,7 +154,7 @@ func applySelection(sel selection) error {
 	}
 	p, ok := cat.Providers[sel.provider]
 	if !ok {
-		return fmt.Errorf("unknown provider %q (see `oc-config list`)", sel.provider)
+		return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.provider)
 	}
 
 	block, defaultModel, err := buildProviderBlock(sel.provider, p, sel.family, sel.model, sel.baseURL, resolveEnv)
@@ -208,7 +208,7 @@ func applySelection(sel selection) error {
 }
 
 // cmdApply reads an Outfit file and applies it. The path defaults to ./Outfit
-// when none is given, so a bare `oc-config apply` works in a directory that
+// when none is given, so a bare `outfit apply` works in a directory that
 // holds one.
 func cmdApply(args []string) error {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
@@ -226,7 +226,7 @@ func cmdApply(args []string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) && path == DefaultOutfitFile {
-			return fmt.Errorf("no %s found in the current directory (pass a path: oc-config apply <file>)", DefaultOutfitFile)
+			return fmt.Errorf("no %s found in the current directory (pass a path: outfit apply <file>)", DefaultOutfitFile)
 		}
 		return fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -239,7 +239,7 @@ func cmdApply(args []string) error {
 }
 
 // cmdExport reconstructs an Outfit from the current opencode config and prints
-// it to stdout, so an existing setup can be captured (oc-config export > Outfit).
+// it to stdout, so an existing setup can be captured (outfit export > Outfit).
 func cmdExport(args []string) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	var provider, providers string
@@ -369,11 +369,11 @@ func cmdRemove(args []string) error {
 	if sel.family != "" {
 		p, ok := cat.Providers[sel.provider]
 		if !ok {
-			return fmt.Errorf("unknown provider %q (see `oc-config list`)", sel.provider)
+			return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.provider)
 		}
 		fam, ok := p.Families[sel.family]
 		if !ok {
-			return fmt.Errorf("provider %q has no model family %q (see `oc-config list`)", sel.provider, sel.family)
+			return fmt.Errorf("provider %q has no model family %q (see `outfit list`)", sel.provider, sel.family)
 		}
 		modelKeys = append(modelKeys, fam.modelKeys()...)
 	}

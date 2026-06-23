@@ -200,7 +200,7 @@ func removeConfig(path, providerID string, modelKeys []string) (int, error) {
 
 // providerState is one configured provider, read back from the opencode config:
 // its model keys (sorted), any options.baseURL, and the per-model limit.context
-// for those models that set one. It is what `oc-config export` reconstructs an
+// for those models that set one. It is what `outfit export` reconstructs an
 // Outfit from.
 type providerState struct {
 	modelKeys []string

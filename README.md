@@ -1,4 +1,6 @@
-# oc-config
+<p align="center">
+  <img src="assets/logo.png" alt="outfit" width="520">
+</p>
 
 Point [opencode](https://opencode.ai) at the model providers you actually use —
 OpenRouter, AWS Bedrock, Ollama, llama.cpp, or any OpenAI-compatible endpoint —
@@ -20,25 +22,25 @@ already have.
 With [Homebrew](https://brew.sh):
 
 ```sh
-brew install outofcoffee/tap/oc-config
+brew install lucinate-ai/tap/outfit
 ```
 
-To upgrade later, run `brew upgrade oc-config`.
+To upgrade later, run `brew upgrade outfit`.
 
 ### From source
 
 ```sh
-go build -o oc-config .
+go build -o outfit .
 ```
 
-Drop the resulting `oc-config` binary anywhere on your `PATH`.
+Drop the resulting `outfit` binary anywhere on your `PATH`.
 
 ## Quickstart
 
 See what's on the menu:
 
 ```sh
-oc-config list
+outfit list
 ```
 
 Add a provider and a model family:
@@ -47,7 +49,7 @@ Add a provider and a model family:
 # OpenRouter needs a key — put it in .env first:
 echo 'DEEPSEEK_API_KEY=sk-or-v1-...' > .env
 
-oc-config add --provider openrouter --model-family deepseek-v4
+outfit add --provider openrouter --model-family deepseek-v4
 ```
 
 Then just run `opencode`.
@@ -55,11 +57,11 @@ Then just run `opencode`.
 ## Usage
 
 ```sh
-oc-config list
-oc-config add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--base-url <url>]
-oc-config remove --provider <name> [--model-family <family>] [--model <id>]
-oc-config apply  [path]                 # apply an Outfit file (default ./Outfit)
-oc-config export [--provider <name>]    # print the current config as an Outfit
+outfit list
+outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--base-url <url>]
+outfit remove --provider <name> [--model-family <family>] [--model <id>]
+outfit apply  [path]                 # apply an Outfit file (default ./Outfit)
+outfit export [--provider <name>]    # print the current config as an Outfit
 ```
 
 Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-c` (context), `-b` (base-url).
@@ -68,27 +70,27 @@ Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-c` (context),
 
 ```sh
 # A local Ollama model (no key required)
-oc-config add -p ollama -f llama
+outfit add -p ollama -f llama
 
 # Claude on AWS Bedrock (uses your AWS credentials)
-oc-config add -p amazon-bedrock -f claude
+outfit add -p amazon-bedrock -f claude
 
 # Any OpenAI-compatible endpoint, base URL via flag
 OPENAI_API_KEY=sk-... \
-  oc-config add -p openai-compatible -m my-model --base-url https://my-endpoint/v1
+  outfit add -p openai-compatible -m my-model --base-url https://my-endpoint/v1
 
 # Pin a specific default model
-oc-config add -p openrouter -f deepseek-v4 -m deepseek/deepseek-v4-pro
+outfit add -p openrouter -f deepseek-v4 -m deepseek/deepseek-v4-pro
 
 # Set the context window — human suffixes or an absolute count, both fine
-oc-config add -p llamacpp -m my-model -c 128k
-oc-config add -p llamacpp -m my-model --context 200000
+outfit add -p llamacpp -m my-model -c 128k
+outfit add -p llamacpp -m my-model --context 200000
 
 # Take a provider back out
-oc-config remove -p ollama
+outfit remove -p ollama
 
 # Or just drop one family's models
-oc-config remove -p openrouter -f deepseek-v4
+outfit remove -p openrouter -f deepseek-v4
 ```
 
 `add` sets the chosen model as opencode's default. `remove` clears the default
@@ -113,9 +115,9 @@ BASEURL  https://gateway/v1         # optional; API base URL override
 ```
 
 ```sh
-oc-config apply              # reads ./Outfit and applies it
-oc-config apply path/to/Outfit
-oc-config export > Outfit    # capture your current setup as an Outfit
+outfit apply              # reads ./Outfit and applies it
+outfit apply path/to/Outfit
+outfit export > Outfit    # capture your current setup as an Outfit
 ```
 
 An Outfit describes one provider selection and applies exactly like the
@@ -124,18 +126,18 @@ and ready-to-use examples live under [`examples/`](examples/).
 
 ## Keys and endpoints
 
-Each provider declares which environment variable holds its key (`oc-config
+Each provider declares which environment variable holds its key (`outfit
 list` shows them). Values are looked up in `.env` next to the tool first, then
 your shell environment. Local providers like Ollama and llama.cpp need no key;
 Bedrock authenticates through your AWS credentials.
 
 Base URLs default to the usual local ports. Override the endpoint for **any**
-provider with `--base-url`/`-b` or the `OC_CONFIG_BASE_URL` env var — handy for
+provider with `--base-url`/`-b` or the `OUTFIT_BASE_URL` env var — handy for
 proxies, gateways, or a server on a non-default host:
 
 ```sh
-oc-config add -p openai-compatible -m my-model --base-url https://gateway/v1
-OC_CONFIG_BASE_URL=https://gateway/v1 oc-config add -p openai-compatible -m my-model
+outfit add -p openai-compatible -m my-model --base-url https://gateway/v1
+OUTFIT_BASE_URL=https://gateway/v1 outfit add -p openai-compatible -m my-model
 ```
 
 The flag wins over the env var, and either wins over the catalogue's defaults
@@ -152,16 +154,16 @@ with a ready-to-apply `Outfit`:
 
 ## Adding providers and models
 
-Everything `oc-config` knows lives in `providers.yaml`. Add a provider, a model
+Everything `outfit` knows lives in `providers.yaml`. Add a provider, a model
 family, or a new model there and rebuild — no Go required. The file is commented
 with the schema.
 
-Don't want to rebuild? Point `oc-config` at your own catalogue at runtime — the
+Don't want to rebuild? Point `outfit` at your own catalogue at runtime — the
 flag wins, then the env var, then the built-in default:
 
 ```sh
-oc-config list --providers ./my-providers.yaml
-OC_CONFIG_PROVIDERS=./my-providers.yaml oc-config list
+outfit list --providers ./my-providers.yaml
+OUTFIT_PROVIDERS=./my-providers.yaml outfit list
 ```
 
 The `.env` file and the built binary are git-ignored.

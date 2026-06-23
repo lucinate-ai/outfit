@@ -1,10 +1,10 @@
 version: 2
 
-project_name: oc-config
+project_name: outfit
 
 builds:
-  - id: oc-config
-    binary: oc-config
+  - id: outfit
+    binary: outfit
     main: .
     env:
       - CGO_ENABLED=0
@@ -27,16 +27,16 @@ archives:
         formats: [zip]
 
 brews:
-  - name: oc-config
+  - name: outfit
     # Publish the formula to the dedicated tap repository.
     repository:
-      owner: outofcoffee
+      owner: lucinate-ai
       name: homebrew-tap
       branch: main
       # Uses a PAT with write access to the tap repo (the default GITHUB_TOKEN
       # only has access to this repository, not the tap).
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/outofcoffee/configure-opencode"
+    homepage: "https://github.com/lucinate-ai/outfit"
     description: "Configure opencode provider catalogues"
     license: "MIT"
     # Skip publishing the formula for pre-release tags.
@@ -45,7 +45,7 @@ brews:
       name: goreleaser-bot
       email: bot@goreleaser.com
     test: |
-      system "#{bin}/oc-config", "--help"
+      system "#{bin}/outfit", "--help"
 
 checksum:
   name_template: checksums.txt

@@ -8,7 +8,7 @@ import (
 )
 
 // An Outfit is a declarative description of a single opencode provider plus an
-// optional model family and/or model — the file equivalent of one `oc-config
+// optional model family and/or model — the file equivalent of one `outfit
 // add` invocation. It uses a flat, Dockerfile-style syntax:
 //
 //	# point opencode at one provider
@@ -19,7 +19,7 @@ import (
 //	BASEURL  https://gateway/v1         # optional; API base URL override
 //
 // Keywords are matched case-insensitively, but UPPERCASE is canonical (it is
-// what `oc-config export` emits). Blank lines, full-line `#` comments, and
+// what `outfit export` emits). Blank lines, full-line `#` comments, and
 // trailing ` #` comments are ignored.
 
 // Outfit keywords, in their canonical (lower-cased) form for matching.
@@ -45,7 +45,7 @@ func canonicalKeyword(kw string) string {
 	}
 }
 
-// DefaultOutfitFile is the filename `oc-config apply` looks for when no path is
+// DefaultOutfitFile is the filename `outfit apply` looks for when no path is
 // given.
 const DefaultOutfitFile = "Outfit"
 

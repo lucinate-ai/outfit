@@ -12,13 +12,13 @@ import (
 
 // providersEnv names the environment variable that points at a providers.yaml
 // override.
-const providersEnv = "OC_CONFIG_PROVIDERS"
+const providersEnv = "OUTFIT_PROVIDERS"
 
 // baseURLEnv names the environment variable that overrides the provider's API
 // base URL, regardless of which provider is selected. The --base-url flag takes
 // precedence over it; both win over the catalogue's static and per-provider
 // (optionsFromEnv) base URLs.
-const baseURLEnv = "OC_CONFIG_BASE_URL"
+const baseURLEnv = "OUTFIT_BASE_URL"
 
 // providersYAML is the externalised provider/model-family catalogue, embedded
 // into the binary at build time but maintained as a plain file.
@@ -52,7 +52,7 @@ type Family struct {
 }
 
 // resolveCatalogPath determines which catalogue file to use: the flag value if
-// given, otherwise the OC_CONFIG_PROVIDERS env var, otherwise "" (embedded).
+// given, otherwise the OUTFIT_PROVIDERS env var, otherwise "" (embedded).
 func resolveCatalogPath(flagPath string) string {
 	if flagPath != "" {
 		return flagPath
@@ -114,7 +114,7 @@ func (f *Family) modelKeys() []string {
 }
 
 // matchFamily returns the name of the provider family whose model set exactly
-// matches keys, or "" if none does. It lets `oc-config export` name a family
+// matches keys, or "" if none does. It lets `outfit export` name a family
 // instead of listing the individual models it expands to.
 func matchFamily(p *Provider, keys []string) string {
 	want := make(map[string]bool, len(keys))
@@ -146,7 +146,7 @@ func matchFamily(p *Provider, keys []string) string {
 // resolve looks up env vars (typically from .env, then the environment).
 //
 // baseURLOverride, when non-empty, sets options.baseURL for any provider. It
-// comes from the --base-url flag; when empty, the OC_CONFIG_BASE_URL env var is
+// comes from the --base-url flag; when empty, the OUTFIT_BASE_URL env var is
 // consulted via resolve. Either wins over the catalogue's static baseURL and
 // any per-provider optionsFromEnv mapping.
 func buildProviderBlock(id string, p *Provider, familyName, modelOverride, baseURLOverride string, resolve func(string) string) (block map[string]any, defaultModel string, err error) {
@@ -193,7 +193,7 @@ func buildProviderBlock(id string, p *Provider, familyName, modelOverride, baseU
 	if familyName != "" {
 		fam, ok := p.Families[familyName]
 		if !ok {
-			return nil, "", fmt.Errorf("provider %q has no model family %q (see `oc-config list`)", id, familyName)
+			return nil, "", fmt.Errorf("provider %q has no model family %q (see `outfit list`)", id, familyName)
 		}
 		for k, v := range fam.Models {
 			models[k] = v

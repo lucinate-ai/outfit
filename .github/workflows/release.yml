@@ -48,5 +48,5 @@ jobs:
         env:
           # Creates the release in this repo.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Pushes the Homebrew formula to outofcoffee/homebrew-tap.
+          # Pushes the Homebrew formula to lucinate-ai/homebrew-tap.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`oc-config` is a Go CLI that configures the current user's global [opencode](https://opencode.ai) installation to use a model provider, by deep-merging provider settings into the opencode config under `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`.
+`outfit` is a Go CLI that configures the current user's global [opencode](https://opencode.ai) installation to use a model provider, by deep-merging provider settings into the opencode config under `${XDG_CONFIG_HOME:-$HOME/.config}/opencode`.
 
 ## Commands
 
@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 go test ./...                  # run the suite
 go test ./... -cover           # with coverage (keep total >= 80%)
 go vet ./...                   # vet
-go build -o oc-config .        # build the CLI binary
+go build -o outfit .        # build the CLI binary
 gofmt -w *.go                  # format
 ```
 
@@ -22,7 +22,7 @@ Run a single test: `go test -run TestWriteConfig_Idempotent ./...`
 
 - `main.go` — CLI: command dispatch (`add`/`remove`/`list`/`apply`/`export`), flag parsing (`parseSelection` registers both long and short flags against the same vars), and user-facing output. `add` and `apply` share `applySelection`, the core that writes one provider selection.
 - `outfit.go` — the `Outfit` file format: a flat, Dockerfile-style description of one provider selection (`PROVIDER`/`FAMILY`/`MODEL`/`CONTEXT`/`BASEURL`, the last two mapping to `--context`/`--base-url`). `parseOutfit` reads it into a `selection` (keywords case-insensitive via `canonicalKeyword`, UPPERCASE canonical, `#` comments); `formatOutfit` renders one back out for `export`. `apply` defaults to `./Outfit` (`DefaultOutfitFile`).
-- `catalog.go` — the embedded provider catalogue (`//go:embed providers.yaml`), its types, and `buildProviderBlock`, which turns a provider+family+model selection into an opencode provider block. `matchFamily` does the reverse for `export` (configured models -> family name). The catalogue can be overridden at runtime via the `--providers` flag or `OC_CONFIG_PROVIDERS` env var (flag > env > embedded; see `resolveCatalogPath`/`loadCatalogFrom`).
+- `catalog.go` — the embedded provider catalogue (`//go:embed providers.yaml`), its types, and `buildProviderBlock`, which turns a provider+family+model selection into an opencode provider block. `matchFamily` does the reverse for `export` (configured models -> family name). The catalogue can be overridden at runtime via the `--providers` flag or `OUTFIT_PROVIDERS` env var (flag > env > embedded; see `resolveCatalogPath`/`loadCatalogFrom`).
 - `config.go` — opencode config IO: JSONC read/merge/write, env/key resolution, JSON-Pointer helpers. `loadConfigState` reads the config back (configured providers, their model keys, the default model) for `export`.
 - `providers.yaml` — externalised provider/model-family data (URLs, model ids, key env vars). **Add providers/models here, not in Go.** Embedded at build time but kept external for maintenance.
 - `examples/` — runnable guides, each a directory with a README and an `Outfit`.

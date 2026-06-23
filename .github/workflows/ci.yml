@@ -35,4 +35,4 @@ jobs:
         run: go test ./... -race -cover
 
       - name: Build
-        run: go build -o oc-config .
+        run: go build -o outfit .
