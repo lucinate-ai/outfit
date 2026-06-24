@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.2.0] - 2026-06-24
+### Added
+- feat: add init-providers command to scaffold the catalogue
+- feat: use -u as the short flag for --base-url
+
+### Changed
+- build: configure since
+
 ## [1.1.0] - 2026-06-24
 ### Added
 - feat: add --version flag
