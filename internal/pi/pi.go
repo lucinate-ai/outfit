@@ -27,13 +27,14 @@ func ConfigPath() (string, error) {
 }
 
 // ProviderState is one configured provider read back from models.json: its
-// model ids (sorted), the base URL, and the per-model contextWindow for those
-// that set one. Pi has no top-level default model, so export relies on the
-// provider selection alone.
+// model ids (sorted), the base URL, and the per-model contextWindow/maxTokens
+// for those that set them. Pi has no top-level default model, so export relies
+// on the provider selection alone.
 type ProviderState struct {
 	ModelKeys []string
 	BaseURL   string
 	Contexts  map[string]int
+	Outputs   map[string]int
 }
 
 // load reads models.json into a generic map, returning an empty object when the
@@ -86,9 +87,9 @@ func providersMap(root map[string]any) map[string]any {
 // Write deep-merges a provider entry into models.json. An existing provider's
 // unknown fields (headers, compat, modelOverrides, …) are preserved; baseUrl,
 // api and apiKey are overwritten when set, and models are merged by id with the
-// new entries winning. contextWindow, when > 0, is applied to every model the
-// selection writes.
-func Write(id string, prov catalog.PiProvider, contextWindow int) error {
+// new entries winning. contextWindow and outputTokens, when > 0, are applied to
+// every model the selection writes (as contextWindow and maxTokens).
+func Write(id string, prov catalog.PiProvider, contextWindow, outputTokens int) error {
 	path, err := ConfigPath()
 	if err != nil {
 		return err
@@ -98,9 +99,12 @@ func Write(id string, prov catalog.PiProvider, contextWindow int) error {
 		return err
 	}
 
-	if contextWindow > 0 {
-		for i := range prov.Models {
+	for i := range prov.Models {
+		if contextWindow > 0 {
 			prov.Models[i].ContextWindow = contextWindow
+		}
+		if outputTokens > 0 {
+			prov.Models[i].MaxTokens = outputTokens
 		}
 	}
 
@@ -226,7 +230,7 @@ func State() (map[string]ProviderState, error) {
 		if !ok {
 			continue
 		}
-		st := ProviderState{Contexts: map[string]int{}}
+		st := ProviderState{Contexts: map[string]int{}, Outputs: map[string]int{}}
 		st.BaseURL, _ = prov["baseUrl"].(string)
 		for _, m := range asArray(prov["models"]) {
 			mm, ok := m.(map[string]any)
@@ -240,6 +244,9 @@ func State() (map[string]ProviderState, error) {
 			st.ModelKeys = append(st.ModelKeys, mid)
 			if c, ok := mm["contextWindow"].(float64); ok && c > 0 {
 				st.Contexts[mid] = int(c)
+			}
+			if o, ok := mm["maxTokens"].(float64); ok && o > 0 {
+				st.Outputs[mid] = int(o)
 			}
 		}
 		sort.Strings(st.ModelKeys)

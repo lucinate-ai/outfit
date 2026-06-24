@@ -1,10 +1,13 @@
-// Command outfit configures the current user's global opencode installation
-// to use a model provider, by deep-merging provider settings into the opencode
-// config under ${XDG_CONFIG_HOME:-$HOME/.config}/opencode.
+// Command outfit configures a coding agent ("harness") to use a model provider,
+// by deep-merging provider settings into that harness's config. opencode and the
+// Pi coding agent are supported; the harness is chosen at runtime with
+// --harness/-H or OUTFIT_HARNESS, or a stored default set via `outfit harness
+// --set`, and defaults to opencode.
 //
 // Providers and model families are defined in providers.yaml, which is embedded
-// into the binary at build time. The config is parsed as JSONC so comments and
-// existing settings outside the managed provider block are preserved.
+// into the binary at build time. For opencode the config is parsed as JSONC so
+// comments and existing settings outside the managed provider block are
+// preserved; for Pi the managed provider is merged into ~/.pi/agent/models.json.
 //
 // Usage:
 //
@@ -16,9 +19,10 @@
 //	outfit serve  [path]   # run llama-server for the Outfit (PRESET or MODEL)
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
+//	outfit harness [--set <name>]  # show or set the default harness
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
-// -c (context), -o (output), -u (base-url).
+// -c (context), -o (output), -u (base-url), -H (harness).
 //
 // The API base URL can be overridden for any provider with --base-url/-u or the
 // OUTFIT_BASE_URL environment variable; the flag wins over the env var, and
@@ -26,7 +30,8 @@
 //
 // An Outfit is a declarative, Dockerfile-style file describing one provider
 // selection, applied with `outfit apply` and reverted with `outfit unapply`;
-// see the internal/outfit package.
+// see the internal/outfit package. The harness is deliberately not part of an
+// Outfit, so the same Outfit applies to any harness.
 package main
 
 import (
@@ -43,7 +48,7 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
 	"github.com/lucinate-ai/outfit/internal/contextsize"
-	"github.com/lucinate-ai/outfit/internal/opencode"
+	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/preset"
 )
@@ -83,6 +88,8 @@ func run(args []string) error {
 		return cmdExport(rest)
 	case "init-providers":
 		return cmdInitProviders(rest)
+	case "harness":
+		return cmdHarness(rest)
 	case "version", "-v", "--version":
 		fmt.Println(version)
 		return nil
@@ -96,7 +103,7 @@ func run(args []string) error {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `outfit — configure opencode model providers
+	fmt.Fprintf(os.Stderr, `outfit — configure coding-agent model providers
 
 Usage:
   outfit list
@@ -107,6 +114,7 @@ Usage:
   outfit serve  [path] [--dry-run]         (run llama-server from the PRESET)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
+  outfit harness [--set <name>]     (default harness; available: %s)
   outfit version                    (or -v/--version)
 
 Flags:
@@ -121,15 +129,17 @@ Flags:
                        --context. Defaults to a quarter of --context when unset
   -u, --base-url       override the provider API base URL
                        (or set OUTFIT_BASE_URL)
+  -H, --harness        which harness to configure (or set OUTFIT_HARNESS);
+                       overrides the stored default
       --providers      path to a providers.yaml override
                        (or set OUTFIT_PROVIDERS)
 
-add: deep-merges the provider into the opencode config, preserving everything
-     else. Specify a family and/or an explicit model. --context sets the
-     model's limit.context window; --output sets limit.output (opencode
+add: deep-merges the provider into the active harness's config, preserving
+     everything else. Specify a family and/or an explicit model. --context sets
+     the model's context window; --output sets the max output tokens (opencode
      requires it alongside a context, defaulting to a quarter of the context).
 remove: removes the provider, or just the named models when a family/model is
-        given. Clears the default model if it pointed at something removed.
+        given.
 apply: applies an Outfit file — a declarative, Dockerfile-style description of
        one provider selection — as if you had run the equivalent add.
 unapply: removes what an Outfit file selects, as if you had run the equivalent
@@ -138,16 +148,21 @@ serve: runs llama-server for the Outfit. With a PRESET (a llama.cpp .ini) it
        turns the matching section into the command; otherwise it derives one
        from MODEL/ALIAS/CONTEXT/BASEURL. Prints the command before running it;
        --dry-run/-n prints without launching the server.
-export: prints the current config as an Outfit (outfit export > Outfit).
+export: prints the active harness's config as an Outfit (outfit export > Outfit).
 init-providers: writes the binary's built-in providers.yaml to the working
        directory (or [path]) so you can customise the catalogue and point
        outfit at it with --providers/OUTFIT_PROVIDERS. Refuses to overwrite an
        existing file unless --force is given.
-`)
+harness: with --set, stores the default harness; otherwise shows the current one.
+`, strings.Join(harness.Names(), ", "))
 }
 
-func parseSelection(name string, args []string) (outfit.Selection, error) {
+// parseSelection parses the flags shared by add and remove into a Selection,
+// plus the separately-returned harness name (the harness is never part of a
+// Selection, so it cannot leak into an Outfit).
+func parseSelection(name string, args []string) (outfit.Selection, string, error) {
 	var s outfit.Selection
+	var harnessName string
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.StringVar(&s.Provider, "provider", "", "provider name")
 	fs.StringVar(&s.Provider, "p", "", "provider name (shorthand)")
@@ -164,27 +179,33 @@ func parseSelection(name string, args []string) (outfit.Selection, error) {
 	fs.StringVar(&s.Providers, "providers", "", "path to a providers.yaml override")
 	fs.StringVar(&s.BaseURL, "base-url", "", "override the provider API base URL")
 	fs.StringVar(&s.BaseURL, "u", "", "API base URL override (shorthand)")
+	fs.StringVar(&harnessName, "harness", "", "which harness to configure")
+	fs.StringVar(&harnessName, "H", "", "which harness to configure (shorthand)")
 	if err := fs.Parse(args); err != nil {
-		return s, err
+		return s, "", err
 	}
 	if s.Provider == "" {
-		return s, fmt.Errorf("--provider/-p is required (see `outfit list`)")
+		return s, "", fmt.Errorf("--provider/-p is required (see `outfit list`)")
 	}
-	return s, nil
+	return s, harnessName, nil
 }
 
 func cmdAdd(args []string) error {
-	sel, err := parseSelection("add", args)
+	sel, harnessName, err := parseSelection("add", args)
 	if err != nil {
 		return err
 	}
-	return applySelection(sel)
+	h, _, err := harness.Resolve(harnessName)
+	if err != nil {
+		return err
+	}
+	return applySelection(sel, h)
 }
 
-// applySelection writes a single provider selection into the opencode config.
-// It is the shared core of `add` and `apply`: both resolve a selection (from
-// flags or an Outfit file) and hand it here.
-func applySelection(sel outfit.Selection) error {
+// applySelection writes a single provider selection into the active harness's
+// config. It is the shared core of `add` and `apply`: both resolve a selection
+// (from flags or an Outfit file) and hand it here.
+func applySelection(sel outfit.Selection, h harness.Harness) error {
 	if sel.Family == "" && sel.Model == "" && sel.Alias == "" {
 		return fmt.Errorf("a provider selection needs a model family, a model, or an alias")
 	}
@@ -196,20 +217,6 @@ func applySelection(sel outfit.Selection) error {
 	p, ok := cat.Providers[sel.Provider]
 	if !ok {
 		return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.Provider)
-	}
-
-	// The harness keys a model by its friendly ALIAS when given, otherwise by the
-	// provider-native MODEL itself. For a single-model llama.cpp server the key is
-	// only a label (the server serves whatever it loaded), so an ALIAS keeps that
-	// label readable; for an API provider, leaving ALIAS unset keeps the real id.
-	modelKey := sel.Alias
-	if modelKey == "" {
-		modelKey = sel.Model
-	}
-
-	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, modelKey, sel.BaseURL, opencode.ResolveEnv)
-	if err != nil {
-		return err
 	}
 
 	var contextSize, outputSize int
@@ -232,43 +239,29 @@ func applySelection(sel outfit.Selection) error {
 		} else {
 			outputSize = contextsize.DefaultOutput(contextSize)
 		}
-		models, _ := block["models"].(map[string]any)
-		if len(models) == 0 {
-			return fmt.Errorf("--context/-c needs a model: specify --model-family/-f and/or --model/-m")
-		}
-		contextsize.Apply(models, contextSize, outputSize)
 	}
 
-	configFile, err := opencode.ResolveConfigFile()
+	summary, err := h.Apply(p, sel, contextSize, outputSize)
 	if err != nil {
 		return err
 	}
-	if err := opencode.WriteConfig(configFile, sel.Provider, block, defaultModel); err != nil {
-		return err
-	}
 
-	fmt.Printf("Updated %s\n\n", configFile)
+	fmt.Printf("Updated %s\n\n", summary.ConfigPath)
 	line := fmt.Sprintf("Configured provider %q", sel.Provider)
 	if sel.Family != "" {
 		line += fmt.Sprintf(" with family %q", sel.Family)
 	}
 	fmt.Println(line + ".")
-	if defaultModel != "" {
-		fmt.Printf("Default model: %s\n", defaultModel)
+	if summary.DefaultModel != "" {
+		fmt.Printf("Default model: %s\n", summary.DefaultModel)
 	}
 	if contextSize > 0 {
 		fmt.Printf("Context window: %d tokens\n", contextSize)
 		fmt.Printf("Max output: %d tokens\n", outputSize)
 	}
-	if opts, ok := block["options"].(map[string]any); ok {
-		if _, ok := opts["apiKey"]; ok {
-			fmt.Printf("API key injected from %s.\n", p.APIKeyEnv)
-		}
-		if b, ok := opts["baseURL"]; ok {
-			fmt.Printf("Base URL: %v\n", b)
-		}
+	for _, note := range summary.Notes {
+		fmt.Println(note)
 	}
-	fmt.Println("\nRun 'opencode' from any directory to use the configuration.")
 	return nil
 }
 
@@ -300,11 +293,18 @@ func readOutfit(cmd, path string) (outfit.Selection, string, error) {
 // holds one.
 func cmdApply(args []string) error {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
-	var providers, output string
+	var providers, output, harnessName string
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
 	fs.StringVar(&output, "output", "", "max output tokens (overrides the Outfit's OUTPUT)")
 	fs.StringVar(&output, "o", "", "max output tokens (shorthand)")
+	fs.StringVar(&harnessName, "harness", "", "which harness to configure")
+	fs.StringVar(&harnessName, "H", "", "which harness to configure (shorthand)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	h, _, err := harness.Resolve(harnessName)
+	if err != nil {
 		return err
 	}
 
@@ -321,7 +321,7 @@ func cmdApply(args []string) error {
 	if output != "" {
 		sel.Output = output
 	}
-	return applySelection(sel)
+	return applySelection(sel, h)
 }
 
 // cmdUnapply reads an Outfit file and removes what it selects — the inverse of
@@ -329,9 +329,16 @@ func cmdApply(args []string) error {
 // so a bare `outfit unapply` works in a directory that holds one.
 func cmdUnapply(args []string) error {
 	fs := flag.NewFlagSet("unapply", flag.ContinueOnError)
-	var providers string
+	var providers, harnessName string
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
+	fs.StringVar(&harnessName, "harness", "", "which harness to configure")
+	fs.StringVar(&harnessName, "H", "", "which harness to configure (shorthand)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	h, _, err := harness.Resolve(harnessName)
+	if err != nil {
 		return err
 	}
 
@@ -344,7 +351,7 @@ func cmdUnapply(args []string) error {
 		return err
 	}
 	sel.Providers = providers
-	return removeSelection(sel)
+	return removeSelection(sel, h)
 }
 
 // llamaServerBinary is the llama.cpp server executable that `serve` launches.
@@ -498,23 +505,29 @@ func hostPortFromURL(raw string) (host, port string, err error) {
 	return u.Hostname(), u.Port(), nil
 }
 
-// cmdExport reconstructs an Outfit from the current opencode config and prints
+// cmdExport reconstructs an Outfit from the active harness's config and prints
 // it to stdout, so an existing setup can be captured (outfit export > Outfit).
 func cmdExport(args []string) error {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
-	var provider, providers string
+	var provider, providers, harnessName string
 	fs.StringVar(&provider, "provider", "", "provider to export")
 	fs.StringVar(&provider, "p", "", "provider to export (shorthand)")
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
+	fs.StringVar(&harnessName, "harness", "", "which harness to read")
+	fs.StringVar(&harnessName, "H", "", "which harness to read (shorthand)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	configFile, err := opencode.ResolveConfigFile()
+	h, _, err := harness.Resolve(harnessName)
 	if err != nil {
 		return err
 	}
-	states, defaultModel, err := opencode.LoadConfigState(configFile)
+	configFile, err := h.ConfigPath()
+	if err != nil {
+		return err
+	}
+	states, defaultModel, err := h.State()
 	if err != nil {
 		return err
 	}
@@ -589,7 +602,7 @@ func cmdExport(args []string) error {
 // string, when the models the Outfit selects all share a single value. It
 // returns "" when none was set or the models disagree (e.g. a config hand-edited
 // to differ), so export never invents or guesses a value.
-func exportLimit(sel outfit.Selection, st opencode.ProviderState, values map[string]int) string {
+func exportLimit(sel outfit.Selection, st harness.ProviderState, values map[string]int) string {
 	var keys []string
 	switch {
 	case sel.Family != "":
@@ -613,18 +626,22 @@ func exportLimit(sel outfit.Selection, st opencode.ProviderState, values map[str
 }
 
 func cmdRemove(args []string) error {
-	sel, err := parseSelection("remove", args)
+	sel, harnessName, err := parseSelection("remove", args)
 	if err != nil {
 		return err
 	}
-	return removeSelection(sel)
+	h, _, err := harness.Resolve(harnessName)
+	if err != nil {
+		return err
+	}
+	return removeSelection(sel, h)
 }
 
-// removeSelection removes a single provider selection from the opencode config.
-// It is the shared core of `remove` and `unapply`: both resolve a selection
-// (from flags or an Outfit file) and hand it here. It is the inverse of
-// applySelection.
-func removeSelection(sel outfit.Selection) error {
+// removeSelection removes a single provider selection from the active harness's
+// config. It is the shared core of `remove` and `unapply`: both resolve a
+// selection (from flags or an Outfit file) and hand it here. It is the inverse
+// of applySelection.
+func removeSelection(sel outfit.Selection, h harness.Harness) error {
 	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(sel.Providers))
 	if err != nil {
 		return err
@@ -651,11 +668,11 @@ func removeSelection(sel outfit.Selection) error {
 		modelKeys = append(modelKeys, fam.ModelKeys()...)
 	}
 
-	configFile, err := opencode.ResolveConfigFile()
+	configFile, err := h.ConfigPath()
 	if err != nil {
 		return err
 	}
-	removed, err := opencode.RemoveConfig(configFile, sel.Provider, modelKeys)
+	removed, err := h.Remove(sel.Provider, modelKeys)
 	if err != nil {
 		return err
 	}
@@ -670,6 +687,38 @@ func removeSelection(sel outfit.Selection) error {
 	} else {
 		fmt.Printf("Removed %d model(s) from provider %q.\n", removed, sel.Provider)
 	}
+	return nil
+}
+
+// cmdHarness shows or sets the default harness preference.
+func cmdHarness(args []string) error {
+	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
+	var set string
+	fs.StringVar(&set, "set", "", "store this harness as the default")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if set != "" {
+		if err := harness.SavePreference(set); err != nil {
+			return err
+		}
+		fmt.Printf("Default harness set to %q (stored in %s).\n", set, harness.PreferencePath())
+		return nil
+	}
+
+	active, source, err := harness.Resolve("")
+	if err != nil {
+		return err
+	}
+	pref, _ := harness.LoadPreference()
+	fmt.Printf("Active harness: %s (from %s)\n", active.Name(), source)
+	if pref == "" {
+		fmt.Printf("Stored preference: none (defaults to %s)\n", harness.Default)
+	} else {
+		fmt.Printf("Stored preference: %s\n", pref)
+	}
+	fmt.Printf("Available: %s\n", strings.Join(harness.Names(), ", "))
 	return nil
 }
 
@@ -697,6 +746,11 @@ func cmdList(args []string) error {
 			}
 			fmt.Fprintf(&b, "    api key: %s%s\n", p.APIKeyEnv, req)
 		}
+		harnesses := "opencode"
+		if p.Pi != nil {
+			harnesses = "opencode, pi"
+		}
+		fmt.Fprintf(&b, "    harnesses: %s\n", harnesses)
 		for _, f := range p.SortedFamilyNames() {
 			fam := p.Families[f]
 			fmt.Fprintf(&b, "    family %s — %s (default: %s)\n", f, fam.Description, fam.DefaultModel)

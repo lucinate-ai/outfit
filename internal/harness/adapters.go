@@ -10,6 +10,17 @@ import (
 	"github.com/lucinate-ai/outfit/internal/pi"
 )
 
+// modelKey returns the model identifier a harness keys a selection by: the
+// friendly ALIAS when given, otherwise the provider-native MODEL. For a single-
+// model llama.cpp server the key is only a label, so an ALIAS keeps it readable;
+// for an API provider, leaving ALIAS unset keeps the real model id.
+func modelKey(sel outfit.Selection) string {
+	if sel.Alias != "" {
+		return sel.Alias
+	}
+	return sel.Model
+}
+
 // opencodeHarness configures opencode via ~/.config/opencode/opencode.json.
 type opencodeHarness struct{}
 
@@ -17,14 +28,14 @@ func (opencodeHarness) Name() string { return "opencode" }
 
 func (opencodeHarness) ConfigPath() (string, error) { return opencode.ResolveConfigFile() }
 
-func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow int) (Summary, error) {
-	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, sel.Model, sel.BaseURL, opencode.ResolveEnv)
+func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int) (Summary, error) {
+	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, opencode.ResolveEnv)
 	if err != nil {
 		return Summary{}, err
 	}
 	if contextWindow > 0 {
 		if models, ok := block["models"].(map[string]any); ok {
-			contextsize.Apply(models, contextWindow)
+			contextsize.Apply(models, contextWindow, outputTokens)
 		}
 	}
 
@@ -68,7 +79,7 @@ func (opencodeHarness) State() (map[string]ProviderState, string, error) {
 	}
 	out := make(map[string]ProviderState, len(states))
 	for id, st := range states {
-		out[id] = ProviderState{ModelKeys: st.ModelKeys, BaseURL: st.BaseURL, Contexts: st.Contexts}
+		out[id] = ProviderState{ModelKeys: st.ModelKeys, BaseURL: st.BaseURL, Contexts: st.Contexts, Outputs: st.Outputs}
 	}
 	return out, defaultModel, nil
 }
@@ -80,12 +91,12 @@ func (piHarness) Name() string { return "pi" }
 
 func (piHarness) ConfigPath() (string, error) { return pi.ConfigPath() }
 
-func (piHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow int) (Summary, error) {
-	prov, defaultModel, err := catalog.BuildPiProvider(sel.Provider, p, sel.Family, sel.Model, sel.BaseURL, opencode.ResolveEnv)
+func (piHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int) (Summary, error) {
+	prov, defaultModel, err := catalog.BuildPiProvider(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, opencode.ResolveEnv)
 	if err != nil {
 		return Summary{}, err
 	}
-	if err := pi.Write(sel.Provider, prov, contextWindow); err != nil {
+	if err := pi.Write(sel.Provider, prov, contextWindow, outputTokens); err != nil {
 		return Summary{}, err
 	}
 	configFile, err := pi.ConfigPath()
@@ -120,7 +131,7 @@ func (piHarness) State() (map[string]ProviderState, string, error) {
 	}
 	out := make(map[string]ProviderState, len(states))
 	for id, st := range states {
-		out[id] = ProviderState{ModelKeys: st.ModelKeys, BaseURL: st.BaseURL, Contexts: st.Contexts}
+		out[id] = ProviderState{ModelKeys: st.ModelKeys, BaseURL: st.BaseURL, Contexts: st.Contexts, Outputs: st.Outputs}
 	}
 	return out, "", nil
 }

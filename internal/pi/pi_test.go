@@ -51,7 +51,7 @@ func TestWrite_FreshFileWithContext(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	if err := Write("openrouter", sampleProvider(), 128000); err != nil {
+	if err := Write("openrouter", sampleProvider(), 128000, 32000); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 
@@ -80,6 +80,9 @@ func TestWrite_FreshFileWithContext(t *testing.T) {
 		if mm["contextWindow"] != float64(128000) {
 			t.Errorf("model %v contextWindow = %v, want 128000", mm["id"], mm["contextWindow"])
 		}
+		if mm["maxTokens"] != float64(32000) {
+			t.Errorf("model %v maxTokens = %v, want 32000", mm["id"], mm["maxTokens"])
+		}
 	}
 }
 
@@ -103,7 +106,7 @@ func TestWrite_PreservesOtherProvidersAndUnknownFields(t *testing.T) {
 }`
 	os.WriteFile(path, []byte(seed), 0o600)
 
-	if err := Write("openrouter", sampleProvider(), 0); err != nil {
+	if err := Write("openrouter", sampleProvider(), 0, 0); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 
@@ -142,7 +145,7 @@ func TestRemove_ModelsAndWholeProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	if err := Write("openrouter", sampleProvider(), 0); err != nil {
+	if err := Write("openrouter", sampleProvider(), 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, ".pi", "agent", "models.json")
@@ -181,7 +184,7 @@ func TestState(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	if err := Write("openrouter", sampleProvider(), 200000); err != nil {
+	if err := Write("openrouter", sampleProvider(), 200000, 50000); err != nil {
 		t.Fatal(err)
 	}
 	states, err := State()
@@ -201,6 +204,9 @@ func TestState(t *testing.T) {
 	for _, k := range st.ModelKeys {
 		if st.Contexts[k] != 200000 {
 			t.Errorf("context for %q = %d, want 200000", k, st.Contexts[k])
+		}
+		if st.Outputs[k] != 50000 {
+			t.Errorf("output for %q = %d, want 50000", k, st.Outputs[k])
 		}
 	}
 }

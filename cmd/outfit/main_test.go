@@ -88,7 +88,7 @@ func TestVersionFlag(t *testing.T) {
 
 func TestParseSelection(t *testing.T) {
 	// Long flags.
-	s, err := parseSelection("add", []string{"--provider", "openrouter", "--model-family", "deepseek-v4", "--model", "m"})
+	s, _, err := parseSelection("add", []string{"--provider", "openrouter", "--model-family", "deepseek-v4", "--model", "m"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Short flags.
-	s, err = parseSelection("add", []string{"-p", "ollama", "-f", "llama", "-m", "x"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "-f", "llama", "-m", "x"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,19 +106,19 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Missing provider.
-	if _, err := parseSelection("add", []string{"-f", "llama"}); err == nil {
+	if _, _, err := parseSelection("add", []string{"-f", "llama"}); err == nil {
 		t.Error("expected error when --provider is missing")
 	}
 
 	// Base URL flag, long and short forms.
-	s, err = parseSelection("add", []string{"-p", "ollama", "--base-url", "https://long.example/v1"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "--base-url", "https://long.example/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.BaseURL != "https://long.example/v1" {
 		t.Errorf("--base-url parsed wrong: %q", s.BaseURL)
 	}
-	s, err = parseSelection("add", []string{"-p", "ollama", "-u", "https://short.example/v1"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "-u", "https://short.example/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,14 +127,14 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Context flag, long and short.
-	s, err = parseSelection("add", []string{"-p", "ollama", "--context", "128k"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "--context", "128k"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Context != "128k" {
 		t.Errorf("--context parsed wrong: %+v", s)
 	}
-	s, err = parseSelection("add", []string{"-p", "ollama", "-c", "200000"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "-c", "200000"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,19 +143,33 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Output flag, long and short.
-	s, err = parseSelection("add", []string{"-p", "ollama", "--output", "32k"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "--output", "32k"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Output != "32k" {
 		t.Errorf("--output parsed wrong: %+v", s)
 	}
-	s, err = parseSelection("add", []string{"-p", "ollama", "-o", "16000"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "-o", "16000"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Output != "16000" {
 		t.Errorf("-o parsed wrong: %+v", s)
+	}
+
+	// Harness flag is returned separately and never leaks into the Selection.
+	for _, args := range [][]string{
+		{"-p", "ollama", "-f", "llama", "--harness", "pi"},
+		{"-p", "ollama", "-f", "llama", "-H", "pi"},
+	} {
+		_, h, err := parseSelection("add", args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h != "pi" {
+			t.Errorf("harness flag parsed wrong for %v: %q", args, h)
+		}
 	}
 }
 

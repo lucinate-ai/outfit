@@ -30,12 +30,13 @@ const HarnessEnv = "OUTFIT_HARNESS"
 const Default = "opencode"
 
 // ProviderState is one configured provider read back from a harness config: its
-// model keys (sorted), base URL, and per-model context windows. It is what
-// `outfit export` reconstructs an Outfit from.
+// model keys (sorted), base URL, and per-model context and output limits. It is
+// what `outfit export` reconstructs an Outfit from.
 type ProviderState struct {
 	ModelKeys []string
 	BaseURL   string
 	Contexts  map[string]int
+	Outputs   map[string]int
 }
 
 // Summary is the result of an Apply: the config file written, the chosen
@@ -54,8 +55,8 @@ type Harness interface {
 	// ConfigPath returns the harness config file this harness writes.
 	ConfigPath() (string, error)
 	// Apply writes a single provider selection into the harness config.
-	// contextWindow, when > 0, is the resolved context window to set.
-	Apply(p *catalog.Provider, sel outfit.Selection, contextWindow int) (Summary, error)
+	// contextWindow and outputTokens, when > 0, are the resolved limits to set.
+	Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int) (Summary, error)
 	// Remove removes a provider, or specific model keys within it. With no
 	// modelKeys the whole provider is removed. Returns the number of removals.
 	Remove(providerID string, modelKeys []string) (int, error)

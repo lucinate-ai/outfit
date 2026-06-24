@@ -254,12 +254,14 @@ type PiProvider struct {
 	Models  []PiModel `json:"models"`
 }
 
-// PiModel is one model within a PiProvider. ContextWindow is set by the Pi
-// harness from the selection's CONTEXT, so it is omitted when zero.
+// PiModel is one model within a PiProvider. ContextWindow and MaxTokens are set
+// by the Pi harness from the selection's CONTEXT and OUTPUT, so they are omitted
+// when zero.
 type PiModel struct {
 	ID            string `json:"id"`
 	Name          string `json:"name,omitempty"`
 	ContextWindow int    `json:"contextWindow,omitempty"`
+	MaxTokens     int    `json:"maxTokens,omitempty"`
 }
 
 // BuildPiProvider turns a provider plus an optional family and/or explicit model
