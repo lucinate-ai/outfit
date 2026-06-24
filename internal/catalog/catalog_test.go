@@ -91,6 +91,130 @@ func TestMatchFamily(t *testing.T) {
 	}
 }
 
+// TestCatalogPiIntegrity checks that every provider declaring a `pi:` block
+// names a valid Pi API type, and that a Pi-capable provider can resolve a base
+// URL (from pi.baseUrl or options.baseURL) so the written models.json is usable.
+func TestCatalogPiIntegrity(t *testing.T) {
+	validAPIs := map[string]bool{
+		"openai-completions":   true,
+		"openai-responses":     true,
+		"anthropic-messages":   true,
+		"google-generative-ai": true,
+	}
+	cat, _ := Load()
+	piCapable := 0
+	for name, p := range cat.Providers {
+		if p.Pi == nil {
+			continue
+		}
+		piCapable++
+		if !validAPIs[p.Pi.API] {
+			t.Errorf("provider %q: invalid pi.api %q", name, p.Pi.API)
+		}
+		if p.Pi.BaseURL == "" {
+			if _, ok := p.Options["baseURL"].(string); !ok {
+				t.Errorf("provider %q: pi block has no baseUrl and no options.baseURL fallback", name)
+			}
+		}
+	}
+	if piCapable == 0 {
+		t.Error("expected at least one Pi-capable provider in the catalogue")
+	}
+}
+
+func TestBuildPiProvider_OpenRouter(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["openrouter"]
+
+	prov, model, err := BuildPiProvider("openrouter", p, "deepseek-v4", "", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if model != "deepseek/deepseek-v4-flash" {
+		t.Errorf("default model = %q", model)
+	}
+	if prov.API != "openai-completions" {
+		t.Errorf("api = %q", prov.API)
+	}
+	if prov.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("baseUrl = %q, want the catalogue pi endpoint", prov.BaseURL)
+	}
+	// API key is an env interpolation, never the resolved secret.
+	if prov.APIKey != "$DEEPSEEK_API_KEY" {
+		t.Errorf("apiKey = %q, want $DEEPSEEK_API_KEY interpolation", prov.APIKey)
+	}
+	if len(prov.Models) != 2 {
+		t.Fatalf("got %d models, want 2", len(prov.Models))
+	}
+	for _, m := range prov.Models {
+		if m.ID == "" || m.Name == "" {
+			t.Errorf("model missing id/name: %+v", m)
+		}
+	}
+}
+
+func TestBuildPiProvider_BaseURLFallbackAndOverride(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["ollama"] // pi block has no baseUrl; falls back to options.baseURL
+
+	prov, _, err := BuildPiProvider("ollama", p, "llama", "", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("baseUrl = %q, want the options.baseURL fallback", prov.BaseURL)
+	}
+
+	// Flag override wins over everything.
+	prov, _, err = BuildPiProvider("ollama", p, "llama", "", "https://flag.example/v1", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.BaseURL != "https://flag.example/v1" {
+		t.Errorf("baseUrl = %q, want the flag override", prov.BaseURL)
+	}
+
+	// OUTFIT_BASE_URL wins when no flag is given.
+	prov, _, err = BuildPiProvider("ollama", p, "llama", "", "", envMap(map[string]string{
+		baseURLEnv: "https://from-env.example/v1",
+	}))
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.BaseURL != "https://from-env.example/v1" {
+		t.Errorf("baseUrl = %q, want the OUTFIT_BASE_URL value", prov.BaseURL)
+	}
+}
+
+func TestBuildPiProvider_ModelOverrideNoKey(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["llamacpp"] // no apiKeyEnv
+
+	prov, model, err := BuildPiProvider("llamacpp", p, "", "my-local", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if model != "my-local" {
+		t.Errorf("default model = %q, want my-local", model)
+	}
+	// A keyless provider gets a dummy literal apiKey so Pi lists its models;
+	// without one Pi loads the provider but hides its models from /model.
+	if prov.APIKey != piPlaceholderAPIKey {
+		t.Errorf("apiKey = %q, want the %q placeholder for a keyless provider", prov.APIKey, piPlaceholderAPIKey)
+	}
+	if len(prov.Models) != 1 || prov.Models[0].ID != "my-local" {
+		t.Errorf("models = %+v, want a single my-local entry", prov.Models)
+	}
+}
+
+func TestBuildPiProvider_UnsupportedProvider(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["amazon-bedrock"] // no pi block
+	if _, _, err := BuildPiProvider("amazon-bedrock", p, "claude", "", "", noEnv); err == nil {
+		t.Fatal("expected error for a provider with no pi config")
+	}
+}
+
 func TestResolveCatalogPath(t *testing.T) {
 	t.Setenv(ProvidersEnv, "/from/env.yaml")
 	if got := ResolveCatalogPath("/from/flag.yaml"); got != "/from/flag.yaml" {

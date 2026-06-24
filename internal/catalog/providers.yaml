@@ -15,6 +15,13 @@
 #   options         static options merged into the provider block
 #   optionsFromEnv  option -> env var; injected into options when the var is set
 #   families        named model sets; each has a defaultModel and a models map
+#   pi              optional block marking the provider as usable by the Pi
+#                   harness (~/.pi/agent/models.json). Holds:
+#                     api      Pi protocol: openai-completions | openai-responses
+#                              | anthropic-messages | google-generative-ai
+#                     baseUrl  Pi endpoint (optional; falls back to
+#                              options.baseURL). Providers without a pi block
+#                              are reported as unsupported by the Pi harness.
 
 providers:
   openrouter:
@@ -22,6 +29,9 @@ providers:
     apiKeyEnv: DEEPSEEK_API_KEY
     apiKeyRequired: true
     apiKeyPrefix: sk-or-
+    pi:
+      api: openai-completions
+      baseUrl: https://openrouter.ai/api/v1
     families:
       deepseek-v4:
         description: DeepSeek V4 (Flash and Pro)
@@ -58,6 +68,8 @@ providers:
       baseURL: http://localhost:11434/v1
     optionsFromEnv:
       baseURL: OLLAMA_BASE_URL
+    pi:
+      api: openai-completions
     families:
       llama:
         description: Meta Llama models served by Ollama
@@ -76,6 +88,8 @@ providers:
       baseURL: http://localhost:8080/v1
     optionsFromEnv:
       baseURL: LLAMACPP_BASE_URL
+    pi:
+      api: openai-completions
     families:
       local:
         description: Model loaded by your llama.cpp server
@@ -93,6 +107,8 @@ providers:
       baseURL: https://api.openai.com/v1
     optionsFromEnv:
       baseURL: OPENAI_BASE_URL
+    pi:
+      api: openai-completions
     families:
       gpt:
         description: OpenAI GPT models (or your endpoint's equivalents)

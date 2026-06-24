@@ -44,6 +44,19 @@ type Provider struct {
 	Options        map[string]any     `yaml:"options"`
 	OptionsFromEnv map[string]string  `yaml:"optionsFromEnv"`
 	Families       map[string]*Family `yaml:"families"`
+	// Pi marks the provider as usable by the Pi harness and carries its
+	// Pi-specific settings. Nil when the provider has no `pi:` block, in which
+	// case BuildPiProvider reports it as unsupported.
+	Pi *PiConfig `yaml:"pi"`
+}
+
+// PiConfig is a provider's Pi-harness settings, from the catalogue `pi:` block.
+type PiConfig struct {
+	// API is the Pi protocol type: openai-completions, openai-responses,
+	// anthropic-messages, or google-generative-ai.
+	API string `yaml:"api"`
+	// BaseURL is the Pi endpoint. Optional; falls back to options.baseURL.
+	BaseURL string `yaml:"baseUrl"`
 }
 
 // Family is a named set of models within a provider.
@@ -225,4 +238,107 @@ func BuildProviderBlock(id string, p *Provider, familyName, modelOverride, baseU
 		defaultModel = id + "/" + defaultModelKey
 	}
 	return block, defaultModel, nil
+}
+
+// piPlaceholderAPIKey is the dummy apiKey written for keyless local providers so
+// Pi treats them as authed and lists their models. Pi resolves it as a literal
+// (no leading "$"), and llama.cpp/Ollama-style servers ignore the value.
+const piPlaceholderAPIKey = "local"
+
+// PiProvider is a provider entry for Pi's ~/.pi/agent/models.json, produced by
+// BuildPiProvider. JSON tags match Pi's schema; empty fields are omitted.
+type PiProvider struct {
+	BaseURL string    `json:"baseUrl,omitempty"`
+	API     string    `json:"api,omitempty"`
+	APIKey  string    `json:"apiKey,omitempty"`
+	Models  []PiModel `json:"models"`
+}
+
+// PiModel is one model within a PiProvider. ContextWindow is set by the Pi
+// harness from the selection's CONTEXT, so it is omitted when zero.
+type PiModel struct {
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	ContextWindow int    `json:"contextWindow,omitempty"`
+}
+
+// BuildPiProvider turns a provider plus an optional family and/or explicit model
+// into a Pi provider entry, returning the entry and the chosen default model key
+// (provider-relative), or "" if none was selected. resolve looks up env vars
+// (used only for the OUTFIT_BASE_URL override).
+//
+// Unlike opencode, the API key is written as a "$ENV_VAR" interpolation rather
+// than the resolved secret, matching Pi's idiom. A provider without a `pi:`
+// block in the catalogue is not Pi-compatible and yields an error.
+//
+// baseURLOverride mirrors BuildProviderBlock: when non-empty it wins; otherwise
+// OUTFIT_BASE_URL is consulted, then the catalogue's pi.baseUrl, then
+// options.baseURL.
+func BuildPiProvider(id string, p *Provider, familyName, modelOverride, baseURLOverride string, resolve func(string) string) (PiProvider, string, error) {
+	if p.Pi == nil {
+		return PiProvider{}, "", fmt.Errorf("provider %q is not supported by the pi harness (no pi config in the catalogue)", id)
+	}
+
+	prov := PiProvider{API: p.Pi.API}
+
+	if baseURLOverride == "" {
+		baseURLOverride = resolve(baseURLEnv)
+	}
+	switch {
+	case baseURLOverride != "":
+		prov.BaseURL = baseURLOverride
+	case p.Pi.BaseURL != "":
+		prov.BaseURL = p.Pi.BaseURL
+	default:
+		prov.BaseURL, _ = p.Options["baseURL"].(string)
+	}
+
+	if p.APIKeyEnv != "" {
+		prov.APIKey = "$" + p.APIKeyEnv
+	} else {
+		// Pi only surfaces a provider's models in /model once auth is configured;
+		// with no apiKey at all the models load but stay unavailable. Keyless local
+		// servers (llama.cpp, Ollama, …) ignore the key, so write a dummy literal —
+		// the same placeholder pattern Pi's own docs use for Ollama — to make the
+		// models selectable.
+		prov.APIKey = piPlaceholderAPIKey
+	}
+
+	// Collect models in stable order so the written file is deterministic.
+	names := map[string]string{}
+	var keys []string
+	var defaultModelKey string
+	if familyName != "" {
+		fam, ok := p.Families[familyName]
+		if !ok {
+			return PiProvider{}, "", fmt.Errorf("provider %q has no model family %q (see `outfit list`)", id, familyName)
+		}
+		for _, k := range fam.ModelKeys() {
+			keys = append(keys, k)
+			if n, _ := fam.Models[k]["name"].(string); n != "" {
+				names[k] = n
+			}
+		}
+		defaultModelKey = fam.DefaultModel
+	}
+	if modelOverride != "" {
+		if _, seen := names[modelOverride]; !seen {
+			found := false
+			for _, k := range keys {
+				if k == modelOverride {
+					found = true
+					break
+				}
+			}
+			if !found {
+				keys = append(keys, modelOverride)
+			}
+		}
+		defaultModelKey = modelOverride
+	}
+	for _, k := range keys {
+		prov.Models = append(prov.Models, PiModel{ID: k, Name: names[k]})
+	}
+
+	return prov, defaultModelKey, nil
 }
