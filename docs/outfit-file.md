@@ -1,12 +1,12 @@
 # The `Outfit` file
 
-An **Outfit** is a small, declarative file that captures one opencode provider
+An **Outfit** is a small, declarative file that captures one provider
 selection — which provider, and which model family and/or model — so you can
 apply it with a single command instead of remembering flags. Think of it like a
-`Dockerfile`, but for pointing opencode at a model.
+`Dockerfile`, but for pointing your coding agent at a model.
 
 ```dockerfile
-# Outfit — point opencode at one provider
+# Outfit — point your coding agent at one provider
 PROVIDER openrouter
 FAMILY   deepseek-v4
 MODEL    deepseek/deepseek-v4-pro   # optional; the provider-native model ref
@@ -18,7 +18,12 @@ PRESET   ./preset.ini               # optional; llama.cpp preset for `outfit ser
 ```
 
 Applying it is the same as running the equivalent `outfit add`, so everything
-you already have in your opencode config is preserved.
+you already have in your coding agent's config is preserved.
+
+The **harness** (opencode or Pi) is deliberately *not* part of an Outfit — so the
+same file applies to either. Choose the harness when you apply it, with
+`--harness`/`-H`, the `OUTFIT_HARNESS` env var, or a stored default (`outfit
+harness --set`).
 
 ## Applying an Outfit
 
@@ -28,13 +33,15 @@ outfit apply path/to/Outfit
 ```
 
 Run `outfit apply` with no arguments and it looks for a file named `Outfit`
-in the current directory. Point it at any path to apply a different file.
+in the current directory. Point it at any path to apply a different file. Add
+`--harness pi` (or set `OUTFIT_HARNESS`) to apply it to Pi instead of opencode.
 
-After applying, just run `opencode`.
+After applying, just run your coding agent (`opencode`, or `pi`).
 
 To undo it again, `outfit unapply` (same default path and arguments) removes
-what the Outfit selects from the opencode config — the inverse of `apply`, just
-as `remove` is to `add`.
+what the Outfit selects from the active harness's config — the inverse of
+`apply`, just as `remove` is to `add`. It honours `--harness`/`-H` and
+`OUTFIT_HARNESS` too, so unapply from whichever harness you applied to.
 
 ## Serving a llama.cpp model
 
@@ -175,11 +182,12 @@ Ready-to-use Outfits live under [`examples/`](../examples/).
 
 ## Capturing your current setup
 
-`outfit export` prints your current opencode configuration as an Outfit, so
+`outfit export` prints the active harness's configuration as an Outfit, so
 you can save a setup you built by hand:
 
 ```sh
 outfit export > Outfit
+outfit export --harness pi > Outfit   # read Pi's config instead
 ```
 
 By default it exports the provider behind your default model (or the only

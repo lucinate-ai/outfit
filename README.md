@@ -2,20 +2,25 @@
   <img src="assets/logo.png" alt="outfit" width="520">
 </p>
 
-Point [opencode](https://opencode.ai) at the model providers you actually use —
-OpenRouter, AWS Bedrock, Ollama, llama.cpp, or any OpenAI-compatible endpoint —
-with a single command. No hand-editing JSON, no clobbering the config you
-already have.
+Point your coding agent — [opencode](https://opencode.ai) or
+[Pi](https://github.com/earendil-works/pi) — at the model providers you actually
+use: OpenRouter, AWS Bedrock, Ollama, llama.cpp, or any OpenAI-compatible
+endpoint, with a single command. No hand-editing JSON, no clobbering the config
+you already have.
 
 ## What it does
 
-- Merges provider settings into your **global** opencode config
-  (`~/.config/opencode`), keeping everything else — other providers, your theme,
-  even your comments — exactly where you left it.
-- Reads provider definitions from a catalogue (`providers.yaml`) baked into the
-  binary, so there are no URLs or model ids to memorise.
-- Pulls API keys from a local `.env` (or your environment) and writes the config
-  `0600`, because secrets.
+- Merges provider settings into your coding agent's **global** config —
+  opencode's `~/.config/opencode`, or Pi's `~/.pi/agent/models.json` — keeping
+  everything else (other providers, your theme, even your comments) exactly
+  where you left it.
+- One catalogue, two agents: pick the **harness** per command with `--harness`,
+  the `OUTFIT_HARNESS` env var, or a stored default. opencode is the default.
+- Reads provider definitions from a built-in catalogue, so there are no URLs or
+  model ids to memorise.
+- Pulls API keys from a local `.env` (or your environment): opencode gets the
+  resolved key written `0600`; Pi gets a `$ENV_VAR` reference, so no secret
+  lands on disk.
 
 ## Install
 
@@ -30,7 +35,7 @@ To upgrade later, run `brew upgrade outfit`.
 ### From source
 
 ```sh
-go build -o outfit .
+go build -o outfit ./cmd/outfit
 ```
 
 Drop the resulting `outfit` binary anywhere on your `PATH`.
@@ -65,9 +70,10 @@ outfit unapply [path]                    # remove what an Outfit file selects
 outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
 outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit
+outfit harness [-H <name>] [args...]     # launch the harness (--get shows it; --set stores the default)
 ```
 
-Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url).
+Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness).
 
 ### Examples
 
@@ -99,8 +105,9 @@ outfit remove -p ollama
 outfit remove -p openrouter -f deepseek-v4
 ```
 
-`add` sets the chosen model as opencode's default. `remove` clears the default
-if it pointed at something you removed.
+On opencode, `add` sets the chosen model as the default and `remove` clears it
+if it pointed at something you removed. Pi has no default-model setting, so
+`add` just registers the provider and tells you which model to pick with `/model`.
 
 `--context`/`-c` records each added model's context window. Parsing is
 forgiving: `128k`, `1m`, `1.5m`, `200000`, `128,000`, even `128 K tokens` all
@@ -110,10 +117,31 @@ land where you'd expect (`k`/`m`/`g` are decimal — `128k` is 128,000 tokens).
 one whenever a context is set, so when you leave it off `outfit` fills in a
 quarter of the context for you. It can't exceed the context window.
 
+## Harnesses
+
+A **harness** is the coding agent being configured. opencode is the default; Pi
+is also supported. The harness is chosen at runtime — never baked into an Outfit
+file — so the same selection works for either.
+
+```sh
+outfit add -p ollama -f llama --harness pi   # this command only
+OUTFIT_HARNESS=pi outfit add -p ollama -f llama
+
+outfit harness --set pi    # make Pi the default for future commands
+outfit harness --get       # show the current default
+outfit harness             # launch the active harness (forwards trailing args)
+outfit harness -H pi       # launch a specific harness, ignoring the default
+```
+
+Precedence: `--harness`/`-H` flag, then `OUTFIT_HARNESS`, then your stored
+default, then opencode. Not every provider maps to every harness — `outfit list`
+shows which harnesses each one supports (AWS Bedrock, for instance, is
+opencode-only).
+
 ## Outfit files
 
 Prefer to keep a provider selection in a file — like a `Dockerfile`, but for
-opencode? Drop an **Outfit** in your project:
+your coding agent? Drop an **Outfit** in your project:
 
 ```dockerfile
 # Outfit
