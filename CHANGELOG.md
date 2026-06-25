@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.4.0] - 2026-06-25
+### Added
+- feat: add serve command to run llama-server from a preset
+- feat: let Outfit values override the preset under serve
+- feat: make MODEL provider-native and add ALIAS; derive serve without a preset
+
 ## [1.3.0] - 2026-06-24
 ### Added
 - feat: set limit.output when a model context is configured (#10)
