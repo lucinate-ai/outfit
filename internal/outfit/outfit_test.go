@@ -46,6 +46,11 @@ func TestParse(t *testing.T) {
 			in:   "PROVIDER openai-compatible\nMODEL m\nURL https://gw/v1\n",
 			want: Selection{Provider: "openai-compatible", Model: "m", BaseURL: "https://gw/v1"},
 		},
+		{
+			name: "preset",
+			in:   "PROVIDER llamacpp\nMODEL qwen\nPRESET ./preset.ini\n",
+			want: Selection{Provider: "llamacpp", Model: "qwen", Preset: "./preset.ini"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,6 +91,7 @@ func TestFormatRoundTrip(t *testing.T) {
 		Context:  "128000",
 		Output:   "32000",
 		BaseURL:  "https://gateway.example/v1",
+		Preset:   "./preset.ini",
 	}
 	out := Format(sel)
 	if !strings.HasPrefix(out, "PROVIDER openrouter\n") {

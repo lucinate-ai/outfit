@@ -61,6 +61,7 @@ outfit list
 outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--output <size>] [--base-url <url>]
 outfit remove --provider <name> [--model-family <family>] [--model <id>]
 outfit apply  [path] [--output <size>]   # apply an Outfit file (default ./Outfit)
+outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
 outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit
 ```
@@ -132,6 +133,28 @@ outfit export > Outfit    # capture your current setup as an Outfit
 An Outfit describes one provider selection and applies exactly like the
 equivalent `add`. Full syntax is in [`docs/outfit-file.md`](docs/outfit-file.md),
 and ready-to-use examples live under [`examples/`](examples/).
+
+## Serving a local model
+
+Running a model with llama.cpp? Point an Outfit at a llama.cpp preset `.ini`
+with the `PRESET` keyword and let `outfit serve` launch the server for you:
+
+```dockerfile
+# Outfit
+PROVIDER llamacpp
+MODEL    Qwen3.5-4B       # selects the preset's [Qwen3.5-4B] section
+PRESET   ./preset.ini
+```
+
+```sh
+outfit serve              # turns the preset into a llama-server command and runs it
+outfit serve --dry-run    # just print the command — no server
+```
+
+`serve` flattens the preset's `[*]` defaults and the chosen model section into
+plain `llama-server` flags, prints the command, then runs it. It's the missing
+piece presets don't cover: launching a *single* model. Details in
+[`docs/outfit-file.md`](docs/outfit-file.md#serving-a-llamacpp-model).
 
 ## Keys and endpoints
 
