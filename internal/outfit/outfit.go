@@ -12,6 +12,7 @@
 //	CONTEXT  128k                       # optional; context window
 //	OUTPUT   32k                        # optional; max output tokens
 //	BASEURL  https://gateway/v1         # optional; API base URL override
+//	PRESET   ./preset.ini               # optional; llama.cpp preset for `serve`
 //
 // Keywords are matched case-insensitively, but UPPERCASE is canonical (it is
 // what `outfit export` emits). Blank lines, full-line `#` comments, and
@@ -36,6 +37,7 @@ type Selection struct {
 	Output    string
 	Providers string
 	BaseURL   string
+	Preset    string
 }
 
 // Outfit keywords, in their canonical (lower-cased) form for matching.
@@ -46,6 +48,7 @@ const (
 	kwContext  = "context"
 	kwOutput   = "output"
 	kwBaseURL  = "baseurl"
+	kwPreset   = "preset"
 )
 
 // canonicalKeyword resolves an Outfit keyword (already lower-cased) to its
@@ -53,7 +56,7 @@ const (
 // "" for an unrecognised keyword.
 func canonicalKeyword(kw string) string {
 	switch kw {
-	case kwProvider, kwFamily, kwModel, kwContext, kwOutput:
+	case kwProvider, kwFamily, kwModel, kwContext, kwOutput, kwPreset:
 		return kw
 	case kwBaseURL, "base-url", "base_url", "url":
 		return kwBaseURL
@@ -81,7 +84,7 @@ func Parse(data []byte) (Selection, error) {
 		fields := strings.Fields(text)
 		canon := canonicalKeyword(strings.ToLower(fields[0]))
 		if canon == "" {
-			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, CONTEXT, OUTPUT, or BASEURL)", line, fields[0])
+			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, CONTEXT, OUTPUT, BASEURL, or PRESET)", line, fields[0])
 		}
 		switch {
 		case len(fields) < 2:
@@ -109,6 +112,8 @@ func Parse(data []byte) (Selection, error) {
 			sel.Output = value
 		case kwBaseURL:
 			sel.BaseURL = value
+		case kwPreset:
+			sel.Preset = value
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -152,5 +157,6 @@ func Format(sel Selection) string {
 	line("CONTEXT", sel.Context)
 	line("OUTPUT", sel.Output)
 	line("BASEURL", sel.BaseURL)
+	line("PRESET", sel.Preset)
 	return b.String()
 }

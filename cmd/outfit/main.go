@@ -12,6 +12,7 @@
 //	outfit add    --provider <name> [--model-family <family>] [--model <id>]
 //	outfit remove --provider <name> [--model-family <family>] [--model <id>]
 //	outfit apply  [path]   # apply an Outfit file (defaults to ./Outfit)
+//	outfit serve  [path]   # run llama-server from the Outfit's PRESET
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
 //
@@ -27,9 +28,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -38,6 +42,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/preset"
 )
 
 // version is the binary's version. It defaults to "dev" and is overridden at
@@ -67,6 +72,8 @@ func run(args []string) error {
 		return cmdList(rest)
 	case "apply":
 		return cmdApply(rest)
+	case "serve":
+		return cmdServe(rest)
 	case "export":
 		return cmdExport(rest)
 	case "init-providers":
@@ -91,6 +98,7 @@ Usage:
   outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--output <size>]
   outfit remove --provider <name> [--model-family <family>] [--model <id>]
   outfit apply  [path] [--output <size>]   (defaults to ./Outfit)
+  outfit serve  [path] [--dry-run]         (run llama-server from the PRESET)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
   outfit version                    (or -v/--version)
@@ -116,6 +124,9 @@ remove: removes the provider, or just the named models when a family/model is
         given. Clears the default model if it pointed at something removed.
 apply: applies an Outfit file — a declarative, Dockerfile-style description of
        one provider selection — as if you had run the equivalent add.
+serve: reads the Outfit's PRESET (a llama.cpp .ini preset), turns the matching
+       model section into a llama-server command, prints it, and runs it.
+       --dry-run/-n prints the command without launching the server.
 export: prints the current config as an Outfit (outfit export > Outfit).
 init-providers: writes the binary's built-in providers.yaml to the working
        directory (or [path]) so you can customise the catalogue and point
@@ -239,6 +250,29 @@ func applySelection(sel outfit.Selection) error {
 	return nil
 }
 
+// readOutfit reads and parses the Outfit at path, defaulting to ./Outfit when
+// path is empty so a bare command works in a directory that holds one. cmd
+// names the calling subcommand for the not-found hint. It returns the parsed
+// selection alongside the resolved path, which callers use to locate files
+// referenced relative to the Outfit.
+func readOutfit(cmd, path string) (outfit.Selection, string, error) {
+	if path == "" {
+		path = outfit.DefaultFile
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) && path == outfit.DefaultFile {
+			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path: outfit %s <file>)", outfit.DefaultFile, cmd)
+		}
+		return outfit.Selection{}, path, fmt.Errorf("reading %s: %w", path, err)
+	}
+	sel, err := outfit.Parse(data)
+	if err != nil {
+		return outfit.Selection{}, path, fmt.Errorf("%s: %w", path, err)
+	}
+	return sel, path, nil
+}
+
 // cmdApply reads an Outfit file and applies it. The path defaults to ./Outfit
 // when none is given, so a bare `outfit apply` works in a directory that
 // holds one.
@@ -252,21 +286,13 @@ func cmdApply(args []string) error {
 		return err
 	}
 
-	path := outfit.DefaultFile
+	var path string
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
-
-	data, err := os.ReadFile(path)
+	sel, _, err := readOutfit("apply", path)
 	if err != nil {
-		if os.IsNotExist(err) && path == outfit.DefaultFile {
-			return fmt.Errorf("no %s found in the current directory (pass a path: outfit apply <file>)", outfit.DefaultFile)
-		}
-		return fmt.Errorf("reading %s: %w", path, err)
-	}
-	sel, err := outfit.Parse(data)
-	if err != nil {
-		return fmt.Errorf("%s: %w", path, err)
+		return err
 	}
 	sel.Providers = providers
 	// A command-line --output/-o overrides the Outfit's OUTPUT instruction.
@@ -274,6 +300,76 @@ func cmdApply(args []string) error {
 		sel.Output = output
 	}
 	return applySelection(sel)
+}
+
+// llamaServerBinary is the llama.cpp server executable that `serve` launches.
+// It is a package var so tests can point it at a stub instead of a real build.
+var llamaServerBinary = "llama-server"
+
+// cmdServe reads an Outfit, resolves its PRESET to a llama.cpp .ini file, turns
+// the matching model section into a llama-server command, prints it, and runs
+// it. The Outfit path defaults to ./Outfit; a PRESET path is resolved relative
+// to the Outfit's own directory.
+func cmdServe(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	var dryRun bool
+	fs.BoolVar(&dryRun, "dry-run", false, "print the llama-server command without running it")
+	fs.BoolVar(&dryRun, "n", false, "print the command without running it (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	var path string
+	if rest := fs.Args(); len(rest) > 0 {
+		path = rest[0]
+	}
+	sel, outfitPath, err := readOutfit("serve", path)
+	if err != nil {
+		return err
+	}
+	if sel.Preset == "" {
+		return fmt.Errorf("%s has no PRESET instruction; serve needs a llama.cpp preset .ini to run", outfitPath)
+	}
+
+	// A relative PRESET is resolved against the Outfit's directory, so an Outfit
+	// and its preset can travel together.
+	presetPath := sel.Preset
+	if !filepath.IsAbs(presetPath) {
+		presetPath = filepath.Join(filepath.Dir(outfitPath), presetPath)
+	}
+
+	data, err := os.ReadFile(presetPath)
+	if err != nil {
+		return fmt.Errorf("reading preset %s: %w", presetPath, err)
+	}
+	pre, err := preset.Parse(data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", presetPath, err)
+	}
+	sec, err := pre.Select(sel.Model)
+	if err != nil {
+		return fmt.Errorf("%s: %w", presetPath, err)
+	}
+	argv := pre.Command(llamaServerBinary, sec)
+
+	fmt.Printf("Using preset %s\n", presetPath)
+	fmt.Printf("Model: %s\n\n", sec.Name)
+	fmt.Printf("%s\n\n", preset.FormatCommand(argv))
+	if dryRun {
+		return nil
+	}
+
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%s not found — install llama.cpp (e.g. brew install llama.cpp) or check the path", argv[0])
+		}
+		return err
+	}
+	return nil
 }
 
 // cmdExport reconstructs an Outfit from the current opencode config and prints

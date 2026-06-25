@@ -56,6 +56,14 @@ What the flags do:
 - `--host`/`--port` — the OpenAI-compatible API is served at
   `http://127.0.0.1:8080/v1`.
 
+Rather than remember those flags, this directory keeps them in a
+[`preset.ini`](preset.ini) and lets `outfit` build and run the command:
+
+```sh
+outfit serve              # from this directory; reads ./Outfit and its PRESET
+outfit serve --dry-run    # print the llama-server command without running it
+```
+
 ### Optional: quantise the KV cache
 
 For long contexts the K/V cache can dominate memory. Quantising it to `q8_0`

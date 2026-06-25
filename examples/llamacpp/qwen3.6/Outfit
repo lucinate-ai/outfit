@@ -3,4 +3,5 @@
 PROVIDER llamacpp
 MODEL    qwen3.6-35b-a3b
 CONTEXT  32768            # match the server's --ctx-size
+PRESET   ./preset.ini     # `outfit serve` launches llama-server from this
 # BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default host/port

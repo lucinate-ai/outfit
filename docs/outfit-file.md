@@ -13,6 +13,7 @@ MODEL    deepseek/deepseek-v4-pro   # optional; becomes the default model
 CONTEXT  128k                       # optional; context window
 OUTPUT   32k                        # optional; max output tokens
 BASEURL  https://gateway/v1         # optional; API base URL override
+PRESET   ./preset.ini               # optional; llama.cpp preset for `outfit serve`
 ```
 
 Applying it is the same as running the equivalent `outfit add`, so everything
@@ -30,6 +31,43 @@ in the current directory. Point it at any path to apply a different file.
 
 After applying, just run `opencode`.
 
+## Serving a llama.cpp model
+
+llama.cpp can read a [preset `.ini`](https://github.com/ggml-org/llama.cpp/blob/master/docs/preset.md) —
+a set of `llama-server` flags grouped under named `[model]` sections, with a
+`[*]` section for shared defaults. Presets are built for the server's router
+(multi-model) mode, though, so there's no clean way to launch a single model
+from one. `outfit serve` fills that gap:
+
+```sh
+outfit serve              # reads ./Outfit, runs llama-server from its PRESET
+outfit serve path/to/Outfit
+outfit serve --dry-run    # print the command without launching the server
+```
+
+Point an Outfit at a preset with the `PRESET` keyword:
+
+```dockerfile
+PROVIDER llamacpp
+MODEL    Qwen3.5-4B       # selects the preset's [Qwen3.5-4B] section
+PRESET   ./preset.ini
+```
+
+`serve` reads the preset, flattens the `[*]` defaults and the matching model
+section into explicit `llama-server` flags (the section wins on any clash),
+prints the path and the command, then runs it. Keys map straight to flags —
+`ctx-size = 262144` becomes `--ctx-size 262144`, `hf` becomes `--hf-repo`, and
+boolean toggles like `mmap = 1` become a bare `--mmap`.
+
+Which section runs:
+
+- `MODEL` names the section to serve.
+- With no `MODEL`, a preset holding exactly one section serves that one.
+- A preset with several sections and no `MODEL` is an error — name one.
+
+`serve` needs a `PRESET`; it does not touch your opencode config. Pair it with
+`outfit apply` to point opencode at the server you just launched.
+
 ## Syntax
 
 One instruction per line: a keyword followed by a single value.
@@ -42,6 +80,7 @@ One instruction per line: a keyword followed by a single value.
 | `CONTEXT`  | no                         | `--context`    | `CONTEXT 128k`                 |
 | `OUTPUT`   | no                         | `--output`     | `OUTPUT 32k`                   |
 | `BASEURL`  | no                         | `--base-url`   | `BASEURL https://gateway/v1`   |
+| `PRESET`   | no                         | `outfit serve` | `PRESET ./preset.ini`          |
 
 Rules:
 
@@ -59,6 +98,9 @@ Rules:
 - `BASEURL` overrides the provider's API base URL — handy for a gateway or a
   llama.cpp server on a non-default port. `URL`, `BASE-URL`, and `BASE_URL` are
   accepted as aliases.
+- `PRESET` points at a llama.cpp [preset `.ini`](https://github.com/ggml-org/llama.cpp/blob/master/docs/preset.md)
+  and is only used by [`outfit serve`](#serving-a-llamacpp-model); `apply`
+  ignores it. A relative path is resolved against the Outfit's own directory.
 - Keywords are **case-insensitive** — `provider`, `Provider`, and `PROVIDER` are
   all accepted — but **UPPERCASE is canonical** and is what `outfit export`
   writes.
