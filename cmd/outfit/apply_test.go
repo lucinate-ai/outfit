@@ -95,6 +95,35 @@ func TestCmdApply_AliasOnly(t *testing.T) {
 	}
 }
 
+// TestCmdRemove_ByAlias checks that a model added under an ALIAS is removed by
+// that same alias.
+func TestCmdRemove_ByAlias(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nMODEL unsloth/Qwen:Q4_K_M\nALIAS qwen\n")
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	captureStdout(t, func() {
+		if err := cmdRemove([]string{"-p", "llamacpp", "-a", "qwen"}); err != nil {
+			t.Fatalf("cmdRemove -a: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	prov, _ := m["provider"].(map[string]any)
+	llamacpp, _ := prov["llamacpp"].(map[string]any)
+	models, _ := llamacpp["models"].(map[string]any)
+	if _, ok := models["qwen"]; ok {
+		t.Error("the aliased model should have been removed")
+	}
+}
+
 // TestCmdApply_OutputFlagOverride checks that a command-line --output overrides
 // the Outfit's OUTPUT instruction.
 func TestCmdApply_OutputFlagOverride(t *testing.T) {

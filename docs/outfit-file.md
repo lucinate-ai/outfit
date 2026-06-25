@@ -78,9 +78,13 @@ PRESET   ./preset.ini
 ```
 
 `serve` flattens the `[*]` defaults and the matching section into explicit
-`llama-server` flags (the section wins on any clash). Keys map straight to flags
-— `ctx-size = 262144` becomes `--ctx-size 262144`, `hf` becomes `--hf-repo`, and
-boolean toggles like `mmap = 1` become a bare `--mmap`. Which section runs:
+`llama-server` flags, the section winning over the defaults. Anything the
+**Outfit** also states wins over both,
+so you can keep a shared preset and tweak one field per project: `CONTEXT`
+overrides the section's `ctx-size`, `BASEURL` its `host`/`port`, `ALIAS` its
+`alias`, and `MODEL` its `hf`/`model`. Keys map straight to flags — `ctx-size =
+262144` becomes `--ctx-size 262144`, `hf` becomes `--hf-repo`, and boolean
+toggles like `mmap = 1` become a bare `--mmap`. Which section runs:
 
 - `ALIAS` names the section.
 - With no `ALIAS`, a preset holding exactly one section serves that one.

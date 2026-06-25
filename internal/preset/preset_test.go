@@ -152,6 +152,26 @@ temp     = 1.0
 	}
 }
 
+func TestFlags_Overrides(t *testing.T) {
+	base := []Param{{Key: "ctx-size", Value: "32768"}, {Key: "host", Value: "127.0.0.1"}}
+	override := []Param{{Key: "ctx-size", Value: "8192"}, {Key: "alias", Value: "q"}}
+	got := strings.Join(Flags(base, override), " ")
+	// ctx-size is replaced in place; the new alias is appended.
+	want := "--ctx-size 8192 --host 127.0.0.1 --alias q"
+	if got != want {
+		t.Errorf("Flags =\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+func TestFlags_OverrideCollapsesShortAlias(t *testing.T) {
+	// A preset written with the short `c` is overridden by `ctx-size`: the two
+	// must collapse to a single flag, not emit both.
+	got := strings.Join(Flags([]Param{{Key: "c", Value: "4096"}}, []Param{{Key: "ctx-size", Value: "8192"}}), " ")
+	if got != "--ctx-size 8192" {
+		t.Errorf("short alias not collapsed on override: %q", got)
+	}
+}
+
 func TestFlagFor(t *testing.T) {
 	cases := []struct {
 		key, value string
