@@ -108,6 +108,28 @@ func TestCmdServe_PresetSelectsByAlias(t *testing.T) {
 	}
 }
 
+// TestCmdServe_OutfitOverridesPreset checks that values stated in the Outfit win
+// over the preset's: CONTEXT replaces the section's ctx-size, BASEURL replaces
+// host/port, and ALIAS adds --alias.
+func TestCmdServe_OutfitOverridesPreset(t *testing.T) {
+	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nALIAS qwen\nCONTEXT 8192\nBASEURL http://0.0.0.0:9999/v1\nPRESET preset.ini\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	for _, want := range []string{"--ctx-size 8192", "--host 0.0.0.0", "--port 9999", "--alias qwen"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Outfit value did not override the preset, missing %q:\n%s", want, out)
+		}
+	}
+	// The preset's own ctx-size of 32768 must be gone, not emitted alongside.
+	if strings.Contains(out, "--ctx-size 32768") {
+		t.Errorf("preset ctx-size should have been overridden:\n%s", out)
+	}
+}
+
 // TestCmdServe_DerivesFromOutfit covers serving with no PRESET: the command is
 // built from MODEL (an HF repo), ALIAS, CONTEXT, and BASEURL.
 func TestCmdServe_DerivesFromOutfit(t *testing.T) {

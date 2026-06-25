@@ -156,22 +156,21 @@ func (p Preset) Select(model string) (Section, error) {
 	}
 }
 
-// Args flattens the global defaults and a section into `llama-server` flags, in
-// file order, with the section's values overriding the globals'. It does not
-// include the binary name; see Command.
-func (p Preset) Args(sec Section) []string {
-	// Merge global-then-section, keeping first-seen order and letting a later
-	// (section) entry overwrite an earlier (global) value in place.
+// Flags merges ordered layers of params into `llama-server` flag tokens. Later
+// layers override earlier ones by canonical flag name, in place, so the first
+// layer fixes the order: pass globals, then the section, then any overrides. It
+// does not include the binary name; see Command.
+func Flags(layers ...[]Param) []string {
 	var ordered []Param
-	at := map[string]int{}
-	for _, src := range [][]Param{p.Global, sec.Params} {
-		for _, kv := range src {
-			lk := strings.ToLower(kv.Key)
-			if i, ok := at[lk]; ok {
-				ordered[i].Value = kv.Value
+	at := map[string]int{} // canonical flag name -> index in ordered
+	for _, layer := range layers {
+		for _, kv := range layer {
+			ck := canonicalName(kv.Key)
+			if i, ok := at[ck]; ok {
+				ordered[i] = kv
 				continue
 			}
-			at[lk] = len(ordered)
+			at[ck] = len(ordered)
 			ordered = append(ordered, kv)
 		}
 	}
@@ -183,9 +182,17 @@ func (p Preset) Args(sec Section) []string {
 	return args
 }
 
-// Command builds the full argv (binary first) for serving a section.
-func (p Preset) Command(binary string, sec Section) []string {
-	return append([]string{binary}, p.Args(sec)...)
+// Args flattens the global defaults and a section into `llama-server` flags,
+// with the section's values overriding the globals'.
+func (p Preset) Args(sec Section) []string {
+	return Flags(p.Global, sec.Params)
+}
+
+// Command builds the full argv (binary first) for serving a section. Any
+// override layers (e.g. values an Outfit specifies) win over the preset.
+func (p Preset) Command(binary string, sec Section, overrides ...[]Param) []string {
+	layers := append([][]Param{p.Global, sec.Params}, overrides...)
+	return append([]string{binary}, Flags(layers...)...)
 }
 
 // canonical maps llama.cpp short flag aliases — as they appear in preset keys,
@@ -218,12 +225,20 @@ var boolean = map[string]bool{
 	"cpu-moe": true, "color": true,
 }
 
-// flagFor turns one preset key/value into its `llama-server` flag tokens.
-func flagFor(key, value string) []string {
+// canonicalName lower-cases a preset key and resolves any short alias to its
+// canonical long-form flag name, so the same flag written different ways (c,
+// ctx-size, env-var forms) collapses to one when merging layers.
+func canonicalName(key string) string {
 	name := strings.ToLower(strings.TrimSpace(key))
 	if c, ok := canonical[name]; ok {
 		name = c
 	}
+	return name
+}
+
+// flagFor turns one preset key/value into its `llama-server` flag tokens.
+func flagFor(key, value string) []string {
+	name := canonicalName(key)
 	flag := "--" + name
 	if len(name) == 1 { // an unknown single-character key is a short flag
 		flag = "-" + name

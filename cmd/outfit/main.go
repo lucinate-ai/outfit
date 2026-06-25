@@ -365,14 +365,23 @@ func cmdServe(args []string) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", presetPath, err)
 		}
-		argv = pre.Command(llamaServerBinary, sec)
-		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
-	} else {
-		serveArgs, err := buildServeArgs(sel)
+		// Anything the Outfit states (CONTEXT, BASEURL, ALIAS, MODEL) overrides
+		// the preset's own values.
+		overrides, err := outfitServeParams(sel)
 		if err != nil {
 			return err
 		}
-		argv = append([]string{llamaServerBinary}, serveArgs...)
+		argv = pre.Command(llamaServerBinary, sec, overrides)
+		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
+	} else {
+		if sel.Model == "" {
+			return fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
+		}
+		params, err := outfitServeParams(sel)
+		if err != nil {
+			return err
+		}
+		argv = append([]string{llamaServerBinary}, preset.Flags(params)...)
 		fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
 	}
 
@@ -394,29 +403,28 @@ func cmdServe(args []string) error {
 	return nil
 }
 
-// buildServeArgs derives llama-server flags from an Outfit with no PRESET. The
-// provider-native MODEL supplies the model source (-hf for a Hugging Face repo,
-// -m for a .gguf path); ALIAS, CONTEXT, and BASEURL fill in the rest.
-func buildServeArgs(sel outfit.Selection) ([]string, error) {
-	if sel.Model == "" {
-		return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
-	}
-
-	var args []string
-	if isModelPath(sel.Model) {
-		args = append(args, "--model", sel.Model)
-	} else {
-		args = append(args, "--hf-repo", sel.Model)
+// outfitServeParams turns the llama-server settings an Outfit states into preset
+// params: the provider-native MODEL supplies the model source (hf for a Hugging
+// Face repo, model for a .gguf path); ALIAS, CONTEXT, and BASEURL fill in the
+// rest. They seed a preset-less command and, with a preset, override its values.
+func outfitServeParams(sel outfit.Selection) ([]preset.Param, error) {
+	var params []preset.Param
+	if sel.Model != "" {
+		if isModelPath(sel.Model) {
+			params = append(params, preset.Param{Key: "model", Value: sel.Model})
+		} else {
+			params = append(params, preset.Param{Key: "hf", Value: sel.Model})
+		}
 	}
 	if sel.Alias != "" {
-		args = append(args, "--alias", sel.Alias)
+		params = append(params, preset.Param{Key: "alias", Value: sel.Alias})
 	}
 	if sel.Context != "" {
 		n, err := contextsize.Parse(sel.Context)
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--ctx-size", strconv.Itoa(n))
+		params = append(params, preset.Param{Key: "ctx-size", Value: strconv.Itoa(n)})
 	}
 	if sel.BaseURL != "" {
 		host, port, err := hostPortFromURL(sel.BaseURL)
@@ -424,13 +432,13 @@ func buildServeArgs(sel outfit.Selection) ([]string, error) {
 			return nil, err
 		}
 		if host != "" {
-			args = append(args, "--host", host)
+			params = append(params, preset.Param{Key: "host", Value: host})
 		}
 		if port != "" {
-			args = append(args, "--port", port)
+			params = append(params, preset.Param{Key: "port", Value: port})
 		}
 	}
-	return args, nil
+	return params, nil
 }
 
 // isModelPath reports whether a MODEL value is a local file rather than a

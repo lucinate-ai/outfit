@@ -156,8 +156,9 @@ outfit serve --dry-run    # just print the command — no server
 
 For flags an Outfit doesn't model (`-ngl`, `--jinja`, KV-cache types, draft
 models), point at a llama.cpp preset `.ini` with `PRESET` and `serve` flattens
-the chosen section into the command instead. It's the missing piece presets
-don't cover: launching a *single* model. Details in
+the chosen section into the command instead — with anything the Outfit states
+(like `CONTEXT`) overriding the preset. It's the missing piece presets don't
+cover: launching a *single* model. Details in
 [`docs/outfit-file.md`](docs/outfit-file.md#serving-a-llamacpp-model).
 
 ## Keys and endpoints
