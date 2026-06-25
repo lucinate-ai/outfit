@@ -47,9 +47,9 @@ func TestParse(t *testing.T) {
 			want: Selection{Provider: "openai-compatible", Model: "m", BaseURL: "https://gw/v1"},
 		},
 		{
-			name: "preset",
-			in:   "PROVIDER llamacpp\nMODEL qwen\nPRESET ./preset.ini\n",
-			want: Selection{Provider: "llamacpp", Model: "qwen", Preset: "./preset.ini"},
+			name: "alias and preset",
+			in:   "PROVIDER llamacpp\nMODEL unsloth/Qwen:Q4_K_M\nALIAS qwen\nPRESET ./preset.ini\n",
+			want: Selection{Provider: "llamacpp", Model: "unsloth/Qwen:Q4_K_M", Alias: "qwen", Preset: "./preset.ini"},
 		},
 	}
 	for _, tc := range cases {
@@ -88,6 +88,7 @@ func TestFormatRoundTrip(t *testing.T) {
 		Provider: "openrouter",
 		Family:   "deepseek-v4",
 		Model:    "deepseek/deepseek-v4-pro",
+		Alias:    "deepseek",
 		Context:  "128000",
 		Output:   "32000",
 		BaseURL:  "https://gateway.example/v1",

@@ -58,7 +58,7 @@ Then just run `opencode`.
 
 ```sh
 outfit list
-outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--output <size>] [--base-url <url>]
+outfit add    --provider <name> [--model-family <family>] [--model <id>] [--alias <name>] [--context <size>] [--output <size>] [--base-url <url>]
 outfit remove --provider <name> [--model-family <family>] [--model <id>]
 outfit apply  [path] [--output <size>]   # apply an Outfit file (default ./Outfit)
 outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
@@ -66,7 +66,7 @@ outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit
 ```
 
-Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-c` (context), `-o` (output), `-u` (base-url).
+Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url).
 
 ### Examples
 
@@ -118,7 +118,8 @@ opencode? Drop an **Outfit** in your project:
 # Outfit
 PROVIDER openrouter
 FAMILY   deepseek-v4
-MODEL    deepseek/deepseek-v4-pro   # optional; becomes the default
+MODEL    deepseek/deepseek-v4-pro   # optional; the provider-native model ref
+ALIAS    deepseek                   # optional; friendly name for the model
 CONTEXT  128k                       # optional; context window
 OUTPUT   32k                        # optional; max output tokens
 BASEURL  https://gateway/v1         # optional; API base URL override
@@ -136,24 +137,27 @@ and ready-to-use examples live under [`examples/`](examples/).
 
 ## Serving a local model
 
-Running a model with llama.cpp? Point an Outfit at a llama.cpp preset `.ini`
-with the `PRESET` keyword and let `outfit serve` launch the server for you:
+Running a model with llama.cpp? `outfit serve` reads an Outfit and launches
+`llama-server` for it — so the same file that points opencode at a model can
+start it too. The simple case needs no preset:
 
 ```dockerfile
 # Outfit
 PROVIDER llamacpp
-MODEL    Qwen3.5-4B       # selects the preset's [Qwen3.5-4B] section
-PRESET   ./preset.ini
+MODEL    unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL   # HF repo, or a .gguf path
+ALIAS    qwen3.6                                    # llama-server --alias
+CONTEXT  32768                                      # llama-server --ctx-size
 ```
 
 ```sh
-outfit serve              # turns the preset into a llama-server command and runs it
+outfit serve              # builds a llama-server command and runs it
 outfit serve --dry-run    # just print the command — no server
 ```
 
-`serve` flattens the preset's `[*]` defaults and the chosen model section into
-plain `llama-server` flags, prints the command, then runs it. It's the missing
-piece presets don't cover: launching a *single* model. Details in
+For flags an Outfit doesn't model (`-ngl`, `--jinja`, KV-cache types, draft
+models), point at a llama.cpp preset `.ini` with `PRESET` and `serve` flattens
+the chosen section into the command instead. It's the missing piece presets
+don't cover: launching a *single* model. Details in
 [`docs/outfit-file.md`](docs/outfit-file.md#serving-a-llamacpp-model).
 
 ## Keys and endpoints

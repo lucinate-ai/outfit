@@ -103,14 +103,17 @@ The Outfit is:
 
 ```dockerfile
 PROVIDER llamacpp
-MODEL    qwen3.6-35b-a3b
+ALIAS    qwen3.6-35b-a3b
 CONTEXT  32768            # match the server's --ctx-size
+PRESET   ./preset.ini
 ```
 
-The model name is just a label — `llama-server` serves whichever model it has
-loaded regardless of what's requested — so call it whatever you find readable.
-`CONTEXT` matches opencode's context window to the `--ctx-size` you launched the
-server with, so it doesn't overshoot what `llama-server` will accept.
+`ALIAS` is the name opencode shows for the model (and the section `serve` reads
+from the preset). For a single-model server it's just a label — `llama-server`
+serves whichever model it loaded regardless of what's requested — so call it
+whatever you find readable. `CONTEXT` matches opencode's context window to the
+`--ctx-size` you launched the server with, so it doesn't overshoot what
+`llama-server` will accept.
 
 Running on a non-default host or port? Add a `BASEURL` line to the Outfit (the
 file ships one commented out):

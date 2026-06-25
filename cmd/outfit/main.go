@@ -12,12 +12,12 @@
 //	outfit add    --provider <name> [--model-family <family>] [--model <id>]
 //	outfit remove --provider <name> [--model-family <family>] [--model <id>]
 //	outfit apply  [path]   # apply an Outfit file (defaults to ./Outfit)
-//	outfit serve  [path]   # run llama-server from the Outfit's PRESET
+//	outfit serve  [path]   # run llama-server for the Outfit (PRESET or MODEL)
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
 //
-// Short flags: -p (provider), -f (model-family), -m (model), -c (context),
-// -o (output), -u (base-url).
+// Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
+// -c (context), -o (output), -u (base-url).
 //
 // The API base URL can be overridden for any provider with --base-url/-u or the
 // OUTFIT_BASE_URL environment variable; the flag wins over the env var, and
@@ -31,6 +31,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,6 +108,8 @@ Flags:
   -p, --provider       provider name (see `+"`outfit list`"+`)
   -f, --model-family   model family to add or remove
   -m, --model          model id to set as default / to add or remove
+  -a, --alias          friendly name for the model (the harness key); for
+                       llama.cpp the server's reported model name under serve
   -c, --context        context window size for the added model(s); accepts
                        human suffixes (128k, 1m) or an absolute count (200000)
   -o, --output         max output tokens for the added model(s); same format as
@@ -124,9 +127,10 @@ remove: removes the provider, or just the named models when a family/model is
         given. Clears the default model if it pointed at something removed.
 apply: applies an Outfit file — a declarative, Dockerfile-style description of
        one provider selection — as if you had run the equivalent add.
-serve: reads the Outfit's PRESET (a llama.cpp .ini preset), turns the matching
-       model section into a llama-server command, prints it, and runs it.
-       --dry-run/-n prints the command without launching the server.
+serve: runs llama-server for the Outfit. With a PRESET (a llama.cpp .ini) it
+       turns the matching section into the command; otherwise it derives one
+       from MODEL/ALIAS/CONTEXT/BASEURL. Prints the command before running it;
+       --dry-run/-n prints without launching the server.
 export: prints the current config as an Outfit (outfit export > Outfit).
 init-providers: writes the binary's built-in providers.yaml to the working
        directory (or [path]) so you can customise the catalogue and point
@@ -144,6 +148,8 @@ func parseSelection(name string, args []string) (outfit.Selection, error) {
 	fs.StringVar(&s.Family, "f", "", "model family (shorthand)")
 	fs.StringVar(&s.Model, "model", "", "model id")
 	fs.StringVar(&s.Model, "m", "", "model id (shorthand)")
+	fs.StringVar(&s.Alias, "alias", "", "friendly name for the model (overrides the harness key)")
+	fs.StringVar(&s.Alias, "a", "", "friendly name for the model (shorthand)")
 	fs.StringVar(&s.Context, "context", "", "context window size (e.g. 128k, 1m, 200000)")
 	fs.StringVar(&s.Context, "c", "", "context window size (shorthand)")
 	fs.StringVar(&s.Output, "output", "", "max output tokens (defaults to a quarter of --context)")
@@ -172,8 +178,8 @@ func cmdAdd(args []string) error {
 // It is the shared core of `add` and `apply`: both resolve a selection (from
 // flags or an Outfit file) and hand it here.
 func applySelection(sel outfit.Selection) error {
-	if sel.Family == "" && sel.Model == "" {
-		return fmt.Errorf("a provider selection needs a model family and/or a model")
+	if sel.Family == "" && sel.Model == "" && sel.Alias == "" {
+		return fmt.Errorf("a provider selection needs a model family, a model, or an alias")
 	}
 
 	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(sel.Providers))
@@ -185,7 +191,16 @@ func applySelection(sel outfit.Selection) error {
 		return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.Provider)
 	}
 
-	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, sel.Model, sel.BaseURL, opencode.ResolveEnv)
+	// The harness keys a model by its friendly ALIAS when given, otherwise by the
+	// provider-native MODEL itself. For a single-model llama.cpp server the key is
+	// only a label (the server serves whatever it loaded), so an ALIAS keeps that
+	// label readable; for an API provider, leaving ALIAS unset keeps the real id.
+	modelKey := sel.Alias
+	if modelKey == "" {
+		modelKey = sel.Model
+	}
+
+	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, modelKey, sel.BaseURL, opencode.ResolveEnv)
 	if err != nil {
 		return err
 	}
@@ -306,10 +321,10 @@ func cmdApply(args []string) error {
 // It is a package var so tests can point it at a stub instead of a real build.
 var llamaServerBinary = "llama-server"
 
-// cmdServe reads an Outfit, resolves its PRESET to a llama.cpp .ini file, turns
-// the matching model section into a llama-server command, prints it, and runs
-// it. The Outfit path defaults to ./Outfit; a PRESET path is resolved relative
-// to the Outfit's own directory.
+// cmdServe reads an Outfit and runs llama-server for it. With a PRESET it turns
+// the matching preset section into the command; without one it derives the
+// command from the Outfit's own MODEL/ALIAS/CONTEXT/BASEURL. Either way it
+// prints the command before running it. The Outfit path defaults to ./Outfit.
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var dryRun bool
@@ -327,33 +342,40 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	if sel.Preset == "" {
-		return fmt.Errorf("%s has no PRESET instruction; serve needs a llama.cpp preset .ini to run", outfitPath)
+
+	var argv []string
+	if sel.Preset != "" {
+		// A relative PRESET is resolved against the Outfit's directory, so an
+		// Outfit and its preset can travel together.
+		presetPath := sel.Preset
+		if !filepath.IsAbs(presetPath) {
+			presetPath = filepath.Join(filepath.Dir(outfitPath), presetPath)
+		}
+		data, err := os.ReadFile(presetPath)
+		if err != nil {
+			return fmt.Errorf("reading preset %s: %w", presetPath, err)
+		}
+		pre, err := preset.Parse(data)
+		if err != nil {
+			return fmt.Errorf("%s: %w", presetPath, err)
+		}
+		// The preset's sections are named by the friendly ALIAS, not the
+		// provider-native MODEL, so that is what selects one.
+		sec, err := pre.Select(sel.Alias)
+		if err != nil {
+			return fmt.Errorf("%s: %w", presetPath, err)
+		}
+		argv = pre.Command(llamaServerBinary, sec)
+		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
+	} else {
+		serveArgs, err := buildServeArgs(sel)
+		if err != nil {
+			return err
+		}
+		argv = append([]string{llamaServerBinary}, serveArgs...)
+		fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
 	}
 
-	// A relative PRESET is resolved against the Outfit's directory, so an Outfit
-	// and its preset can travel together.
-	presetPath := sel.Preset
-	if !filepath.IsAbs(presetPath) {
-		presetPath = filepath.Join(filepath.Dir(outfitPath), presetPath)
-	}
-
-	data, err := os.ReadFile(presetPath)
-	if err != nil {
-		return fmt.Errorf("reading preset %s: %w", presetPath, err)
-	}
-	pre, err := preset.Parse(data)
-	if err != nil {
-		return fmt.Errorf("%s: %w", presetPath, err)
-	}
-	sec, err := pre.Select(sel.Model)
-	if err != nil {
-		return fmt.Errorf("%s: %w", presetPath, err)
-	}
-	argv := pre.Command(llamaServerBinary, sec)
-
-	fmt.Printf("Using preset %s\n", presetPath)
-	fmt.Printf("Model: %s\n\n", sec.Name)
 	fmt.Printf("%s\n\n", preset.FormatCommand(argv))
 	if dryRun {
 		return nil
@@ -370,6 +392,72 @@ func cmdServe(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// buildServeArgs derives llama-server flags from an Outfit with no PRESET. The
+// provider-native MODEL supplies the model source (-hf for a Hugging Face repo,
+// -m for a .gguf path); ALIAS, CONTEXT, and BASEURL fill in the rest.
+func buildServeArgs(sel outfit.Selection) ([]string, error) {
+	if sel.Model == "" {
+		return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
+	}
+
+	var args []string
+	if isModelPath(sel.Model) {
+		args = append(args, "--model", sel.Model)
+	} else {
+		args = append(args, "--hf-repo", sel.Model)
+	}
+	if sel.Alias != "" {
+		args = append(args, "--alias", sel.Alias)
+	}
+	if sel.Context != "" {
+		n, err := contextsize.Parse(sel.Context)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--ctx-size", strconv.Itoa(n))
+	}
+	if sel.BaseURL != "" {
+		host, port, err := hostPortFromURL(sel.BaseURL)
+		if err != nil {
+			return nil, err
+		}
+		if host != "" {
+			args = append(args, "--host", host)
+		}
+		if port != "" {
+			args = append(args, "--port", port)
+		}
+	}
+	return args, nil
+}
+
+// isModelPath reports whether a MODEL value is a local file rather than a
+// Hugging Face repo: an absolute or explicitly-relative path, a home-relative
+// path, or anything ending in .gguf. Everything else is treated as org/model.
+func isModelPath(model string) bool {
+	if strings.HasSuffix(strings.ToLower(model), ".gguf") {
+		return true
+	}
+	return strings.HasPrefix(model, "/") ||
+		strings.HasPrefix(model, "./") ||
+		strings.HasPrefix(model, "../") ||
+		strings.HasPrefix(model, "~")
+}
+
+// hostPortFromURL extracts the host and port from a BASEURL so serve can bind
+// llama-server to the same endpoint the harness will call. A bare host:port
+// with no scheme is accepted too.
+func hostPortFromURL(raw string) (host, port string, err error) {
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid BASEURL %q: %w", raw, err)
+	}
+	return u.Hostname(), u.Port(), nil
 }
 
 // cmdExport reconstructs an Outfit from the current opencode config and prints
@@ -500,6 +588,9 @@ func cmdRemove(args []string) error {
 	// Resolve the model keys to remove. With no family/model, the whole
 	// provider is removed.
 	var modelKeys []string
+	if sel.Alias != "" {
+		modelKeys = append(modelKeys, sel.Alias)
+	}
 	if sel.Model != "" {
 		modelKeys = append(modelKeys, sel.Model)
 	}

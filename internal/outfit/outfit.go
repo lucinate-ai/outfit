@@ -8,11 +8,17 @@
 //	# point opencode at one provider
 //	PROVIDER openrouter
 //	FAMILY   deepseek-v4
-//	MODEL    deepseek/deepseek-v4-pro   # optional; sets the default
+//	MODEL    deepseek/deepseek-v4-pro   # optional; the provider-native model ref
+//	ALIAS    deepseek                   # optional; friendly name for the model
 //	CONTEXT  128k                       # optional; context window
 //	OUTPUT   32k                        # optional; max output tokens
 //	BASEURL  https://gateway/v1         # optional; API base URL override
 //	PRESET   ./preset.ini               # optional; llama.cpp preset for `serve`
+//
+// MODEL is the reference the provider itself understands: an OpenRouter/Bedrock
+// model id, an Ollama name, or — for llamacpp — a Hugging Face repo
+// (org/model:quant) or a path to a .gguf. ALIAS overrides the friendly name the
+// harness shows for it (and the name llama-server reports under `serve`).
 //
 // Keywords are matched case-insensitively, but UPPERCASE is canonical (it is
 // what `outfit export` emits). Blank lines, full-line `#` comments, and
@@ -33,6 +39,7 @@ type Selection struct {
 	Provider  string
 	Family    string
 	Model     string
+	Alias     string
 	Context   string
 	Output    string
 	Providers string
@@ -45,6 +52,7 @@ const (
 	kwProvider = "provider"
 	kwFamily   = "family"
 	kwModel    = "model"
+	kwAlias    = "alias"
 	kwContext  = "context"
 	kwOutput   = "output"
 	kwBaseURL  = "baseurl"
@@ -56,7 +64,7 @@ const (
 // "" for an unrecognised keyword.
 func canonicalKeyword(kw string) string {
 	switch kw {
-	case kwProvider, kwFamily, kwModel, kwContext, kwOutput, kwPreset:
+	case kwProvider, kwFamily, kwModel, kwAlias, kwContext, kwOutput, kwPreset:
 		return kw
 	case kwBaseURL, "base-url", "base_url", "url":
 		return kwBaseURL
@@ -84,7 +92,7 @@ func Parse(data []byte) (Selection, error) {
 		fields := strings.Fields(text)
 		canon := canonicalKeyword(strings.ToLower(fields[0]))
 		if canon == "" {
-			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, CONTEXT, OUTPUT, BASEURL, or PRESET)", line, fields[0])
+			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, or PRESET)", line, fields[0])
 		}
 		switch {
 		case len(fields) < 2:
@@ -106,6 +114,8 @@ func Parse(data []byte) (Selection, error) {
 			sel.Family = value
 		case kwModel:
 			sel.Model = value
+		case kwAlias:
+			sel.Alias = value
 		case kwContext:
 			sel.Context = value
 		case kwOutput:
@@ -154,6 +164,7 @@ func Format(sel Selection) string {
 	line("PROVIDER", sel.Provider)
 	line("FAMILY", sel.Family)
 	line("MODEL", sel.Model)
+	line("ALIAS", sel.Alias)
 	line("CONTEXT", sel.Context)
 	line("OUTPUT", sel.Output)
 	line("BASEURL", sel.BaseURL)

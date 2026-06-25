@@ -1,6 +1,7 @@
 # Gemma-4-12B-IT served locally by llama.cpp.
-# The model name is just a label llama-server reports; see the README.
+# ALIAS names the model in opencode and selects the preset section below.
 PROVIDER llamacpp
-MODEL    gemma-4-12b-it
-CONTEXT  32768            # match the server's --ctx-size
+ALIAS    gemma-4-12b-it
+CONTEXT  32768            # opencode's context window; match the server's --ctx-size
+PRESET   ./preset.ini     # `outfit serve` launches llama-server from this
 # BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default host/port

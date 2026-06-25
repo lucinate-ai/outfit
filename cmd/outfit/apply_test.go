@@ -48,6 +48,53 @@ func TestCmdApply_ContextOutputAndBaseURL(t *testing.T) {
 	}
 }
 
+// TestCmdApply_AliasBecomesModelKey checks that ALIAS, not the provider-native
+// MODEL, keys the model in the opencode config (and the default model).
+func TestCmdApply_AliasBecomesModelKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nMODEL unsloth/Qwen:Q4_K_M\nALIAS qwen\n")
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	models := m["provider"].(map[string]any)["llamacpp"].(map[string]any)["models"].(map[string]any)
+	if _, ok := models["qwen"]; !ok {
+		t.Errorf("expected model keyed by the alias %q, got %v", "qwen", models)
+	}
+	if _, ok := models["unsloth/Qwen:Q4_K_M"]; ok {
+		t.Error("the raw MODEL should not be a model key when an ALIAS is given")
+	}
+	if m["model"] != "llamacpp/qwen" {
+		t.Errorf("default model = %v, want llamacpp/qwen", m["model"])
+	}
+}
+
+// TestCmdApply_AliasOnly checks that an ALIAS alone is a valid selection for a
+// llama.cpp server, whose model key is only a label.
+func TestCmdApply_AliasOnly(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS my-model\n")
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/my-model" {
+		t.Errorf("default model = %v, want llamacpp/my-model", m["model"])
+	}
+}
+
 // TestCmdApply_OutputFlagOverride checks that a command-line --output overrides
 // the Outfit's OUTPUT instruction.
 func TestCmdApply_OutputFlagOverride(t *testing.T) {

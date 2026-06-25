@@ -52,6 +52,14 @@ llama-server \
   --host 127.0.0.1 --port 8080
 ```
 
+Rather than remember those flags, this directory keeps them in a
+[`preset.ini`](preset.ini) and lets `outfit` build and run the command:
+
+```sh
+outfit serve              # from this directory; reads ./Outfit and its PRESET
+outfit serve --dry-run    # print the llama-server command without running it
+```
+
 What the flags do:
 
 - `-hf …:UD-Q8_K_XL` — model repository and quant tag (pulls main GGUF + MTP + mmproj).
@@ -120,14 +128,17 @@ The Outfit is:
 
 ```dockerfile
 PROVIDER llamacpp
-MODEL    gemma-4-12b-it
+ALIAS    gemma-4-12b-it
 CONTEXT  32768            # match the server's --ctx-size
+PRESET   ./preset.ini
 ```
 
-The model name is just a label — `llama-server` serves whichever model it has
-loaded regardless of what's requested — so call it whatever you find readable.
-`CONTEXT` matches opencode's context window to the `--ctx-size` you launched the
-server with, so it doesn't overshoot what `llama-server` will accept.
+`ALIAS` is the name opencode shows for the model (and the section `serve` reads
+from the preset). For a single-model server it's just a label — `llama-server`
+serves whichever model it loaded regardless of what's requested — so call it
+whatever you find readable. `CONTEXT` matches opencode's context window to the
+`--ctx-size` you launched the server with, so it doesn't overshoot what
+`llama-server` will accept.
 
 Running on a non-default host or port? Add a `BASEURL` line to the Outfit (the
 file ships one commented out):
