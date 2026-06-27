@@ -208,6 +208,34 @@ func TestCmdShow_HarnessOverride(t *testing.T) {
 	}
 }
 
+func TestCmdShow_PiPopulated(t *testing.T) {
+	isolateConfig(t)
+
+	// Configure a provider on Pi, which — unlike opencode — has no default-model
+	// setting, so `show` must list the provider and its models without inventing
+	// a "Default model:" line.
+	captureStdout(t, func() {
+		if err := cmdAdd([]string{"-H", "pi", "-p", "ollama", "-f", "llama", "-c", "128k"}); err != nil {
+			t.Fatalf("cmdAdd -H pi: %v", err)
+		}
+	})
+
+	out := captureStdout(t, func() {
+		if err := cmdShow([]string{"-H", "pi"}); err != nil {
+			t.Fatalf("cmdShow -H pi: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Configured providers:") || !strings.Contains(out, "ollama") {
+		t.Errorf("Pi provider not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "context 128000") {
+		t.Errorf("model context not shown:\n%s", out)
+	}
+	if strings.Contains(out, "Default model:") {
+		t.Errorf("Pi has no default model; the line should be omitted:\n%s", out)
+	}
+}
+
 func TestCmdAdd_PiHarnessViaFlag(t *testing.T) {
 	home := isolateConfig(t)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
