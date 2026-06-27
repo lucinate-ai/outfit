@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.5.0] - 2026-06-27
+### Added
+- feat(catalog): add Pi provider config and BuildPiProvider
+- feat(cli): add show command to report a harness's configured providers
+- feat(cli): launch the harness from `outfit harness`
+- feat(cli): route commands through the active harness
+- feat: add internal/harness abstraction with opencode and pi adapters
+- feat: add internal/pi package for Pi models.json IO
+- feat: add unapply command to revert an Outfit
+
+### Changed
+- docs: document multi-harness support
+- docs: update AGENTS.md for the harness abstraction
+
 ## [1.4.0] - 2026-06-25
 ### Added
 - feat: add serve command to run llama-server from a preset
