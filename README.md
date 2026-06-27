@@ -63,6 +63,7 @@ Then just run `opencode`.
 
 ```sh
 outfit list
+outfit show   [--harness <name>]         # show what the harness has configured
 outfit add    --provider <name> [--model-family <family>] [--model <id>] [--alias <name>] [--context <size>] [--output <size>] [--base-url <url>]
 outfit remove --provider <name> [--model-family <family>] [--model <id>]
 outfit apply  [path] [--output <size>]   # apply an Outfit file (default ./Outfit)
@@ -131,7 +132,17 @@ outfit harness --set pi    # make Pi the default for future commands
 outfit harness --get       # show the current default
 outfit harness             # launch the active harness (forwards trailing args)
 outfit harness -H pi       # launch a specific harness, ignoring the default
+
+outfit show                # what the active harness has configured
+outfit show --harness pi   # ...for a specific harness, without changing the default
 ```
+
+Where `outfit list` shows the catalogue of providers you *could* configure,
+`outfit show` reports what a harness *currently has* configured — its providers,
+each provider's models with their context/output limits, and the default model.
+It takes the same `--harness`/`-H` override (and the same precedence) as every
+other command, so you can inspect any harness without touching your stored
+default.
 
 Precedence: `--harness`/`-H` flag, then `OUTFIT_HARNESS`, then your stored
 default, then opencode. Not every provider maps to every harness — `outfit list`

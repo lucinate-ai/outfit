@@ -75,6 +75,167 @@ func TestHarness_GetAndSet(t *testing.T) {
 	}
 }
 
+func TestCmdShow(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
+
+	// Nothing configured yet.
+	out := captureStdout(t, func() {
+		if err := cmdShow(nil); err != nil {
+			t.Fatalf("cmdShow: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Harness: opencode (from default)") {
+		t.Errorf("missing harness header:\n%s", out)
+	}
+	if !strings.Contains(out, "No providers configured") {
+		t.Errorf("expected empty-config notice:\n%s", out)
+	}
+
+	// After an add, show lists the provider, its models, their limits, and the
+	// default model.
+	captureStdout(t, func() {
+		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "128k"}); err != nil {
+			t.Fatalf("cmdAdd: %v", err)
+		}
+	})
+	out = captureStdout(t, func() {
+		if err := cmdShow(nil); err != nil {
+			t.Fatalf("cmdShow: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Configured providers:") || !strings.Contains(out, "openrouter") {
+		t.Errorf("provider not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "context 128000") || !strings.Contains(out, "output 32000") {
+		t.Errorf("model limits not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "Default model: openrouter/") {
+		t.Errorf("default model not shown:\n%s", out)
+	}
+}
+
+// writeOpencodeConfig writes raw JSON to the opencode config under HOME so a
+// test can stage a config `show` then reads back — including shapes that `add`
+// would never produce, like a provider with no models.
+func writeOpencodeConfig(t *testing.T, home, body string) {
+	t.Helper()
+	dir := filepath.Join(home, ".config", "opencode")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir opencode config dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "opencode.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write opencode.json: %v", err)
+	}
+}
+
+func TestCmdShow_BaseURLAndEmptyProvider(t *testing.T) {
+	home := isolateConfig(t)
+
+	// A provider carrying a base URL override, alongside one configured with no
+	// models at all — a shape `add` won't produce but a hand-edited config can.
+	writeOpencodeConfig(t, home, `{
+	  "provider": {
+	    "llamacpp": {
+	      "options": {"baseURL": "http://127.0.0.1:9999/v1"},
+	      "models": {"my-model": {"limit": {"context": 128000, "output": 32000}}}
+	    },
+	    "bare": {
+	      "models": {}
+	    }
+	  }
+	}`)
+
+	out := captureStdout(t, func() {
+		if err := cmdShow(nil); err != nil {
+			t.Fatalf("cmdShow: %v", err)
+		}
+	})
+	if !strings.Contains(out, "base url: http://127.0.0.1:9999/v1") {
+		t.Errorf("base URL not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "model my-model (context 128000, output 32000)") {
+		t.Errorf("model line not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "(no models)") {
+		t.Errorf("empty provider not flagged:\n%s", out)
+	}
+}
+
+func TestCmdShow_Errors(t *testing.T) {
+	home := isolateConfig(t)
+
+	// An unrecognised flag is surfaced rather than silently ignored.
+	if err := cmdShow([]string{"--nope"}); err == nil {
+		t.Error("expected error for an unknown flag")
+	}
+
+	// A malformed harness config is reported, not swallowed.
+	writeOpencodeConfig(t, home, "{ this is not json")
+	if err := cmdShow(nil); err == nil {
+		t.Error("expected error reading a malformed config")
+	}
+}
+
+func TestCmdShow_HarnessOverride(t *testing.T) {
+	isolateConfig(t)
+
+	// The opencode default is configured...
+	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
+	captureStdout(t, func() {
+		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4"}); err != nil {
+			t.Fatalf("cmdAdd: %v", err)
+		}
+	})
+
+	// ...but -H pi reads the (empty) Pi config instead, naming the flag as the
+	// source, without disturbing the stored default.
+	out := captureStdout(t, func() {
+		if err := cmdShow([]string{"-H", "pi"}); err != nil {
+			t.Fatalf("cmdShow -H pi: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Harness: pi (from --harness flag)") {
+		t.Errorf("harness override not honoured:\n%s", out)
+	}
+	if !strings.Contains(out, "No providers configured") {
+		t.Errorf("Pi config should be empty:\n%s", out)
+	}
+
+	// An unknown harness is rejected.
+	if err := cmdShow([]string{"-H", "bogus"}); err == nil {
+		t.Error("expected error for an unknown harness")
+	}
+}
+
+func TestCmdShow_PiPopulated(t *testing.T) {
+	isolateConfig(t)
+
+	// Configure a provider on Pi, which — unlike opencode — has no default-model
+	// setting, so `show` must list the provider and its models without inventing
+	// a "Default model:" line.
+	captureStdout(t, func() {
+		if err := cmdAdd([]string{"-H", "pi", "-p", "ollama", "-f", "llama", "-c", "128k"}); err != nil {
+			t.Fatalf("cmdAdd -H pi: %v", err)
+		}
+	})
+
+	out := captureStdout(t, func() {
+		if err := cmdShow([]string{"-H", "pi"}); err != nil {
+			t.Fatalf("cmdShow -H pi: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Configured providers:") || !strings.Contains(out, "ollama") {
+		t.Errorf("Pi provider not shown:\n%s", out)
+	}
+	if !strings.Contains(out, "context 128000") {
+		t.Errorf("model context not shown:\n%s", out)
+	}
+	if strings.Contains(out, "Default model:") {
+		t.Errorf("Pi has no default model; the line should be omitted:\n%s", out)
+	}
+}
+
 func TestCmdAdd_PiHarnessViaFlag(t *testing.T) {
 	home := isolateConfig(t)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
