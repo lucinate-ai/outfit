@@ -32,6 +32,10 @@ in the current directory. Point it at any path to apply a different file.
 
 After applying, just run `opencode`.
 
+To undo it again, `outfit unapply` (same default path and arguments) removes
+what the Outfit selects from the opencode config — the inverse of `apply`, just
+as `remove` is to `add`.
+
 ## Serving a llama.cpp model
 
 `outfit serve` launches `llama-server` for an Outfit, so the same file that

@@ -61,6 +61,7 @@ outfit list
 outfit add    --provider <name> [--model-family <family>] [--model <id>] [--alias <name>] [--context <size>] [--output <size>] [--base-url <url>]
 outfit remove --provider <name> [--model-family <family>] [--model <id>]
 outfit apply  [path] [--output <size>]   # apply an Outfit file (default ./Outfit)
+outfit unapply [path]                    # remove what an Outfit file selects
 outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
 outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit

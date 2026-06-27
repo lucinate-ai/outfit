@@ -124,6 +124,106 @@ func TestCmdRemove_ByAlias(t *testing.T) {
 	}
 }
 
+// TestCmdUnapply_RemovesWhatApplyAdded checks that unapply is the inverse of
+// apply: applying an Outfit then unapplying the same file removes its models.
+func TestCmdUnapply_RemovesWhatApplyAdded(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nMODEL unsloth/Qwen:Q4_K_M\nALIAS qwen\n")
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	captureStdout(t, func() {
+		if err := cmdUnapply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdUnapply: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	prov, _ := m["provider"].(map[string]any)
+	llamacpp, _ := prov["llamacpp"].(map[string]any)
+	models, _ := llamacpp["models"].(map[string]any)
+	if _, ok := models["qwen"]; ok {
+		t.Error("unapply should have removed the aliased model")
+	}
+}
+
+// TestCmdUnapply_DefaultFileMissing checks that a bare unapply errors when no
+// ./Outfit is present, mirroring apply.
+func TestCmdUnapply_DefaultFileMissing(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Chdir(t.TempDir()) // a directory with no Outfit
+
+	if err := cmdUnapply(nil); err == nil {
+		t.Error("expected error when ./Outfit is missing")
+	}
+}
+
+// TestCmdUnapply_FamilyRoundTrip checks the realest inverse case: applying an
+// Outfit that names a FAMILY then unapplying the same file clears every model
+// the family added, going through unapply's family-resolution branch.
+func TestCmdUnapply_FamilyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
+
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	out := captureStdout(t, func() {
+		if err := cmdUnapply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdUnapply: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Removed") {
+		t.Errorf("expected a removal summary, got:\n%s", out)
+	}
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	or, _ := m["provider"].(map[string]any)["openrouter"].(map[string]any)
+	if models, ok := or["models"].(map[string]any); ok && len(models) != 0 {
+		t.Errorf("family models should have been removed, still have: %v", models)
+	}
+}
+
+// TestCmdUnapply_NoOp checks that unapplying an Outfit whose provider was never
+// configured is a harmless no-op rather than an error.
+func TestCmdUnapply_NoOp(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitFile := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nMODEL gemma\nALIAS gem\n")
+	out := captureStdout(t, func() {
+		if err := cmdUnapply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdUnapply: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Nothing to remove") {
+		t.Errorf("expected a no-op message, got:\n%s", out)
+	}
+}
+
+// TestRunDispatch_Unapply checks that the top-level dispatcher routes the
+// unapply subcommand (the wiring this command added) and surfaces its errors.
+func TestRunDispatch_Unapply(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Chdir(t.TempDir()) // no ./Outfit, so a bare unapply must error
+	if err := run([]string{"unapply"}); err == nil {
+		t.Error("expected run(unapply) to error when ./Outfit is missing")
+	}
+}
+
 // TestCmdApply_OutputFlagOverride checks that a command-line --output overrides
 // the Outfit's OUTPUT instruction.
 func TestCmdApply_OutputFlagOverride(t *testing.T) {

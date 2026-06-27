@@ -11,7 +11,8 @@
 //	outfit list
 //	outfit add    --provider <name> [--model-family <family>] [--model <id>]
 //	outfit remove --provider <name> [--model-family <family>] [--model <id>]
-//	outfit apply  [path]   # apply an Outfit file (defaults to ./Outfit)
+//	outfit apply   [path]  # apply an Outfit file (defaults to ./Outfit)
+//	outfit unapply [path]  # remove what an Outfit file selects
 //	outfit serve  [path]   # run llama-server for the Outfit (PRESET or MODEL)
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
@@ -24,7 +25,8 @@
 // either wins over the catalogue's defaults.
 //
 // An Outfit is a declarative, Dockerfile-style file describing one provider
-// selection, applied with `outfit apply`; see the internal/outfit package.
+// selection, applied with `outfit apply` and reverted with `outfit unapply`;
+// see the internal/outfit package.
 package main
 
 import (
@@ -73,6 +75,8 @@ func run(args []string) error {
 		return cmdList(rest)
 	case "apply":
 		return cmdApply(rest)
+	case "unapply":
+		return cmdUnapply(rest)
 	case "serve":
 		return cmdServe(rest)
 	case "export":
@@ -99,6 +103,7 @@ Usage:
   outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--output <size>]
   outfit remove --provider <name> [--model-family <family>] [--model <id>]
   outfit apply  [path] [--output <size>]   (defaults to ./Outfit)
+  outfit unapply [path]                    (remove what an Outfit selects)
   outfit serve  [path] [--dry-run]         (run llama-server from the PRESET)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
@@ -127,6 +132,8 @@ remove: removes the provider, or just the named models when a family/model is
         given. Clears the default model if it pointed at something removed.
 apply: applies an Outfit file — a declarative, Dockerfile-style description of
        one provider selection — as if you had run the equivalent add.
+unapply: removes what an Outfit file selects, as if you had run the equivalent
+       remove. The inverse of apply.
 serve: runs llama-server for the Outfit. With a PRESET (a llama.cpp .ini) it
        turns the matching section into the command; otherwise it derives one
        from MODEL/ALIAS/CONTEXT/BASEURL. Prints the command before running it;
@@ -315,6 +322,29 @@ func cmdApply(args []string) error {
 		sel.Output = output
 	}
 	return applySelection(sel)
+}
+
+// cmdUnapply reads an Outfit file and removes what it selects — the inverse of
+// apply, as remove is to add. The path defaults to ./Outfit when none is given,
+// so a bare `outfit unapply` works in a directory that holds one.
+func cmdUnapply(args []string) error {
+	fs := flag.NewFlagSet("unapply", flag.ContinueOnError)
+	var providers string
+	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	var path string
+	if rest := fs.Args(); len(rest) > 0 {
+		path = rest[0]
+	}
+	sel, _, err := readOutfit("unapply", path)
+	if err != nil {
+		return err
+	}
+	sel.Providers = providers
+	return removeSelection(sel)
 }
 
 // llamaServerBinary is the llama.cpp server executable that `serve` launches.
@@ -587,7 +617,14 @@ func cmdRemove(args []string) error {
 	if err != nil {
 		return err
 	}
+	return removeSelection(sel)
+}
 
+// removeSelection removes a single provider selection from the opencode config.
+// It is the shared core of `remove` and `unapply`: both resolve a selection
+// (from flags or an Outfit file) and hand it here. It is the inverse of
+// applySelection.
+func removeSelection(sel outfit.Selection) error {
 	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(sel.Providers))
 	if err != nil {
 		return err
