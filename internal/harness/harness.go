@@ -52,6 +52,8 @@ type Summary struct {
 type Harness interface {
 	// Name is the harness's identifier (e.g. "opencode").
 	Name() string
+	// Command is the executable that launches the harness (e.g. "opencode").
+	Command() string
 	// ConfigPath returns the harness config file this harness writes.
 	ConfigPath() (string, error)
 	// Apply writes a single provider selection into the harness config.

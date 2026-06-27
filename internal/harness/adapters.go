@@ -26,6 +26,8 @@ type opencodeHarness struct{}
 
 func (opencodeHarness) Name() string { return "opencode" }
 
+func (opencodeHarness) Command() string { return "opencode" }
+
 func (opencodeHarness) ConfigPath() (string, error) { return opencode.ResolveConfigFile() }
 
 func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int) (Summary, error) {
@@ -88,6 +90,8 @@ func (opencodeHarness) State() (map[string]ProviderState, string, error) {
 type piHarness struct{}
 
 func (piHarness) Name() string { return "pi" }
+
+func (piHarness) Command() string { return "pi" }
 
 func (piHarness) ConfigPath() (string, error) { return pi.ConfigPath() }
 

@@ -19,7 +19,7 @@
 //	outfit serve  [path]   # run llama-server for the Outfit (PRESET or MODEL)
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
-//	outfit harness [--set <name>]  # show or set the default harness
+//	outfit harness [-H name]       # launch the harness (--get shows it; --set stores the default)
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
 // -c (context), -o (output), -u (base-url), -H (harness).
@@ -114,7 +114,7 @@ Usage:
   outfit serve  [path] [--dry-run]         (run llama-server from the PRESET)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
-  outfit harness [--set <name>]     (default harness; available: %s)
+  outfit harness [-H <name>] [args...]  (launch the harness; available: %s)
   outfit version                    (or -v/--version)
 
 Flags:
@@ -153,7 +153,9 @@ init-providers: writes the binary's built-in providers.yaml to the working
        directory (or [path]) so you can customise the catalogue and point
        outfit at it with --providers/OUTFIT_PROVIDERS. Refuses to overwrite an
        existing file unless --force is given.
-harness: with --set, stores the default harness; otherwise shows the current one.
+harness: launches the active harness, forwarding any trailing args to it. --get
+       prints the active harness instead of launching it; --set <name> stores the
+       default harness and exits. Honours -H/--harness and OUTFIT_HARNESS.
 `, strings.Join(harness.Names(), ", "))
 }
 
@@ -690,11 +692,18 @@ func removeSelection(sel outfit.Selection, h harness.Harness) error {
 	return nil
 }
 
-// cmdHarness shows or sets the default harness preference.
+// cmdHarness launches the active harness, or with --set/--get manages and
+// reports the stored preference. The harness is resolved with the same
+// precedence as add/apply (--harness/-H > OUTFIT_HARNESS > preference >
+// default), and any trailing args after the flags are passed to the harness.
 func cmdHarness(args []string) error {
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
-	var set string
-	fs.StringVar(&set, "set", "", "store this harness as the default")
+	var set, harnessName string
+	var get bool
+	fs.StringVar(&set, "set", "", "store this harness as the default and exit")
+	fs.BoolVar(&get, "get", false, "print the active harness instead of launching it")
+	fs.StringVar(&harnessName, "harness", "", "which harness to launch")
+	fs.StringVar(&harnessName, "H", "", "which harness to launch (shorthand)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -707,18 +716,40 @@ func cmdHarness(args []string) error {
 		return nil
 	}
 
-	active, source, err := harness.Resolve("")
+	h, source, err := harness.Resolve(harnessName)
 	if err != nil {
 		return err
 	}
-	pref, _ := harness.LoadPreference()
-	fmt.Printf("Active harness: %s (from %s)\n", active.Name(), source)
-	if pref == "" {
-		fmt.Printf("Stored preference: none (defaults to %s)\n", harness.Default)
-	} else {
-		fmt.Printf("Stored preference: %s\n", pref)
+
+	if get {
+		pref, _ := harness.LoadPreference()
+		fmt.Printf("Active harness: %s (from %s)\n", h.Name(), source)
+		if pref == "" {
+			fmt.Printf("Stored preference: none (defaults to %s)\n", harness.Default)
+		} else {
+			fmt.Printf("Stored preference: %s\n", pref)
+		}
+		fmt.Printf("Available: %s\n", strings.Join(harness.Names(), ", "))
+		return nil
 	}
-	fmt.Printf("Available: %s\n", strings.Join(harness.Names(), ", "))
+
+	// Launch the harness, forwarding stdio and any trailing args.
+	bin := h.Command()
+	cmd := exec.Command(bin, fs.Args()...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%s not found — install the %s harness or add it to your PATH", bin, h.Name())
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			// The harness ran and chose its own exit code; surface it verbatim.
+			os.Exit(exitErr.ExitCode())
+		}
+		return err
+	}
 	return nil
 }
 

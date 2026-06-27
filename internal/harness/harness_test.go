@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+func TestCommand(t *testing.T) {
+	// Each harness launches under its own binary name.
+	for name, want := range map[string]string{"opencode": "opencode", "pi": "pi"} {
+		h, ok := Lookup(name)
+		if !ok {
+			t.Fatalf("harness %q not registered", name)
+		}
+		if got := h.Command(); got != want {
+			t.Errorf("%s Command() = %q, want %q", name, got, want)
+		}
+	}
+}
+
 func TestResolvePrecedence(t *testing.T) {
 	// Isolate preference and env from the developer's real config.
 	dir := t.TempDir()

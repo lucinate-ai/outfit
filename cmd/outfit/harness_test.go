@@ -34,13 +34,15 @@ func isolateConfig(t *testing.T) string {
 	return home
 }
 
-func TestHarness_SetAndShow(t *testing.T) {
+func TestHarness_GetAndSet(t *testing.T) {
 	isolateConfig(t)
 
-	// Default before any preference is stored.
+	// Default before any preference is stored. --get reports the active harness
+	// rather than launching it (a bare `harness` execs the agent binary, which
+	// would hang an interactive TUI under test).
 	out := captureStdout(t, func() {
-		if err := cmdHarness(nil); err != nil {
-			t.Fatalf("cmdHarness: %v", err)
+		if err := cmdHarness([]string{"--get"}); err != nil {
+			t.Fatalf("cmdHarness --get: %v", err)
 		}
 	})
 	if !strings.Contains(out, "Active harness: opencode") || !strings.Contains(out, "Stored preference: none") {
@@ -59,8 +61,8 @@ func TestHarness_SetAndShow(t *testing.T) {
 
 	// It is now the active harness.
 	out = captureStdout(t, func() {
-		if err := cmdHarness(nil); err != nil {
-			t.Fatalf("cmdHarness: %v", err)
+		if err := cmdHarness([]string{"--get"}); err != nil {
+			t.Fatalf("cmdHarness --get: %v", err)
 		}
 	})
 	if !strings.Contains(out, "Active harness: pi") || !strings.Contains(out, "Stored preference: pi") {
