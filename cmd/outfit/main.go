@@ -12,6 +12,7 @@
 // Usage:
 //
 //	outfit list
+//	outfit show   [--harness <name>]  # show what the harness has configured
 //	outfit add    --provider <name> [--model-family <family>] [--model <id>]
 //	outfit remove --provider <name> [--model-family <family>] [--model <id>]
 //	outfit apply   [path]  # apply an Outfit file (defaults to ./Outfit)
@@ -78,6 +79,8 @@ func run(args []string) error {
 		return cmdRemove(rest)
 	case "list":
 		return cmdList(rest)
+	case "show":
+		return cmdShow(rest)
 	case "apply":
 		return cmdApply(rest)
 	case "unapply":
@@ -107,6 +110,7 @@ func usage() {
 
 Usage:
   outfit list
+  outfit show   [--harness <name>]         (providers/models the harness has configured)
   outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--output <size>]
   outfit remove --provider <name> [--model-family <family>] [--model <id>]
   outfit apply  [path] [--output <size>]   (defaults to ./Outfit)
@@ -156,6 +160,8 @@ init-providers: writes the binary's built-in providers.yaml to the working
 harness: launches the active harness, forwarding any trailing args to it. --get
        prints the active harness instead of launching it; --set <name> stores the
        default harness and exits. Honours -H/--harness and OUTFIT_HARNESS.
+show: lists the providers and models actually configured in the active harness's
+      config (where list shows the catalogue of what you could configure).
 `, strings.Join(harness.Names(), ", "))
 }
 
@@ -750,6 +756,83 @@ func cmdHarness(args []string) error {
 		}
 		return err
 	}
+	return nil
+}
+
+// cmdShow prints the providers and models currently configured in the active
+// harness's config. It takes the same --harness/-H override (and the same
+// flag > env > preference > default precedence) as every other command, so you
+// can inspect any harness without changing the stored default. Where `list`
+// shows the catalogue of what you could configure, `show` shows what is
+// actually configured right now.
+func cmdShow(args []string) error {
+	fs := flag.NewFlagSet("show", flag.ContinueOnError)
+	var harnessName string
+	fs.StringVar(&harnessName, "harness", "", "which harness to read")
+	fs.StringVar(&harnessName, "H", "", "which harness to read (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	h, source, err := harness.Resolve(harnessName)
+	if err != nil {
+		return err
+	}
+	configFile, err := h.ConfigPath()
+	if err != nil {
+		return err
+	}
+	states, defaultModel, err := h.State()
+	if err != nil {
+		return err
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Harness: %s (from %s)\n", h.Name(), source)
+	fmt.Fprintf(&b, "Config:  %s\n", configFile)
+	if defaultModel != "" {
+		fmt.Fprintf(&b, "Default model: %s\n", defaultModel)
+	}
+
+	if len(states) == 0 {
+		b.WriteString("\nNo providers configured. Add one with `outfit add`.\n")
+		fmt.Print(b.String())
+		return nil
+	}
+
+	names := make([]string, 0, len(states))
+	for n := range states {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	b.WriteString("\nConfigured providers:\n")
+	for _, name := range names {
+		st := states[name]
+		fmt.Fprintf(&b, "\n  %s\n", name)
+		if st.BaseURL != "" {
+			fmt.Fprintf(&b, "    base url: %s\n", st.BaseURL)
+		}
+		if len(st.ModelKeys) == 0 {
+			b.WriteString("    (no models)\n")
+			continue
+		}
+		for _, key := range st.ModelKeys {
+			line := "    model " + key
+			var limits []string
+			if c, ok := st.Contexts[key]; ok {
+				limits = append(limits, fmt.Sprintf("context %d", c))
+			}
+			if o, ok := st.Outputs[key]; ok {
+				limits = append(limits, fmt.Sprintf("output %d", o))
+			}
+			if len(limits) > 0 {
+				line += " (" + strings.Join(limits, ", ") + ")"
+			}
+			b.WriteString(line + "\n")
+		}
+	}
+	fmt.Print(b.String())
 	return nil
 }
 
