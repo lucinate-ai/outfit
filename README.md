@@ -13,8 +13,8 @@
 ---
 
 ```sh
-# point your coding agent at a model — pick one from the catalogue
-outfit add -p ollama -f llama
+# point your coding agent at a model — here, a local Qwen3.6 on Ollama
+outfit add -p ollama -m qwen3.6
 
 # prefer a file you can commit? drop an ./Outfit and apply it
 outfit apply
