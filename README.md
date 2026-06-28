@@ -16,7 +16,10 @@
 # point your coding agent at a model — here, a local Qwen3.6 on Ollama
 outfit add -p ollama -m qwen3.6
 
-# prefer a file you can commit? drop an ./Outfit and apply it
+# launch that agent, now wearing the model you picked
+outfit harness
+
+# prefer it declarative? commit an ./Outfit file and apply it
 outfit apply
 
 # running that model locally too? the same file launches the server
@@ -157,7 +160,7 @@ Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `
 ## Harnesses
 
 A **harness** is the coding agent being configured. opencode is the default; Pi
-is also supported. The harness is chosen at runtime — never baked into an Outfit
+is also supported. The harness is chosen at runtime — never baked into an `Outfit`
 file — so the same selection works for either.
 
 ```sh
@@ -188,7 +191,7 @@ opencode-only).
 ## Outfit files
 
 Prefer to keep a provider selection in a file — like a `Dockerfile`, but for
-your coding agent? Drop an **Outfit** in your project:
+your coding agent? Drop an `Outfit` in your project:
 
 ```dockerfile
 # Outfit
@@ -207,13 +210,13 @@ outfit apply path/to/Outfit
 outfit export > Outfit    # capture your current setup as an Outfit
 ```
 
-An Outfit describes one provider selection and applies exactly like the
+An `Outfit` describes one provider selection and applies exactly like the
 equivalent `add`. Full syntax is in [`docs/outfit-file.md`](docs/outfit-file.md),
 and ready-to-use examples live under [`examples/`](examples/).
 
 ## Serving a local model
 
-Running a model with llama.cpp? `outfit serve` reads an Outfit and launches
+Running a model with llama.cpp? `outfit serve` reads an `Outfit` and launches
 `llama-server` for it — so the same file that points opencode at a model can
 start it too. The simple case needs no preset:
 
@@ -230,9 +233,9 @@ outfit serve              # builds a llama-server command and runs it
 outfit serve --dry-run    # just print the command — no server
 ```
 
-For flags an Outfit doesn't model (`-ngl`, `--jinja`, KV-cache types, draft
+For flags an `Outfit` doesn't model (`-ngl`, `--jinja`, KV-cache types, draft
 models), point at a llama.cpp preset `.ini` with `PRESET` and `serve` flattens
-the chosen section into the command instead — with anything the Outfit states
+the chosen section into the command instead — with anything the `Outfit` states
 (like `CONTEXT`) overriding the preset. It's the missing piece presets don't
 cover: launching a *single* model. Details in
 [`docs/outfit-file.md`](docs/outfit-file.md#serving-a-llamacpp-model).
