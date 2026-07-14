@@ -274,13 +274,18 @@ func applySelection(sel outfit.Selection, h harness.Harness) error {
 }
 
 // readOutfit reads and parses the Outfit at path, defaulting to ./Outfit when
-// path is empty so a bare command works in a directory that holds one. cmd
+// path is empty so a bare command works in a directory that holds one. When
+// path names a directory, the default Outfit file inside it is used, so a
+// caller can pass either the file itself or the directory that holds it. cmd
 // names the calling subcommand for the not-found hint. It returns the parsed
 // selection alongside the resolved path, which callers use to locate files
 // referenced relative to the Outfit.
 func readOutfit(cmd, path string) (outfit.Selection, string, error) {
 	if path == "" {
 		path = outfit.DefaultFile
+	}
+	if info, err := os.Stat(path); err == nil && info.IsDir() {
+		path = filepath.Join(path, outfit.DefaultFile)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

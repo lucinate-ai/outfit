@@ -95,6 +95,29 @@ func TestCmdApply_AliasOnly(t *testing.T) {
 	}
 }
 
+// TestCmdApply_DirectoryPath checks that passing the directory that holds an
+// Outfit works the same as passing the Outfit file itself.
+func TestCmdApply_DirectoryPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := filepath.Join(dir, "cfg")
+	if err := os.Mkdir(outfitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(outfitDir, outfit.DefaultFile), "PROVIDER llamacpp\nALIAS my-model\n")
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitDir}); err != nil {
+			t.Fatalf("cmdApply with a directory: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/my-model" {
+		t.Errorf("default model = %v, want llamacpp/my-model", m["model"])
+	}
+}
+
 // TestCmdRemove_ByAlias checks that a model added under an ALIAS is removed by
 // that same alias.
 func TestCmdRemove_ByAlias(t *testing.T) {
@@ -469,5 +492,14 @@ func TestCmdApply_MissingExplicitPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	if err := cmdApply([]string{filepath.Join(t.TempDir(), "nope.outfit")}); err == nil {
 		t.Error("expected error for a missing explicit path")
+	}
+}
+
+// TestCmdApply_DirectoryWithoutOutfit checks that passing a directory that
+// holds no Outfit file errors rather than silently succeeding.
+func TestCmdApply_DirectoryWithoutOutfit(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	if err := cmdApply([]string{t.TempDir()}); err == nil {
+		t.Error("expected error for a directory with no Outfit")
 	}
 }
