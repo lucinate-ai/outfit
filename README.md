@@ -147,7 +147,7 @@ outfit list
 outfit show   [--harness <name>]         # show what the harness has configured
 outfit add    --provider <name> [--model-family <family>] [--model <id>] [--alias <name>] [--context <size>] [--output <size>] [--base-url <url>]
 outfit remove --provider <name> [--model-family <family>] [--model <id>]
-outfit apply  [path] [--output <size>]   # apply an Outfit file (default ./Outfit)
+outfit apply  [path] [--output <size>]   # apply an Outfit file or directory (default ./Outfit)
 outfit unapply [path]                    # remove what an Outfit file selects
 outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
 outfit export [--provider <name>]        # print the current config as an Outfit
@@ -207,6 +207,7 @@ BASEURL  https://gateway/v1         # optional; API base URL override
 ```sh
 outfit apply              # reads ./Outfit and applies it
 outfit apply path/to/Outfit
+outfit apply path/to/dir  # or a directory that holds an Outfit
 outfit export > Outfit    # capture your current setup as an Outfit
 ```
 

@@ -28,12 +28,14 @@ harness --set`).
 ## Applying an Outfit
 
 ```sh
-outfit apply            # reads ./Outfit in the current directory
-outfit apply path/to/Outfit
+outfit apply                 # reads ./Outfit in the current directory
+outfit apply path/to/Outfit  # a full path to the file
+outfit apply path/to/dir     # a directory holding an Outfit
 ```
 
 Run `outfit apply` with no arguments and it looks for a file named `Outfit`
-in the current directory. Point it at any path to apply a different file. Add
+in the current directory. Point it at any path to apply a different file, or at
+a directory that holds an `Outfit` and it reads the file inside. Add
 `--harness pi` (or set `OUTFIT_HARNESS`) to apply it to Pi instead of opencode.
 
 After applying, just run your coding agent (`opencode`, or `pi`).
