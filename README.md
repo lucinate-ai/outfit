@@ -158,6 +158,7 @@ outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
 outfit completion <shell>                # tab completion (bash, zsh, powershell)
+outfit remote <start|stop|status>        # control the remote GPU inference instance
 ```
 
 Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
@@ -283,6 +284,33 @@ the chosen section into the command instead — with anything the `Outfit` state
 (like `CONTEXT`) overriding the preset. It's the missing piece presets don't
 cover: launching a *single* model. Details in
 [`docs/commands/serve.md`](docs/commands/serve.md).
+
+## Remote inference instance
+
+Running a model on your own cloud GPU box (see the `cloud-vm-llm` repo)?
+`outfit remote` drives its scale-to-zero lifecycle: the instance only exists
+while you are using it, and stops itself after a period of idleness.
+
+```sh
+outfit remote start    # boot the instance, wait for the model to load,
+                       # then print OPENAI_BASE_URL / OPENAI_API_KEY exports
+outfit remote status   # instance state and endpoint health
+outfit remote stop     # stop now instead of waiting for the idle timer
+```
+
+Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json` —
+paste the `OutfitRemoteConfig` output of the `cloud-vm-llm` stack there:
+
+```json
+{"start_url": "https://...lambda-url...on.aws/", "stop_url": "https://...", "region": "eu-west-1"}
+```
+
+Each field can be overridden with `OUTFIT_REMOTE_START_URL`,
+`OUTFIT_REMOTE_STOP_URL` and `OUTFIT_REMOTE_REGION`. Requests are SigV4-signed
+with your AWS credentials (env, profile or SSO — the standard chain), which
+must be allowed `lambda:InvokeFunctionUrl`. A cold `start` takes a few
+minutes while the instance boots and loads the model; `--timeout` (default
+15m) caps the wait.
 
 ## Keys and endpoints
 

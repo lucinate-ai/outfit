@@ -77,6 +77,10 @@ type command struct {
 	// positionals how many arguments that applies to.
 	positional  candidateKind
 	positionals int
+	// subcommands is the fixed set a nested command dispatches on. When set,
+	// the first positional completes to one of these and any later one falls
+	// through to positional.
+	subcommands []string
 }
 
 // selectionFlags are the flags add and remove share (see parseSelection).
@@ -162,6 +166,14 @@ var commands = map[string]command{
 		// harness's own, and outfit has nothing to say about them.
 		positional: kindAlias, positionals: 1,
 	},
+	"remote": {
+		flags:  []string{"--timeout", "--dry-run", "-n"},
+		values: map[string]candidateKind{"--timeout": kindNone},
+		// `outfit remote <sub> [outfit]`: the subcommand, then optionally the
+		// Outfit naming the endpoint.
+		subcommands: []string{"start", "stop", "status", "deploy"},
+		positional:  kindAlias, positionals: 2,
+	},
 	"completion": {positional: kindShell, positionals: 1},
 	"version":    {},
 	"help":       {},
@@ -233,7 +245,11 @@ func completions(args []string) ([]string, string) {
 	if strings.HasPrefix(cur, "-") {
 		return cmd.flags, directiveNoFile
 	}
-	if positionalsUsed(cmd, words[1:]) >= cmd.positionals {
+	used := positionalsUsed(cmd, words[1:])
+	if len(cmd.subcommands) > 0 && used == 0 {
+		return cmd.subcommands, directiveNoFile
+	}
+	if used >= cmd.positionals {
 		return nil, directiveNoFile
 	}
 	return candidatesFor(cmd.positional, words)
