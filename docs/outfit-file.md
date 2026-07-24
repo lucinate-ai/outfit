@@ -42,6 +42,26 @@ Every command that takes an Outfit path defaults to `./Outfit` in the current
 directory, accepts a directory that holds one, and takes a
 [registered alias](commands/alias.md) in place of a path.
 
+## Controlling a remote inference instance
+
+An Outfit can name the config for a scale-to-zero cloud GPU endpoint (see the
+`cloud-vm-llm` repo) with `REMOTE`:
+
+```dockerfile
+# Outfit
+PROVIDER openai-compatible
+MODEL    Qwen/Qwen3.6-27B-FP8
+REMOTE   remote.json
+```
+
+`outfit remote start|stop|status` then reads the named file — resolved
+relative to the Outfit, like `PRESET` — so a project can carry its own remote
+config instead of relying on the per-user
+`${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json`. With no path argument the
+commands consult `./Outfit` when it exists and fall back to the per-user file;
+an explicit path (`outfit remote status path/to/Outfit`) requires the Outfit
+to carry a `REMOTE` instruction.
+
 ## Syntax
 
 One instruction per line: a keyword followed by a single value.
@@ -56,6 +76,7 @@ One instruction per line: a keyword followed by a single value.
 | `OUTPUT`   | no                               | `--output`     | `OUTPUT 32k`                   |
 | `BASEURL`  | no                               | `--base-url`   | `BASEURL https://gateway/v1`   |
 | `PRESET`   | no                               | `outfit serve` | `PRESET ./preset.ini`          |
+| `REMOTE`   | no                               | `outfit remote` | `REMOTE ./remote.json`        |
 
 Rules:
 

@@ -145,7 +145,7 @@ Usage:
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
   outfit completion <shell>         (tab completion: bash, zsh, powershell)
-  outfit remote <start|stop|status> (control the remote GPU inference instance)
+  outfit remote <start|stop|status> [path]  (control the remote GPU inference instance)
   outfit version                    (or -v/--version)
 
 Flags:
