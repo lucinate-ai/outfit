@@ -25,6 +25,7 @@
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
 //	                                      # Outfit first (--get shows it; --set stores the default)
 //	outfit completion <bash|zsh|powershell> # print the tab-completion script
+//	outfit remote start|stop|status # control the remote GPU inference instance
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
 // -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
@@ -112,6 +113,8 @@ func run(args []string) error {
 	case "__complete":
 		// Hidden: the completion script's way of asking what could come next.
 		return cmdComplete(rest)
+	case "remote":
+		return cmdRemote(rest)
 	case "version", "-v", "--version":
 		fmt.Println(version)
 		return nil
@@ -142,6 +145,7 @@ Usage:
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
   outfit completion <shell>         (tab completion: bash, zsh, powershell)
+  outfit remote <start|stop|status> (control the remote GPU inference instance)
   outfit version                    (or -v/--version)
 
 Flags:
