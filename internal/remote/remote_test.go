@@ -263,3 +263,33 @@ func TestCall_NonJSONError(t *testing.T) {
 		t.Errorf("expected a 403 error with the IAM hint, got %v", err)
 	}
 }
+
+func TestLoadConfigFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "remote.json")
+	content := `{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"eu-west-1"}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfigFile(path, noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StartURL != "https://start.example/" || cfg.Region != "eu-west-1" {
+		t.Errorf("unexpected config: %+v", cfg)
+	}
+
+	cfg, err = LoadConfigFile(path, envMap(map[string]string{"OUTFIT_REMOTE_REGION": "eu-west-2"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Region != "eu-west-2" {
+		t.Errorf("env should override the file's region, got %q", cfg.Region)
+	}
+}
+
+func TestLoadConfigFile_Missing(t *testing.T) {
+	_, err := LoadConfigFile(filepath.Join(t.TempDir(), "remote.json"), noEnv)
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("expected a does-not-exist error, got %v", err)
+	}
+}

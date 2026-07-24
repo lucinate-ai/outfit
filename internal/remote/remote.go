@@ -47,10 +47,11 @@ func ConfigPath() string {
 	return filepath.Join(dir, "outfit", "remote.json")
 }
 
-// LoadConfig reads the stored config and applies environment overrides
+// LoadConfig reads the per-user config file and applies environment overrides
 // (OUTFIT_REMOTE_START_URL, OUTFIT_REMOTE_STOP_URL, OUTFIT_REMOTE_REGION; the
 // region also falls back to AWS_REGION and then to the region embedded in the
-// Function URL host). getenv is injectable for tests.
+// Function URL host). A missing file is fine — env vars alone can carry the
+// config. getenv is injectable for tests.
 func LoadConfig(getenv func(string) string) (Config, error) {
 	var cfg Config
 	data, err := os.ReadFile(ConfigPath())
@@ -61,6 +62,33 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	} else if !os.IsNotExist(err) {
 		return Config{}, err
 	}
+	return finishConfig(cfg, getenv, ConfigPath())
+}
+
+// LoadConfigFile reads the remote config from an explicit file — typically
+// one named by an Outfit's REMOTE instruction — then applies the same
+// environment overrides as LoadConfig. Unlike LoadConfig, the file must
+// exist: it was asked for by name.
+func LoadConfigFile(path string, getenv func(string) string) (Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Config{}, fmt.Errorf(
+				"remote config %s does not exist: paste the OutfitRemoteConfig output of the cloud-vm-llm stack there",
+				path)
+		}
+		return Config{}, err
+	}
+	var cfg Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return Config{}, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return finishConfig(cfg, getenv, path)
+}
+
+// finishConfig applies env overrides and validates. source names the config
+// file for error messages.
+func finishConfig(cfg Config, getenv func(string) string, source string) (Config, error) {
 	if v := getenv("OUTFIT_REMOTE_START_URL"); v != "" {
 		cfg.StartURL = v
 	}
@@ -73,7 +101,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if cfg.StartURL == "" || cfg.StopURL == "" {
 		return Config{}, fmt.Errorf(
 			"remote is not configured: paste the OutfitRemoteConfig output of the cloud-vm-llm stack into %s",
-			ConfigPath())
+			source)
 	}
 	if cfg.Region == "" {
 		cfg.Region = getenv("AWS_REGION")
@@ -84,7 +112,7 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	if cfg.Region == "" {
 		return Config{}, fmt.Errorf(
 			"cannot determine the AWS region: set \"region\" in %s or OUTFIT_REMOTE_REGION",
-			ConfigPath())
+			source)
 	}
 	return cfg, nil
 }

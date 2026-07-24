@@ -124,3 +124,99 @@ func TestRemoteStop_PrintsState(t *testing.T) {
 		t.Errorf("stop should print the state, got:\n%s", out)
 	}
 }
+
+func TestRemote_OutfitDiscovery(t *testing.T) {
+	isolateConfig(t) // no per-user config exists, so success proves discovery
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"running","healthy":true,"base_url":"http://198.51.100.1:8000/v1"}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	outfitFile := "PROVIDER openai-compatible\nREMOTE remote.json\n"
+	if err := os.WriteFile("Outfit", []byte(outfitFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := json.Marshal(remote.Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("remote.json", cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteStatus(nil); err != nil {
+			t.Errorf("cmdRemoteStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "state: running") {
+		t.Errorf("status via Outfit REMOTE should work, got:\n%s", out)
+	}
+}
+
+func TestRemote_ExplicitOutfitNeedsRemote(t *testing.T) {
+	isolateConfig(t)
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("Outfit", []byte("PROVIDER ollama\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := cmdRemoteStatus([]string{"Outfit"})
+	if err == nil || !strings.Contains(err.Error(), "no REMOTE") {
+		t.Errorf("explicit Outfit without REMOTE should error, got %v", err)
+	}
+}
+
+func TestRemote_OutfitWithoutRemoteFallsBack(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopped","healthy":false,"base_url":"http://198.51.100.1:8000/v1"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("Outfit", []byte("PROVIDER ollama\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := cmdRemoteStatus(nil); err != nil {
+			t.Errorf("cmdRemoteStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "state: stopped") {
+		t.Errorf("an Outfit without REMOTE should fall back to the user config, got:\n%s", out)
+	}
+}
+
+func TestRemote_IgnoresLowercaseOutfitFile(t *testing.T) {
+	// On case-insensitive filesystems a stat of "Outfit" matches a file named
+	// "outfit" (e.g. the built binary in this repo's root); discovery must not
+	// try to parse it.
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopped","healthy":false,"base_url":"http://198.51.100.1:8000/v1"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("outfit", []byte{0xcf, 0xfa, 0xed, 0xfe}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := cmdRemoteStatus(nil); err != nil {
+			t.Errorf("cmdRemoteStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "state: stopped") {
+		t.Errorf("a lowercase outfit file should not shadow discovery, got:\n%s", out)
+	}
+}

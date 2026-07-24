@@ -158,7 +158,7 @@ outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
 outfit completion <shell>                # tab completion (bash, zsh, powershell)
-outfit remote <start|stop|status>        # control the remote GPU inference instance
+outfit remote <start|stop|status> [path] # control the remote GPU inference instance
 ```
 
 Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
@@ -298,8 +298,11 @@ outfit remote status   # instance state and endpoint health
 outfit remote stop     # stop now instead of waiting for the idle timer
 ```
 
-Configuration lives in `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json` —
-paste the `OutfitRemoteConfig` output of the `cloud-vm-llm` stack there:
+Configuration is found in one of two places. A project's `Outfit` file can
+name it with a `REMOTE` instruction (`REMOTE remote.json`, resolved relative
+to the Outfit — like `PRESET`, so the pair travel together); otherwise the
+per-user `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json` is used. Either
+way, paste the `OutfitRemoteConfig` output of the `cloud-vm-llm` stack there:
 
 ```json
 {"start_url": "https://...lambda-url...on.aws/", "stop_url": "https://...", "region": "eu-west-1"}

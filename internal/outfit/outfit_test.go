@@ -106,3 +106,19 @@ func TestFormatRoundTrip(t *testing.T) {
 		t.Errorf("round-trip changed selection: %+v -> %+v", sel, got)
 	}
 }
+
+func TestParse_Remote(t *testing.T) {
+	sel, err := Parse([]byte("PROVIDER openai-compatible\nREMOTE ./remote.json\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Remote != "./remote.json" {
+		t.Errorf("Remote = %q, want ./remote.json", sel.Remote)
+	}
+	if out := Format(sel); !strings.Contains(out, "REMOTE   ./remote.json") {
+		t.Errorf("Format should emit REMOTE, got:\n%s", out)
+	}
+	if _, err := Parse([]byte("PROVIDER x\nREMOTE a\nREMOTE b\n")); err == nil {
+		t.Error("duplicate REMOTE should error")
+	}
+}

@@ -14,6 +14,7 @@
 //	OUTPUT   32k                        # optional; max output tokens
 //	BASEURL  https://gateway/v1         # optional; API base URL override
 //	PRESET   ./preset.ini               # optional; llama.cpp preset for `serve`
+//	REMOTE   ./remote.json              # optional; remote-instance config for `remote`
 //
 // MODEL is the reference the provider itself understands: an OpenRouter/Bedrock
 // model id, an Ollama name, or — for llamacpp — a Hugging Face repo
@@ -45,6 +46,7 @@ type Selection struct {
 	Providers string
 	BaseURL   string
 	Preset    string
+	Remote    string
 }
 
 // Outfit keywords, in their canonical (lower-cased) form for matching.
@@ -57,6 +59,7 @@ const (
 	kwOutput   = "output"
 	kwBaseURL  = "baseurl"
 	kwPreset   = "preset"
+	kwRemote   = "remote"
 )
 
 // canonicalKeyword resolves an Outfit keyword (already lower-cased) to its
@@ -64,7 +67,7 @@ const (
 // "" for an unrecognised keyword.
 func canonicalKeyword(kw string) string {
 	switch kw {
-	case kwProvider, kwFamily, kwModel, kwAlias, kwContext, kwOutput, kwPreset:
+	case kwProvider, kwFamily, kwModel, kwAlias, kwContext, kwOutput, kwPreset, kwRemote:
 		return kw
 	case kwBaseURL, "base-url", "base_url", "url":
 		return kwBaseURL
@@ -92,7 +95,7 @@ func Parse(data []byte) (Selection, error) {
 		fields := strings.Fields(text)
 		canon := canonicalKeyword(strings.ToLower(fields[0]))
 		if canon == "" {
-			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, or PRESET)", line, fields[0])
+			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, PRESET, or REMOTE)", line, fields[0])
 		}
 		switch {
 		case len(fields) < 2:
@@ -124,6 +127,8 @@ func Parse(data []byte) (Selection, error) {
 			sel.BaseURL = value
 		case kwPreset:
 			sel.Preset = value
+		case kwRemote:
+			sel.Remote = value
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -169,5 +174,6 @@ func Format(sel Selection) string {
 	line("OUTPUT", sel.Output)
 	line("BASEURL", sel.BaseURL)
 	line("PRESET", sel.Preset)
+	line("REMOTE", sel.Remote)
 	return b.String()
 }
