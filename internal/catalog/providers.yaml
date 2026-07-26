@@ -98,6 +98,27 @@ providers:
           local-model:
             name: llama.cpp model
 
+  vllm:
+    description: vLLM server (OpenAI-compatible API)
+    name: vLLM
+    npm: "@ai-sdk/openai-compatible"
+    # vLLM is started with an API key when exposed beyond localhost (as the
+    # cloud-vm-llm deployment does), so the key is injected when the var is set.
+    apiKeyEnv: OPENAI_API_KEY
+    options:
+      baseURL: http://localhost:8000/v1
+    optionsFromEnv:
+      baseURL: VLLM_BASE_URL
+    pi:
+      api: openai-completions
+    families:
+      served:
+        description: Model loaded by your vLLM server
+        defaultModel: served-model
+        models:
+          served-model:
+            name: vLLM model
+
   openai-compatible:
     description: Generic OpenAI-compatible endpoint (set base URL and key via env)
     name: OpenAI-compatible
