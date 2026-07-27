@@ -152,10 +152,12 @@ outfit unapply [path]                    # remove what an Outfit file selects
 outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
 outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit
-outfit harness [-H <name>] [args...]     # launch the harness (--get shows it; --set stores the default)
+outfit harness [-H <name>] [--outfit[=<path>]] [args...]
+                                         # launch the harness (--outfit applies one first;
+                                         #   --get shows it; --set stores the default)
 ```
 
-Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness).
+Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit).
 
 ## Harnesses
 
@@ -172,9 +174,17 @@ outfit harness --get       # show the current default
 outfit harness             # launch the active harness (forwards trailing args)
 outfit harness -H pi       # launch a specific harness, ignoring the default
 
+outfit harness -O          # apply ./Outfit, then launch the harness
+outfit harness --outfit=path/to/Outfit   # ...applying a specific one first
+
 outfit show                # what the active harness has configured
 outfit show --harness pi   # ...for a specific harness, without changing the default
 ```
+
+`outfit harness --outfit`/`-O` applies an `Outfit` on the way in — the same work
+`outfit apply` does — so one command dresses the agent and launches it. Given
+bare it takes `./Outfit` like every other command; to name one, attach the path
+(`--outfit=<path>`), since everything positional is forwarded to the harness.
 
 Where `outfit list` shows the catalogue of providers you *could* configure,
 `outfit show` reports what a harness *currently has* configured — its providers,
@@ -208,6 +218,7 @@ BASEURL  https://gateway/v1         # optional; API base URL override
 outfit apply              # reads ./Outfit and applies it
 outfit apply path/to/Outfit
 outfit apply path/to/dir  # or a directory that holds an Outfit
+outfit harness -O         # apply ./Outfit, then launch the agent wearing it
 outfit export > Outfit    # capture your current setup as an Outfit
 ```
 

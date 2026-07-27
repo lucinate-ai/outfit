@@ -20,10 +20,11 @@
 //	outfit serve  [path]   # run llama-server for the Outfit (PRESET or MODEL)
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
-//	outfit harness [-H name]       # launch the harness (--get shows it; --set stores the default)
+//	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
+//	                                      # Outfit first (--get shows it; --set stores the default)
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
-// -c (context), -o (output), -u (base-url), -H (harness).
+// -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
 //
 // The API base URL can be overridden for any provider with --base-url/-u or the
 // OUTFIT_BASE_URL environment variable; the flag wins over the env var, and
@@ -118,7 +119,8 @@ Usage:
   outfit serve  [path] [--dry-run]         (run llama-server from the PRESET)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
-  outfit harness [-H <name>] [args...]  (launch the harness; available: %s)
+  outfit harness [-H <name>] [--outfit[=<path>]] [args...]
+                                    (launch the harness; available: %s)
   outfit version                    (or -v/--version)
 
 Flags:
@@ -135,6 +137,9 @@ Flags:
                        (or set OUTFIT_BASE_URL)
   -H, --harness        which harness to configure (or set OUTFIT_HARNESS);
                        overrides the stored default
+  -O, --outfit         (harness only) apply this Outfit before launching; given
+                       bare it applies ./`+outfit.DefaultFile+`, so attach the path
+                       when naming one: --outfit=<path>
       --providers      path to a providers.yaml override
                        (or set OUTFIT_PROVIDERS)
 
@@ -157,9 +162,11 @@ init-providers: writes the binary's built-in providers.yaml to the working
        directory (or [path]) so you can customise the catalogue and point
        outfit at it with --providers/OUTFIT_PROVIDERS. Refuses to overwrite an
        existing file unless --force is given.
-harness: launches the active harness, forwarding any trailing args to it. --get
-       prints the active harness instead of launching it; --set <name> stores the
-       default harness and exits. Honours -H/--harness and OUTFIT_HARNESS.
+harness: launches the active harness, forwarding any trailing args to it.
+       --outfit/-O applies an Outfit first, as if you had run apply before it.
+       --get prints the active harness instead of launching it; --set <name>
+       stores the default harness and exits. Honours -H/--harness and
+       OUTFIT_HARNESS.
 show: lists the providers and models actually configured in the active harness's
       config (where list shows the catalogue of what you could configure).
 `, strings.Join(harness.Names(), ", "))
@@ -276,11 +283,12 @@ func applySelection(sel outfit.Selection, h harness.Harness) error {
 // readOutfit reads and parses the Outfit at path, defaulting to ./Outfit when
 // path is empty so a bare command works in a directory that holds one. When
 // path names a directory, the default Outfit file inside it is used, so a
-// caller can pass either the file itself or the directory that holds it. cmd
-// names the calling subcommand for the not-found hint. It returns the parsed
+// caller can pass either the file itself or the directory that holds it. usage
+// shows the caller's own way of naming a path (subcommands take it positionally,
+// `harness` takes it as a flag) in the not-found hint. It returns the parsed
 // selection alongside the resolved path, which callers use to locate files
 // referenced relative to the Outfit.
-func readOutfit(cmd, path string) (outfit.Selection, string, error) {
+func readOutfit(usage, path string) (outfit.Selection, string, error) {
 	if path == "" {
 		path = outfit.DefaultFile
 	}
@@ -290,7 +298,7 @@ func readOutfit(cmd, path string) (outfit.Selection, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) && path == outfit.DefaultFile {
-			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path: outfit %s <file>)", outfit.DefaultFile, cmd)
+			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path: %s)", outfit.DefaultFile, usage)
 		}
 		return outfit.Selection{}, path, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -325,7 +333,7 @@ func cmdApply(args []string) error {
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
-	sel, _, err := readOutfit("apply", path)
+	sel, _, err := readOutfit("outfit apply <file>", path)
 	if err != nil {
 		return err
 	}
@@ -359,7 +367,7 @@ func cmdUnapply(args []string) error {
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
-	sel, _, err := readOutfit("unapply", path)
+	sel, _, err := readOutfit("outfit unapply <file>", path)
 	if err != nil {
 		return err
 	}
@@ -388,7 +396,7 @@ func cmdServe(args []string) error {
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
-	sel, outfitPath, err := readOutfit("serve", path)
+	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
 	if err != nil {
 		return err
 	}
@@ -703,18 +711,51 @@ func removeSelection(sel outfit.Selection, h harness.Harness) error {
 	return nil
 }
 
+// outfitPathFlag is the harness command's --outfit/-O flag: the Outfit to apply
+// before launching, whose value is optional. Given bare it means the default
+// Outfit, exactly as a bare `outfit apply` does; --outfit=<path> names one.
+// The value has to be attached because everything positional after the flags
+// belongs to the harness.
+type outfitPathFlag struct {
+	set  bool
+	path string
+}
+
+func (f *outfitPathFlag) String() string { return f.path }
+
+// Set records the flag. The flag package passes "true" for the valueless form
+// (see IsBoolFlag); that stands for the default Outfit, which is the empty path
+// readOutfit resolves to ./Outfit.
+func (f *outfitPathFlag) Set(v string) error {
+	f.set = true
+	if v == "true" {
+		v = ""
+	}
+	f.path = v
+	return nil
+}
+
+// IsBoolFlag lets --outfit be given without a value.
+func (f *outfitPathFlag) IsBoolFlag() bool { return true }
+
 // cmdHarness launches the active harness, or with --set/--get manages and
 // reports the stored preference. The harness is resolved with the same
 // precedence as add/apply (--harness/-H > OUTFIT_HARNESS > preference >
 // default), and any trailing args after the flags are passed to the harness.
+// With --outfit/-O it applies an Outfit first, so a single command dresses the
+// harness and then runs it.
 func cmdHarness(args []string) error {
 	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
-	var set, harnessName string
+	var set, harnessName, providers string
 	var get bool
+	var outfitPath outfitPathFlag
 	fs.StringVar(&set, "set", "", "store this harness as the default and exit")
 	fs.BoolVar(&get, "get", false, "print the active harness instead of launching it")
 	fs.StringVar(&harnessName, "harness", "", "which harness to launch")
 	fs.StringVar(&harnessName, "H", "", "which harness to launch (shorthand)")
+	fs.Var(&outfitPath, "outfit", "apply this Outfit before launching (bare: ./"+outfit.DefaultFile+")")
+	fs.Var(&outfitPath, "O", "apply this Outfit before launching (shorthand)")
+	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -732,6 +773,8 @@ func cmdHarness(args []string) error {
 		return err
 	}
 
+	// --get reports the harness rather than running anything, so it applies
+	// nothing either.
 	if get {
 		pref, _ := harness.LoadPreference()
 		fmt.Printf("Active harness: %s (from %s)\n", h.Name(), source)
@@ -742,6 +785,12 @@ func cmdHarness(args []string) error {
 		}
 		fmt.Printf("Available: %s\n", strings.Join(harness.Names(), ", "))
 		return nil
+	}
+
+	if outfitPath.set {
+		if err := applyBeforeLaunch(outfitPath, providers, h, fs.Args()); err != nil {
+			return err
+		}
 	}
 
 	// Launch the harness, forwarding stdio and any trailing args.
@@ -762,6 +811,45 @@ func cmdHarness(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// applyBeforeLaunch applies the Outfit named by --outfit/-O to the harness that
+// is about to be launched — exactly the work `outfit apply` does, so one command
+// can dress the harness and then run it. rest is what will be forwarded to the
+// harness, inspected only to catch a path that was meant for the flag.
+func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) error {
+	// The flag's value has to be attached, so `--outfit ./dev/Outfit` would
+	// otherwise apply ./Outfit and quietly hand the path to the harness.
+	if f.path == "" && len(rest) > 0 && namesAnOutfit(rest[0]) {
+		return fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
+	}
+	sel, path, err := readOutfit("outfit harness --outfit=<file>", f.path)
+	if err != nil {
+		return err
+	}
+	// As for apply, --providers overrides the catalogue the selection resolves
+	// against (an Outfit never names one).
+	sel.Providers = providers
+	fmt.Printf("Applying %s\n\n", path)
+	if err := applySelection(sel, h); err != nil {
+		return err
+	}
+	fmt.Println()
+	return nil
+}
+
+// namesAnOutfit reports whether arg points at an Outfit file, or at a directory
+// holding one — the two shapes readOutfit accepts.
+func namesAnOutfit(arg string) bool {
+	info, err := os.Stat(arg)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		_, err := os.Stat(filepath.Join(arg, outfit.DefaultFile))
+		return err == nil
+	}
+	return filepath.Base(arg) == outfit.DefaultFile
 }
 
 // cmdShow prints the providers and models currently configured in the active

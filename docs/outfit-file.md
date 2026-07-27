@@ -40,6 +40,19 @@ a directory that holds an `Outfit` and it reads the file inside. Add
 
 After applying, just run your coding agent (`opencode`, or `pi`).
 
+Or do both at once — `outfit harness` takes the same Outfit, as `--outfit`/`-O`,
+and applies it before launching the agent:
+
+```sh
+outfit harness -O                        # apply ./Outfit, then launch
+outfit harness --outfit=path/to/Outfit   # ...or a specific one
+outfit harness --outfit=path/to/dir      # ...or a directory holding an Outfit
+```
+
+Given bare, `--outfit` defaults to `./Outfit` like `apply` does; when you name a
+path, attach it to the flag, because anything positional is forwarded to the
+agent (`outfit harness -O run --model x` passes `run --model x` on).
+
 To undo it again, `outfit unapply` (same default path and arguments) removes
 what the Outfit selects from the active harness's config — the inverse of
 `apply`, just as `remove` is to `add`. It honours `--harness`/`-H` and
