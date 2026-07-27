@@ -75,6 +75,128 @@ func TestHarness_GetAndSet(t *testing.T) {
 	}
 }
 
+// stubHarnessBinary puts a script named after the harness binary first on PATH,
+// recording its argv to argsFile, so a launch can be tested without a real agent
+// installed. It returns nothing; the caller reads argsFile.
+func stubHarnessBinary(t *testing.T, name, argsFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestHarness_AppliesOutfitBeforeLaunch checks that --outfit applies the named
+// Outfit — the same work `outfit apply` does — and then launches the harness
+// with the trailing args.
+func TestHarness_AppliesOutfitBeforeLaunch(t *testing.T) {
+	home := isolateConfig(t)
+	argsFile := filepath.Join(t.TempDir(), "args")
+	stubHarnessBinary(t, "opencode", argsFile)
+
+	outfitPath := filepath.Join(t.TempDir(), "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL gemma\nCONTEXT 128k\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdHarness([]string{"--outfit=" + outfitPath, "run", "hello"}); err != nil {
+			t.Fatalf("cmdHarness --outfit: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Applying "+outfitPath) {
+		t.Errorf("apply not reported:\n%s", out)
+	}
+
+	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/gemma" {
+		t.Errorf("Outfit was not applied before launch: default model = %v", m["model"])
+	}
+
+	// The harness still ran, with the trailing args forwarded to it.
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("harness was not launched: %v", err)
+	}
+	if strings.TrimSpace(string(got)) != "run\nhello" {
+		t.Errorf("forwarded args = %q, want \"run\\nhello\"", got)
+	}
+}
+
+// TestHarness_OutfitDefaultsToCurrentDirectory checks that a bare --outfit takes
+// the default Outfit in the working directory, as a bare `outfit apply` does.
+func TestHarness_OutfitDefaultsToCurrentDirectory(t *testing.T) {
+	home := isolateConfig(t)
+	stubHarnessBinary(t, "opencode", filepath.Join(t.TempDir(), "args"))
+
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL gemma\n")
+	t.Chdir(dir)
+
+	captureStdout(t, func() {
+		if err := cmdHarness([]string{"-O"}); err != nil {
+			t.Fatalf("cmdHarness -O: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/gemma" {
+		t.Errorf("./Outfit was not applied: default model = %v", m["model"])
+	}
+}
+
+// TestHarness_OutfitErrors covers the ways --outfit can be given wrongly: no
+// Outfit to default to, an unreadable path, and a path left detached from the
+// flag (which would otherwise be forwarded to the harness).
+func TestHarness_OutfitErrors(t *testing.T) {
+	isolateConfig(t)
+	stubHarnessBinary(t, "opencode", filepath.Join(t.TempDir(), "args"))
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	err := cmdHarness([]string{"--outfit"})
+	if err == nil || !strings.Contains(err.Error(), "outfit harness --outfit=<file>") {
+		t.Errorf("expected a hint naming the flag, got %v", err)
+	}
+
+	if err := cmdHarness([]string{"--outfit=" + filepath.Join(dir, "nope")}); err == nil {
+		t.Error("expected an error for a missing Outfit")
+	}
+
+	// A detached path is a typo, not a harness arg: the flag takes no value, so
+	// the Outfit would silently be the default one.
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL gemma\n")
+	other := filepath.Join(t.TempDir(), "Outfit")
+	mustWrite(t, other, "PROVIDER llamacpp\nMODEL other\n")
+	err = cmdHarness([]string{"--outfit", other})
+	if err == nil || !strings.Contains(err.Error(), "--outfit="+other) {
+		t.Errorf("expected the detached-path hint, got %v", err)
+	}
+}
+
+// TestHarness_GetDoesNotApply checks that --get stays an inspection command:
+// it reports the harness and applies nothing, even alongside --outfit.
+func TestHarness_GetDoesNotApply(t *testing.T) {
+	home := isolateConfig(t)
+
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL gemma\n")
+	t.Chdir(dir)
+
+	out := captureStdout(t, func() {
+		if err := cmdHarness([]string{"--get", "-O"}); err != nil {
+			t.Fatalf("cmdHarness --get -O: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Active harness: opencode") {
+		t.Errorf("unexpected --get output:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Error("--get should not have applied the Outfit")
+	}
+}
+
 func TestCmdShow(t *testing.T) {
 	isolateConfig(t)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
