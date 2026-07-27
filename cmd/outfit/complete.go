@@ -1,8 +1,11 @@
 package main
 
-// Tab completion. `outfit completion bash` prints the script below; the script
-// calls the hidden `outfit __complete` with every word up to the cursor, and
-// this file works out what could come next.
+// Tab completion. `outfit completion <shell>` prints one of the embedded
+// scripts below; each calls the hidden `outfit __complete` with every word up
+// to the cursor, and this file works out what could come next. The scripts are
+// deliberately thin — bash, zsh, and PowerShell differ only in how they hand
+// over the words and insert a result, never in the candidates — so this file
+// stays the one source of truth for what completes to what.
 //
 // The command and flag tables here mirror run()'s switch and each cmdX's
 // FlagSet. That duplication is deliberate — the flag package offers no way to
@@ -22,6 +25,23 @@ import (
 
 //go:embed completion.bash
 var bashCompletion string
+
+//go:embed completion.zsh
+var zshCompletion string
+
+//go:embed completion.ps1
+var powershellCompletion string
+
+// completionScripts maps a shell name to its embedded completion script.
+var completionScripts = map[string]string{
+	"bash":       bashCompletion,
+	"zsh":        zshCompletion,
+	"powershell": powershellCompletion,
+}
+
+// completionShells lists the supported shells in a stable order, for the
+// `completion` argument's own completion and for error messages.
+var completionShells = []string{"bash", "powershell", "zsh"}
 
 // Directives tell the shell script whether to offer paths alongside whatever
 // candidates were printed.
@@ -147,18 +167,17 @@ var commands = map[string]command{
 	"help":       {},
 }
 
-// cmdCompletion prints the shell completion script.
+// cmdCompletion prints the shell completion script for the named shell.
 func cmdCompletion(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("completion needs a shell (supported: bash)")
+		return fmt.Errorf("completion needs a shell (supported: %s)", strings.Join(completionShells, ", "))
 	}
-	switch args[0] {
-	case "bash":
-		fmt.Print(bashCompletion)
-		return nil
-	default:
-		return fmt.Errorf("unsupported shell %q (supported: bash)", args[0])
+	script, ok := completionScripts[args[0]]
+	if !ok {
+		return fmt.Errorf("unsupported shell %q (supported: %s)", args[0], strings.Join(completionShells, ", "))
 	}
+	fmt.Print(script)
+	return nil
 }
 
 // cmdComplete prints the completion candidates for a partially-typed command
@@ -192,10 +211,17 @@ func completions(args []string) ([]string, string) {
 		return nil, directiveNoFile
 	}
 
-	// bash breaks words on "=", so `--outfit=<TAB>` arrives as
-	// [..., "--outfit", "=", ""]. Look back past the separator for the flag
-	// being given a value — this is the only way to complete --outfit/-O, whose
-	// value has to be attached.
+	// A flag and its value can arrive attached as one word (`--outfit=<partial>`,
+	// how zsh and PowerShell pass it) or split into three (`--outfit`, `=`, ``,
+	// how bash tokenizes because "=" is a word-break). Handle the attached form
+	// here; the split form falls through to the prev-word check below. Either
+	// way this is the only route to completing --outfit/-O, whose value has to
+	// be attached.
+	if flag, _, ok := strings.Cut(cur, "="); ok && strings.HasPrefix(flag, "-") {
+		if kind, found := cmd.values[flag]; found {
+			return candidatesFor(kind, words)
+		}
+	}
 	prev := words[len(words)-1]
 	if prev == "=" && len(words) > 1 {
 		prev = words[len(words)-2]
@@ -279,7 +305,7 @@ func candidatesFor(kind candidateKind, words []string) ([]string, string) {
 		}
 		return modelNames(p, flagValue(words, "--model-family", "-f")), directiveNoFile
 	case kindShell:
-		return []string{"bash"}, directiveNoFile
+		return completionShells, directiveNoFile
 	default:
 		return nil, directiveNoFile
 	}

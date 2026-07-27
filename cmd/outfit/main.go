@@ -24,7 +24,7 @@
 //	outfit init-providers [path] # write the embedded providers.yaml out
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
 //	                                      # Outfit first (--get shows it; --set stores the default)
-//	outfit completion bash # print the tab-completion script
+//	outfit completion <bash|zsh|powershell> # print the tab-completion script
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
 // -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
@@ -141,7 +141,7 @@ Usage:
   outfit init-providers [path]      (defaults to ./providers.yaml)
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
-  outfit completion bash            (shell tab completion; see below)
+  outfit completion <shell>         (tab completion: bash, zsh, powershell)
   outfit version                    (or -v/--version)
 
 Flags:
@@ -200,9 +200,10 @@ harness: launches the active harness, forwarding any trailing args to it. A
 show: lists the providers and models actually configured in the active harness's
       config (where list shows the catalogue of what you could configure), and
       the aliases you have registered.
-completion: prints a tab-completion script. Add
-      source <(outfit completion bash) to your ~/.bashrc and TAB then completes
-      commands, flags, providers, harnesses, and your registered aliases.
+completion: prints a tab-completion script for bash, zsh, or powershell. Add
+      source <(outfit completion bash) to your ~/.bashrc (zsh: swap in zsh) and
+      TAB then completes commands, flags, providers, harnesses, and your
+      registered aliases.
 `, strings.Join(harness.Names(), ", "))
 }
 

@@ -205,7 +205,7 @@ func TestComplete_FlagValues(t *testing.T) {
 	if _, directive := complete(t, "apply", "--providers", ""); directive != directiveFile {
 		t.Errorf("--providers should complete paths, got %q", directive)
 	}
-	if got, _ := complete(t, "completion", ""); !hasAll(got, "bash") {
+	if got, _ := complete(t, "completion", ""); !hasAll(got, "bash", "zsh", "powershell") {
 		t.Errorf("shells missing from %v", got)
 	}
 }
@@ -231,6 +231,31 @@ func TestComplete_EqualsForm(t *testing.T) {
 	// A family still resolves against a provider given in that form.
 	if got, _ := complete(t, "add", "--provider", "=", "llamacpp", "-f", ""); len(got) == 0 {
 		t.Error("no families offered for a provider given as --provider=<name>")
+	}
+}
+
+// TestComplete_AttachedEqualsForm checks the same flag=value case as it arrives
+// from zsh and PowerShell, which pass `--outfit=qw` as a single word rather than
+// splitting it on "=" the way bash does.
+func TestComplete_AttachedEqualsForm(t *testing.T) {
+	isolateConfig(t)
+	registerOutfit(t, "PROVIDER llamacpp\nALIAS qwen\n")
+
+	got, directive := complete(t, "harness", "--outfit=")
+	if !hasAll(got, "qwen") {
+		t.Errorf("aliases missing from %v", got)
+	}
+	if directive != directiveFile {
+		t.Errorf("directive = %q, want %q", directive, directiveFile)
+	}
+
+	// A partially-typed value is still the flag's value, not a new flag.
+	if got, _ := complete(t, "harness", "--outfit=qw"); !hasAll(got, "qwen") {
+		t.Errorf("aliases missing for a partial attached value: %v", got)
+	}
+	// The short flag attaches its value the same way.
+	if got, _ := complete(t, "add", "-p=llamacpp", "-f="); len(got) == 0 {
+		t.Error("no families offered for -p=<name> -f=")
 	}
 }
 
@@ -268,34 +293,84 @@ func TestComplete_NeverErrors(t *testing.T) {
 	}
 }
 
-// TestCompletionCommand checks the script the shell actually sources.
-func TestCompletionCommand(t *testing.T) {
-	out := captureStdout(t, func() {
-		if err := cmdCompletion([]string{"bash"}); err != nil {
-			t.Fatalf("cmdCompletion bash: %v", err)
+// completionOf returns the script printed for a shell.
+func completionOf(t *testing.T, shell string) string {
+	t.Helper()
+	return captureStdout(t, func() {
+		if err := cmdCompletion([]string{shell}); err != nil {
+			t.Fatalf("cmdCompletion %s: %v", shell, err)
 		}
 	})
-	for _, want := range []string{"_outfit()", "complete -F _outfit outfit", "__complete"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("script is missing %q:\n%s", want, out)
+}
+
+// TestCompletionCommand checks that every supported shell prints a script that
+// wires itself up and calls the __complete helper.
+func TestCompletionCommand(t *testing.T) {
+	markers := map[string][]string{
+		"bash":       {"_outfit()", "complete -F _outfit outfit", "__complete"},
+		"zsh":        {"#compdef outfit", "compdef _outfit outfit", "__complete"},
+		"powershell": {"Register-ArgumentCompleter", "-CommandName outfit", "__complete"},
+	}
+	for shell, wants := range markers {
+		out := completionOf(t, shell)
+		for _, want := range wants {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s script is missing %q:\n%s", shell, want, out)
+			}
+		}
+	}
+
+	// Every advertised shell has a script.
+	for _, shell := range completionShells {
+		if completionScripts[shell] == "" {
+			t.Errorf("shell %q is advertised but has no embedded script", shell)
 		}
 	}
 
 	if err := cmdCompletion(nil); err == nil {
 		t.Error("expected an error with no shell named")
 	}
-	if err := cmdCompletion([]string{"zsh"}); err == nil {
+	if err := cmdCompletion([]string{"fish"}); err == nil {
 		t.Error("expected an error for an unsupported shell")
 	}
+}
 
-	// The script has to be valid bash, not just plausible text.
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash not installed")
+// TestCompletionScriptsAreValid runs each script through its own shell's syntax
+// checker, when that shell is installed. Skipped shells are just not exercised
+// on this machine — CI has bash and zsh.
+func TestCompletionScriptsAreValid(t *testing.T) {
+	cases := []struct {
+		shell   string
+		bin     string
+		ext     string
+		checker func(bin, path string) *exec.Cmd
+	}{
+		{"bash", "bash", "bash", func(bin, path string) *exec.Cmd {
+			return exec.Command(bin, "-n", path)
+		}},
+		{"zsh", "zsh", "zsh", func(bin, path string) *exec.Cmd {
+			return exec.Command(bin, "-n", path)
+		}},
+		{"powershell", "pwsh", "ps1", func(bin, path string) *exec.Cmd {
+			// Parse the file without running it; any parse error fails the test.
+			script := "$errs=$null;" +
+				"[System.Management.Automation.Language.Parser]::ParseFile('" +
+				path + "',[ref]$null,[ref]$errs)|Out-Null;" +
+				"if($errs.Count){exit 1}"
+			return exec.Command(bin, "-NoProfile", "-Command", script)
+		}},
 	}
-	script := filepath.Join(t.TempDir(), "outfit.bash")
-	mustWrite(t, script, out)
-	if got, err := exec.Command(bash, "-n", script).CombinedOutput(); err != nil {
-		t.Errorf("bash -n rejected the completion script: %v\n%s", err, got)
+	for _, c := range cases {
+		t.Run(c.shell, func(t *testing.T) {
+			bin, err := exec.LookPath(c.bin)
+			if err != nil {
+				t.Skipf("%s not installed", c.bin)
+			}
+			path := filepath.Join(t.TempDir(), "outfit."+c.ext)
+			mustWrite(t, path, completionOf(t, c.shell))
+			if out, err := c.checker(bin, path).CombinedOutput(); err != nil {
+				t.Errorf("%s rejected the completion script: %v\n%s", c.bin, err, out)
+			}
+		})
 	}
 }

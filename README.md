@@ -157,7 +157,7 @@ outfit init-providers [path]             # write the built-in catalogue out to e
 outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
-outfit completion bash                   # shell tab completion
+outfit completion <shell>                # tab completion (bash, zsh, powershell)
 ```
 
 Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
@@ -279,12 +279,13 @@ your `Outfit` files stay as portable and committable as they were.
 
 ```sh
 source <(outfit completion bash)   # add to ~/.bashrc
+source <(outfit completion zsh)    # or ~/.zshrc (needs compinit)
+outfit completion powershell | Out-String | Invoke-Expression   # or $PROFILE
 ```
 
 TAB then completes commands, flags, providers, harnesses, and your registered
 aliases — `outfit unalias <TAB>` offers exactly the names you have. Homebrew
-installs it for you. (zsh can use it via `autoload -U +X bashcompinit &&
-bashcompinit` first.)
+installs the bash and zsh completions for you.
 
 ## Serving a local model
 
