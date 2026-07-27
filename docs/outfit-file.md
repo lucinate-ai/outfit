@@ -54,7 +54,7 @@ MODEL    Qwen/Qwen3.6-27B-FP8
 REMOTE   remote.json
 ```
 
-`outfit remote start|stop|status` then reads the named file — resolved
+`outfit remote start|stop|status|deploy` then reads the named file — resolved
 relative to the Outfit, like `PRESET` — so a project can carry its own remote
 config instead of relying on the per-user
 `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json`. With no path argument the

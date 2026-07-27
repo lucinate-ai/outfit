@@ -52,7 +52,7 @@ func TestRemoteDispatch(t *testing.T) {
 
 func TestRemote_Unconfigured(t *testing.T) {
 	isolateConfig(t)
-	for _, sub := range []string{"start", "stop", "status"} {
+	for _, sub := range []string{"start", "stop", "status"} { // deploy needs an Outfit, covered separately
 		if err := run([]string{"remote", sub}); err == nil || !strings.Contains(err.Error(), "not configured") {
 			t.Errorf("remote %s without config should explain setup, got %v", sub, err)
 		}
