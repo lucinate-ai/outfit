@@ -158,7 +158,9 @@ outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
 outfit completion <shell>                # tab completion (bash, zsh, powershell)
-outfit remote <start|stop|status> [path] # control the remote GPU inference instance
+outfit remote <start|stop|status|deploy> [path]
+                                         # control the remote GPU inference instance
+                                         #   (deploy sets what it serves, from the Outfit)
 ```
 
 Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).

@@ -5,6 +5,7 @@
 package remote
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -33,7 +34,11 @@ var httpClient = &http.Client{Timeout: 10 * time.Minute}
 type Config struct {
 	StartURL string `json:"start_url"`
 	StopURL  string `json:"stop_url"`
-	Region   string `json:"region"`
+	// DeployURL is the deploy Lambda's Function URL. Unlike the other two it is
+	// optional: configs written before `remote deploy` existed do not have it,
+	// and start/stop work without it. Deploy reports its absence itself.
+	DeployURL string `json:"deploy_url"`
+	Region    string `json:"region"`
 }
 
 // ConfigPath returns the path of the remote config file, alongside outfit's
@@ -95,6 +100,9 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	if v := getenv("OUTFIT_REMOTE_STOP_URL"); v != "" {
 		cfg.StopURL = v
 	}
+	if v := getenv("OUTFIT_REMOTE_DEPLOY_URL"); v != "" {
+		cfg.DeployURL = v
+	}
 	if v := getenv("OUTFIT_REMOTE_REGION"); v != "" {
 		cfg.Region = v
 	}
@@ -142,6 +150,54 @@ type Response struct {
 	APIKey            string `json:"api_key"`
 	Message           string `json:"message"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
+	// Deploy-specific fields.
+	Deployed       bool   `json:"deployed"`
+	Seeding        bool   `json:"seeding"`
+	SeedInstanceID string `json:"seedInstanceId"`
+	Runner         string `json:"runner"`
+	ModelID        string `json:"modelId"`
+	ContextSize    int    `json:"contextSize"`
+	WeightsPrefix  string `json:"weightsPrefix"`
+	Error          string `json:"error"`
+}
+
+// DeployConfig is what the deploy Lambda accepts: the runner-neutral
+// description of WHAT to serve, derived from an Outfit. Deliberately no
+// weights prefix — the Lambda derives the S3 layout itself, and seeds the
+// weights when they are not there yet, so this stays a statement of intent.
+type DeployConfig struct {
+	Runner          string   `json:"runner"`
+	ModelID         string   `json:"modelId"`
+	Quant           string   `json:"quant"`
+	ContextSize     int      `json:"contextSize"`
+	ServedModelName string   `json:"servedModelName"`
+	ServeArgs       []string `json:"serveArgs"`
+}
+
+// Deploy sets what the next wake will serve. The Lambda validates the config,
+// seeds the weights into S3 if they are absent, and stores it; deploying does
+// not start the instance.
+func Deploy(ctx context.Context, cfg Config, dc DeployConfig) (*Response, error) {
+	if cfg.DeployURL == "" {
+		return nil, fmt.Errorf(
+			"no deploy_url configured: add the cloud-vm-llm stack's DeployUrl output to the remote config (or set OUTFIT_REMOTE_DEPLOY_URL)")
+	}
+	body, err := json.Marshal(dc)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := call(ctx, cfg, http.MethodPost, cfg.DeployURL, body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		detail := resp.Error
+		if detail == "" {
+			detail = resp.Message
+		}
+		return nil, fmt.Errorf("deploy failed (HTTP %d): %s", resp.StatusCode, detail)
+	}
+	return resp, nil
 }
 
 // Start boots the instance and blocks until vLLM is serving, retrying while
@@ -149,7 +205,7 @@ type Response struct {
 // line before each wait.
 func Start(ctx context.Context, cfg Config, progress func(string)) (*Response, error) {
 	for {
-		resp, err := call(ctx, cfg, http.MethodPost, cfg.StartURL)
+		resp, err := call(ctx, cfg, http.MethodPost, cfg.StartURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -176,20 +232,34 @@ func Start(ctx context.Context, cfg Config, progress func(string)) (*Response, e
 
 // Status reports the instance state and endpoint health without side effects.
 func Status(ctx context.Context, cfg Config) (*Response, error) {
-	return call(ctx, cfg, http.MethodGet, cfg.StartURL)
+	return call(ctx, cfg, http.MethodGet, cfg.StartURL, nil)
 }
 
 // Stop stops the instance immediately rather than waiting for the idle timer.
 func Stop(ctx context.Context, cfg Config) (*Response, error) {
-	return call(ctx, cfg, http.MethodPost, cfg.StopURL)
+	return call(ctx, cfg, http.MethodPost, cfg.StopURL, nil)
 }
 
-func call(ctx context.Context, cfg Config, method, rawURL string) (*Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
+// call signs and sends one request. body is nil for the bodyless calls
+// (start/stop/status); deploy passes JSON, which must be hashed into the
+// signature rather than sent unsigned.
+func call(ctx context.Context, cfg Config, method, rawURL string, body []byte) (*Response, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
 	if err != nil {
 		return nil, err
 	}
-	if err := sign(ctx, req, cfg.Region); err != nil {
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+		// Set explicitly: with a bytes.Reader net/http would infer it, but the
+		// signature covers Content-Length, so leaving it to chance risks a
+		// mismatch between what is signed and what is sent.
+		req.ContentLength = int64(len(body))
+	}
+	if err := sign(ctx, req, cfg.Region, body); err != nil {
 		return nil, err
 	}
 	resp, err := httpClient.Do(req)
@@ -197,18 +267,18 @@ func call(ctx context.Context, cfg Config, method, rawURL string) (*Response, er
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err
 	}
 	out := &Response{StatusCode: resp.StatusCode}
-	if err := json.Unmarshal(body, out); err != nil {
+	if err := json.Unmarshal(respBody, out); err != nil {
 		hint := ""
 		if resp.StatusCode == http.StatusForbidden {
 			hint = " (do your AWS credentials grant lambda:InvokeFunctionUrl?)"
 		}
 		return nil, fmt.Errorf("%s returned HTTP %d%s: %s",
-			method, resp.StatusCode, hint, truncate(string(body), 200))
+			method, resp.StatusCode, hint, truncate(string(respBody), 200))
 	}
 	return out, nil
 }
@@ -216,7 +286,7 @@ func call(ctx context.Context, cfg Config, method, rawURL string) (*Response, er
 // sign SigV4-signs the request with the default AWS credential chain
 // (environment, shared config/credentials, SSO). Function URL IAM auth
 // requires the payload hash to be sent and signed via X-Amz-Content-Sha256.
-func sign(ctx context.Context, req *http.Request, region string) error {
+func sign(ctx context.Context, req *http.Request, region string, body []byte) error {
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
 	if err != nil {
 		return err
@@ -226,7 +296,8 @@ func sign(ctx context.Context, req *http.Request, region string) error {
 		return fmt.Errorf(
 			"resolving AWS credentials: %w (configure env credentials, a profile or an SSO session)", err)
 	}
-	hash := sha256.Sum256(nil) // requests carry no body
+	// sha256 of the exact bytes sent (of the empty string for a bodyless call).
+	hash := sha256.Sum256(body)
 	payloadHash := hex.EncodeToString(hash[:])
 	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
 	return v4.NewSigner().SignHTTP(ctx, creds, req, payloadHash, "lambda", region, time.Now())

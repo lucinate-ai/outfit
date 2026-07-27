@@ -236,6 +236,14 @@ func canonicalName(key string) string {
 	return name
 }
 
+// CanonicalKey resolves a preset key to the canonical long-form flag name that
+// Flags would emit, so the same setting written different ways (`ngl` and
+// `n-gpu-layers`, `c` and `ctx-size`) compares equal. Callers that need to
+// match specific flags rather than render them should compare canonical names.
+func CanonicalKey(key string) string {
+	return canonicalName(key)
+}
+
 // flagFor turns one preset key/value into its `llama-server` flag tokens.
 func flagFor(key, value string) []string {
 	name := canonicalName(key)

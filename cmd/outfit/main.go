@@ -25,7 +25,8 @@
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
 //	                                      # Outfit first (--get shows it; --set stores the default)
 //	outfit completion <bash|zsh|powershell> # print the tab-completion script
-//	outfit remote start|stop|status # control the remote GPU inference instance
+//	outfit remote start|stop|status|deploy # control the remote GPU inference
+//	                                      # instance (deploy sets what it serves)
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
 // -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
@@ -145,7 +146,9 @@ Usage:
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
   outfit completion <shell>         (tab completion: bash, zsh, powershell)
-  outfit remote <start|stop|status> [path]  (control the remote GPU inference instance)
+  outfit remote <start|stop|status|deploy> [path]
+                                    (control the remote GPU instance; deploy sets
+                                     what it serves, from the Outfit)
   outfit version                    (or -v/--version)
 
 Flags:
@@ -654,12 +657,7 @@ func cmdServe(args []string) error {
 
 	var argv []string
 	if sel.Preset != "" {
-		// A relative PRESET is resolved against the Outfit's directory, so an
-		// Outfit and its preset can travel together.
-		presetPath := sel.Preset
-		if !filepath.IsAbs(presetPath) {
-			presetPath = filepath.Join(filepath.Dir(outfitPath), presetPath)
-		}
+		presetPath := resolvePresetPath(sel.Preset, outfitPath)
 		data, err := os.ReadFile(presetPath)
 		if err != nil {
 			return fmt.Errorf("reading preset %s: %w", presetPath, err)
@@ -710,6 +708,16 @@ func cmdServe(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// resolvePresetPath resolves an Outfit's PRESET value: a relative one is taken
+// against the Outfit's own directory, so an Outfit and its preset travel
+// together (the same rule REMOTE uses).
+func resolvePresetPath(presetValue, outfitPath string) string {
+	if filepath.IsAbs(presetValue) {
+		return presetValue
+	}
+	return filepath.Join(filepath.Dir(outfitPath), presetValue)
 }
 
 // outfitServeParams turns the llama-server settings an Outfit states into preset
