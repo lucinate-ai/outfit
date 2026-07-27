@@ -305,6 +305,30 @@ func TestHarness_TerminatorAfterDetachedFlagValue(t *testing.T) {
 	}
 }
 
+// TestHarness_MalformedConfigStillLaunches checks the documented safety
+// property: a config outfit cannot parse must not stop the harness launching.
+// The leading word is simply forwarded, and a real alias error surfaces later
+// under `outfit apply`, where it is actionable.
+func TestHarness_MalformedConfigStillLaunches(t *testing.T) {
+	home := isolateConfig(t)
+
+	configPath := filepath.Join(home, ".config", "outfit", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, configPath, "{not json")
+
+	// "run" is name-shaped and not on disk, so resolving it consults the config
+	// — which is corrupt. That must degrade to "not an Outfit", forwarding it.
+	forwarded, _ := launchedArgs(t, []string{"run", "hello"})
+	if forwarded != "run\nhello" {
+		t.Errorf("forwarded args = %q, want them forwarded verbatim", forwarded)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Error("a corrupt config should have applied nothing")
+	}
+}
+
 // TestHarness_LeadingOutfitPathApplies checks that a path works positionally
 // too, so `harness` reads like apply and serve.
 func TestHarness_LeadingOutfitPathApplies(t *testing.T) {

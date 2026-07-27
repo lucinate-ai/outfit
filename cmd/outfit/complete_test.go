@@ -234,6 +234,35 @@ func TestComplete_EqualsForm(t *testing.T) {
 	}
 }
 
+// TestComplete_ModelValues checks that --model/-m offers the catalogue's model
+// keys — every family's when no family is fixed, and just one family's when it
+// is.
+func TestComplete_ModelValues(t *testing.T) {
+	isolateConfig(t)
+
+	// With a family fixed, only that family's models.
+	got, directive := complete(t, "add", "-p", "openrouter", "-f", "deepseek-v4", "-m", "")
+	if !hasAll(got, "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro") {
+		t.Errorf("family's models missing from %v", got)
+	}
+	if directive != directiveNoFile {
+		t.Errorf("directive = %q, want %q", directive, directiveNoFile)
+	}
+
+	// Without a family, every family's models are offered.
+	if got, _ := complete(t, "add", "--provider", "openrouter", "--model", ""); len(got) == 0 {
+		t.Error("no models offered for a provider with no family fixed")
+	}
+	// With no provider named at all, there is nothing to draw models from.
+	if got, _ := complete(t, "add", "-m", ""); len(got) != 0 {
+		t.Errorf("models offered with no provider: %v", got)
+	}
+	// An unknown provider yields no models rather than an error.
+	if got, _ := complete(t, "add", "-p", "nope", "-m", ""); len(got) != 0 {
+		t.Errorf("models offered for an unknown provider: %v", got)
+	}
+}
+
 // TestComplete_AttachedEqualsForm checks the same flag=value case as it arrives
 // from zsh and PowerShell, which pass `--outfit=qw` as a single word rather than
 // splitting it on "=" the way bash does.
