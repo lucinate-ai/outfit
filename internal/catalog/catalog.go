@@ -35,11 +35,14 @@ type Catalog struct {
 
 // Provider describes how to construct an opencode provider block.
 type Provider struct {
-	Description    string             `yaml:"description"`
-	Name           string             `yaml:"name"`
-	NPM            string             `yaml:"npm"`
-	APIKeyEnv      string             `yaml:"apiKeyEnv"`
-	APIKeyRequired bool               `yaml:"apiKeyRequired"`
+	Description    string `yaml:"description"`
+	Name           string `yaml:"name"`
+	NPM            string `yaml:"npm"`
+	APIKeyEnv      string `yaml:"apiKeyEnv"`
+	APIKeyRequired bool   `yaml:"apiKeyRequired"`
+	// APIKeyOptional marks a provider that also works unauthenticated (a local
+	// server). It only affects the Pi harness: see BuildPiProvider.
+	APIKeyOptional bool               `yaml:"apiKeyOptional"`
 	APIKeyPrefix   string             `yaml:"apiKeyPrefix"`
 	Options        map[string]any     `yaml:"options"`
 	OptionsFromEnv map[string]string  `yaml:"optionsFromEnv"`
@@ -295,14 +298,24 @@ func BuildPiProvider(id string, p *Provider, familyName, modelOverride, baseURLO
 		prov.BaseURL, _ = p.Options["baseURL"].(string)
 	}
 
-	if p.APIKeyEnv != "" {
+	// Pi only surfaces a provider's models in /model once auth is configured;
+	// with no apiKey at all the models load but stay unavailable. Keyless local
+	// servers (llama.cpp, Ollama, …) ignore the key, so write a dummy literal —
+	// the same placeholder pattern Pi's own docs use for Ollama — to make the
+	// models selectable.
+	//
+	// A "$VAR" reference is written whenever the provider has a key env var,
+	// because Pi resolves it at run time: the key need not be set when the
+	// Outfit is applied. The exception is an apiKeyOptional provider whose var
+	// is unset — one provider covers both a keyless local server and an
+	// authenticated remote one, and a reference to a variable set nowhere would
+	// hide the models, which is worse than the placeholder.
+	switch {
+	case p.APIKeyEnv != "" && p.APIKeyOptional && resolve(p.APIKeyEnv) == "":
+		prov.APIKey = piPlaceholderAPIKey
+	case p.APIKeyEnv != "":
 		prov.APIKey = "$" + p.APIKeyEnv
-	} else {
-		// Pi only surfaces a provider's models in /model once auth is configured;
-		// with no apiKey at all the models load but stay unavailable. Keyless local
-		// servers (llama.cpp, Ollama, …) ignore the key, so write a dummy literal —
-		// the same placeholder pattern Pi's own docs use for Ollama — to make the
-		// models selectable.
+	default:
 		prov.APIKey = piPlaceholderAPIKey
 	}
 

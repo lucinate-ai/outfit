@@ -11,6 +11,9 @@
 #   apiKeyEnv       env var (looked up in .env, then the environment) whose
 #                   value is injected as options.apiKey
 #   apiKeyRequired  fail if apiKeyEnv resolves to nothing
+#   apiKeyOptional  the provider also works with no key (a local server). When
+#                   apiKeyEnv resolves to nothing, the Pi harness writes its
+#                   keyless placeholder instead of an unresolvable $VAR
 #   apiKeyPrefix    sanity-check that the key starts with this
 #   options         static options merged into the provider block
 #   optionsFromEnv  option -> env var; injected into options when the var is set
@@ -81,9 +84,15 @@ providers:
             name: Llama 3.1
 
   llamacpp:
-    description: Local llama.cpp server (OpenAI-compatible API)
-    name: llama.cpp (local)
+    description: llama.cpp server (OpenAI-compatible API)
+    name: llama.cpp
     npm: "@ai-sdk/openai-compatible"
+    # A local llama-server usually needs no key, and none is injected when the
+    # var is unset. But the same provider also names a remote deployment (see
+    # `outfit remote deploy`), which is started with --api-key, so the key is
+    # picked up when there is one.
+    apiKeyEnv: OPENAI_API_KEY
+    apiKeyOptional: true
     options:
       baseURL: http://localhost:8080/v1
     optionsFromEnv:

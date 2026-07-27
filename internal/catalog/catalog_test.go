@@ -188,7 +188,7 @@ func TestBuildPiProvider_BaseURLFallbackAndOverride(t *testing.T) {
 
 func TestBuildPiProvider_ModelOverrideNoKey(t *testing.T) {
 	cat, _ := Load()
-	p := cat.Providers["llamacpp"] // no apiKeyEnv
+	p := cat.Providers["llamacpp"] // apiKeyOptional, and the var is unset here
 
 	prov, model, err := BuildPiProvider("llamacpp", p, "", "my-local", "", noEnv)
 	if err != nil {
@@ -481,5 +481,77 @@ func TestEmbeddedYAML(t *testing.T) {
 	again := EmbeddedYAML()
 	if again[0] == data[0] {
 		t.Error("EmbeddedYAML should return a fresh copy, not the underlying bytes")
+	}
+}
+
+// llamacpp names both a keyless local server and the authenticated remote
+// deployment, so its key is optional: written through when set, and replaced by
+// Pi's placeholder when not, rather than a $VAR that resolves to nothing.
+func TestBuildPiProvider_OptionalKey(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["llamacpp"]
+
+	withKey := func(name string) string {
+		if name == "OPENAI_API_KEY" {
+			return "sk-remote"
+		}
+		return ""
+	}
+	prov, _, err := BuildPiProvider("llamacpp", p, "local", "", "", withKey)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.APIKey != "$OPENAI_API_KEY" {
+		t.Errorf("apiKey = %q, want the $VAR reference when the key is set", prov.APIKey)
+	}
+
+	prov, _, err = BuildPiProvider("llamacpp", p, "local", "", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.APIKey != piPlaceholderAPIKey {
+		t.Errorf("apiKey = %q, want the placeholder when the key is unset", prov.APIKey)
+	}
+}
+
+// A provider whose key is NOT optional keeps the reference even when unset, so
+// the key can be exported after the Outfit is applied.
+func TestBuildPiProvider_RequiredKeyKeepsReference(t *testing.T) {
+	cat, _ := Load()
+	prov, _, err := BuildPiProvider("openai-compatible", cat.Providers["openai-compatible"], "gpt", "", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.APIKey != "$OPENAI_API_KEY" {
+		t.Errorf("apiKey = %q, want the $VAR reference to survive an unset key", prov.APIKey)
+	}
+}
+
+// The opencode block injects the resolved key, so a remote llama.cpp endpoint
+// is authenticated rather than 401ing.
+func TestBuildProviderBlock_LlamacppInjectsKeyWhenSet(t *testing.T) {
+	cat, _ := Load()
+	resolve := func(name string) string {
+		if name == "OPENAI_API_KEY" {
+			return "sk-remote"
+		}
+		return ""
+	}
+	block, _, err := BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local", "", "http://198.51.100.1:8000/v1", resolve)
+	if err != nil {
+		t.Fatalf("BuildProviderBlock: %v", err)
+	}
+	options := block["options"].(map[string]any)
+	if options["apiKey"] != "sk-remote" {
+		t.Errorf("apiKey = %v, want the resolved key", options["apiKey"])
+	}
+
+	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local", "", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildProviderBlock: %v", err)
+	}
+	options = block["options"].(map[string]any)
+	if _, ok := options["apiKey"]; ok {
+		t.Error("no apiKey should be injected for a local server when the var is unset")
 	}
 }
