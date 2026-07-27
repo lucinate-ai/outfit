@@ -8,18 +8,19 @@
 //	--harness/-H flag  >  OUTFIT_HARNESS env  >  stored preference  >  opencode
 //
 // The stored preference lives in ${XDG_CONFIG_HOME:-~/.config}/outfit/config.json
-// and is managed with `outfit harness --set <name>`.
+// and is managed with `outfit harness --set <name>`. That file is owned by
+// internal/config, which shares it with the Outfit alias registry; this package
+// only reads and writes the one field.
 package harness
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
+	"github.com/lucinate-ai/outfit/internal/config"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 )
 
@@ -116,49 +117,26 @@ func Resolve(flag string) (Harness, string, error) {
 
 // PreferencePath returns the path to outfit's own config file, where the
 // default-harness preference is stored.
-func PreferencePath() string {
-	dir := os.Getenv("XDG_CONFIG_HOME")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".config")
-	}
-	return filepath.Join(dir, "outfit", "config.json")
-}
-
-// preference is the on-disk shape of outfit's config file.
-type preference struct {
-	Harness string `json:"harness"`
-}
+func PreferencePath() string { return config.Path() }
 
 // LoadPreference returns the stored default harness, or "" when none is set.
 func LoadPreference() (string, error) {
-	data, err := os.ReadFile(PreferencePath())
+	f, err := config.Load()
 	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
 		return "", err
 	}
-	var p preference
-	if err := json.Unmarshal(data, &p); err != nil {
-		return "", fmt.Errorf("parsing %s: %w", PreferencePath(), err)
-	}
-	return p.Harness, nil
+	return f.Harness, nil
 }
 
-// SavePreference stores name as the default harness, validating it first.
+// SavePreference stores name as the default harness, validating it first. Only
+// the harness field is touched: everything else in outfit's config (the alias
+// registry) survives, because the write is a read-modify-write.
 func SavePreference(name string) error {
 	if _, ok := registry[name]; !ok {
 		return fmt.Errorf("unknown harness %q (available: %s)", name, strings.Join(Names(), ", "))
 	}
-	path := PreferencePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(preference{Harness: name}, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o600)
+	return config.Update(func(f *config.File) error {
+		f.Harness = name
+		return nil
+	})
 }

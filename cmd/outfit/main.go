@@ -17,11 +17,14 @@
 //	outfit remove --provider <name> [--model-family <family>] [--model <id>]
 //	outfit apply   [path]  # apply an Outfit file (defaults to ./Outfit)
 //	outfit unapply [path]  # remove what an Outfit file selects
+//	outfit alias   [path] [-n <name>]  # name an Outfit; -l lists them
+//	outfit unalias <name>  # drop a registered name
 //	outfit serve  [path]   # run llama-server for the Outfit (PRESET or MODEL)
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
 //	                                      # Outfit first (--get shows it; --set stores the default)
+//	outfit completion bash # print the tab-completion script
 //
 // Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
 // -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
@@ -34,6 +37,11 @@
 // selection, applied with `outfit apply` and reverted with `outfit unapply`;
 // see the internal/outfit package. The harness is deliberately not part of an
 // Outfit, so the same Outfit applies to any harness.
+//
+// `outfit alias` registers an Outfit under a short name — by default its own
+// ALIAS — and every command that takes a path takes that name instead. The
+// registry is machine-local state in outfit's own config, not part of any
+// Outfit, so an Outfit stays as portable as it was.
 package main
 
 import (
@@ -49,6 +57,7 @@ import (
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
+	"github.com/lucinate-ai/outfit/internal/config"
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/outfit"
@@ -86,6 +95,10 @@ func run(args []string) error {
 		return cmdApply(rest)
 	case "unapply":
 		return cmdUnapply(rest)
+	case "alias":
+		return cmdAlias(rest)
+	case "unalias":
+		return cmdUnalias(rest)
 	case "serve":
 		return cmdServe(rest)
 	case "export":
@@ -94,6 +107,11 @@ func run(args []string) error {
 		return cmdInitProviders(rest)
 	case "harness":
 		return cmdHarness(rest)
+	case "completion":
+		return cmdCompletion(rest)
+	case "__complete":
+		// Hidden: the completion script's way of asking what could come next.
+		return cmdComplete(rest)
 	case "version", "-v", "--version":
 		fmt.Println(version)
 		return nil
@@ -116,11 +134,14 @@ Usage:
   outfit remove --provider <name> [--model-family <family>] [--model <id>]
   outfit apply  [path] [--output <size>]   (defaults to ./Outfit)
   outfit unapply [path]                    (remove what an Outfit selects)
+  outfit alias  [path] [-n <name>] [-l]    (name an Outfit; -l lists them)
+  outfit unalias <name>                    (drop a registered name)
   outfit serve  [path] [--dry-run]         (run llama-server from the PRESET)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
-  outfit harness [-H <name>] [--outfit[=<path>]] [args...]
+  outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
+  outfit completion bash            (shell tab completion; see below)
   outfit version                    (or -v/--version)
 
 Flags:
@@ -153,6 +174,12 @@ apply: applies an Outfit file — a declarative, Dockerfile-style description of
        one provider selection — as if you had run the equivalent add.
 unapply: removes what an Outfit file selects, as if you had run the equivalent
        remove. The inverse of apply.
+alias: registers an Outfit under a short name, which then stands in wherever an
+       Outfit path goes (apply, unapply, serve, harness). The name defaults to
+       the Outfit's own ALIAS; --name/-n picks another, --force/-F re-points a
+       name already registered, and --list/-l shows them all. A path on disk
+       always wins over a name, so registering one changes nothing that works.
+unalias: drops a registered name. The Outfit file itself is left alone.
 serve: runs llama-server for the Outfit. With a PRESET (a llama.cpp .ini) it
        turns the matching section into the command; otherwise it derives one
        from MODEL/ALIAS/CONTEXT/BASEURL. Prints the command before running it;
@@ -162,13 +189,20 @@ init-providers: writes the binary's built-in providers.yaml to the working
        directory (or [path]) so you can customise the catalogue and point
        outfit at it with --providers/OUTFIT_PROVIDERS. Refuses to overwrite an
        existing file unless --force is given.
-harness: launches the active harness, forwarding any trailing args to it.
+harness: launches the active harness, forwarding any trailing args to it. A
+       leading argument that names an Outfit — a registered alias or a path — is
+       applied first and not forwarded; put -- before the harness's own args to
+       keep them, and a leading -- opts out of this entirely.
        --outfit/-O applies an Outfit first, as if you had run apply before it.
        --get prints the active harness instead of launching it; --set <name>
        stores the default harness and exits. Honours -H/--harness and
        OUTFIT_HARNESS.
 show: lists the providers and models actually configured in the active harness's
-      config (where list shows the catalogue of what you could configure).
+      config (where list shows the catalogue of what you could configure), and
+      the aliases you have registered.
+completion: prints a tab-completion script. Add
+      source <(outfit completion bash) to your ~/.bashrc and TAB then completes
+      commands, flags, providers, harnesses, and your registered aliases.
 `, strings.Join(harness.Names(), ", "))
 }
 
@@ -283,14 +317,26 @@ func applySelection(sel outfit.Selection, h harness.Harness) error {
 // readOutfit reads and parses the Outfit at path, defaulting to ./Outfit when
 // path is empty so a bare command works in a directory that holds one. When
 // path names a directory, the default Outfit file inside it is used, so a
-// caller can pass either the file itself or the directory that holds it. usage
-// shows the caller's own way of naming a path (subcommands take it positionally,
-// `harness` takes it as a flag) in the not-found hint. It returns the parsed
-// selection alongside the resolved path, which callers use to locate files
-// referenced relative to the Outfit.
+// caller can pass either the file itself or the directory that holds it. path
+// may also be a name registered with `outfit alias`, which is what gives every
+// Outfit command the same shorthand. usage shows the caller's own way of naming
+// a path (subcommands take it positionally, `harness` takes it as a flag) in
+// the not-found hint. It returns the parsed selection alongside the resolved
+// path, which callers use to locate files referenced relative to the Outfit.
+//
+// It prints when an alias decided the path, which is against this file's
+// convention that only cmdX functions write to stdout. The alternative is to
+// repeat that reporting at all four call sites, where one omission would leave
+// the user guessing which file was read.
 func readOutfit(usage, path string) (outfit.Selection, string, error) {
 	if path == "" {
 		path = outfit.DefaultFile
+	}
+	if aliased, ok, err := resolveAlias(path); err != nil {
+		return outfit.Selection{}, path, err
+	} else if ok {
+		fmt.Printf("Using alias %q (%s)\n\n", path, aliased)
+		path = aliased
 	}
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		path = filepath.Join(path, outfit.DefaultFile)
@@ -298,7 +344,7 @@ func readOutfit(usage, path string) (outfit.Selection, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) && path == outfit.DefaultFile {
-			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path: %s)", outfit.DefaultFile, usage)
+			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path or an alias: %s; see `outfit alias --list`)", outfit.DefaultFile, usage)
 		}
 		return outfit.Selection{}, path, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -307,6 +353,40 @@ func readOutfit(usage, path string) (outfit.Selection, string, error) {
 		return outfit.Selection{}, path, fmt.Errorf("%s: %w", path, err)
 	}
 	return sel, path, nil
+}
+
+// resolveAlias looks arg up in the alias registry, returning the Outfit it
+// names. It reports ok=false — leaving the caller to treat arg as a path —
+// when arg is not a registered name, or when it also names something on disk.
+//
+// The name-shaped guard is not an optimisation: it means a path-shaped argument
+// never causes a config read at all, so the commands that have nothing to do
+// with outfit's own config (serve, most of all) keep working the same way when
+// that config is absent, unreadable, or someone else's.
+//
+// A path on disk beats a registered alias, which is the opposite of how shell
+// aliases work and deliberate: every existing invocation passes a path, so
+// registering an alias must never change what an already-working command does.
+func resolveAlias(arg string) (string, bool, error) {
+	if !config.NameShaped(arg) {
+		return "", false, nil
+	}
+	f, err := config.Load()
+	if err != nil {
+		return "", false, err
+	}
+	path, ok := f.Alias(arg)
+	if !ok {
+		return "", false, nil
+	}
+	if namesAnOutfit(arg) {
+		fmt.Printf("Note: %q names both a path here and a registered alias; using the path.\n\n", arg)
+		return "", false, nil
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", false, fmt.Errorf("alias %q points at %s, which is gone — re-point it with `outfit alias -n %s <path>`, or drop it with `outfit unalias %s`", arg, path, arg, arg)
+	}
+	return path, true, nil
 }
 
 // cmdApply reads an Outfit file and applies it. The path defaults to ./Outfit
@@ -373,6 +453,172 @@ func cmdUnapply(args []string) error {
 	}
 	sel.Providers = providers
 	return removeSelection(sel, h)
+}
+
+// cmdAlias registers an Outfit under a short name, so it can be used anywhere a
+// path goes: `outfit apply <name>`, `outfit serve <name>`, `outfit harness
+// <name>`. The name defaults to the Outfit's own ALIAS instruction.
+//
+// Note the two senses of "alias", which are related but not the same thing: the
+// ALIAS keyword inside an Outfit names the model to the harness (and to
+// llama-server under `serve`), while an alias in this registry names the Outfit
+// file to outfit. Taking one from the other is a convenience, not an identity —
+// --name/-n decouples them.
+func cmdAlias(args []string) error {
+	fs := flag.NewFlagSet("alias", flag.ContinueOnError)
+	var name string
+	var force, list bool
+	fs.StringVar(&name, "name", "", "register under this name instead of the Outfit's ALIAS")
+	fs.StringVar(&name, "n", "", "name to register under (shorthand)")
+	fs.BoolVar(&force, "force", false, "re-point a name that is already registered")
+	fs.BoolVar(&force, "F", false, "re-point an existing name (shorthand)")
+	fs.BoolVar(&list, "list", false, "list the registered aliases")
+	fs.BoolVar(&list, "l", false, "list the registered aliases (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if list {
+		var b strings.Builder
+		if err := writeAliases(&b, true); err != nil {
+			return err
+		}
+		fmt.Print(b.String())
+		return nil
+	}
+
+	var arg string
+	if rest := fs.Args(); len(rest) > 0 {
+		arg = rest[0]
+	}
+	// Parse the Outfit even when --name is given: registering a file that does
+	// not parse is a mistake worth catching now, not days later under `serve`.
+	sel, path, err := readOutfit("outfit alias [path]", arg)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		name = sel.Alias
+	}
+	if name == "" {
+		return fmt.Errorf("%s has no ALIAS to name it by — pass one with --name/-n (outfit alias -n <name> [path])", path)
+	}
+	if err := config.ValidAliasName(name); err != nil {
+		return err
+	}
+	// Store an absolute path so the alias resolves from any working directory,
+	// and the Outfit file rather than its directory so a relative PRESET still
+	// resolves against the Outfit's own directory under `serve`.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	var previous string
+	if err := config.Update(func(f *config.File) error {
+		if existing, ok := f.Alias(name); ok {
+			if existing == abs {
+				previous = existing
+				return nil
+			}
+			if !force {
+				return fmt.Errorf("alias %q already points at %s; use --force to re-point it", name, existing)
+			}
+			previous = existing
+		}
+		f.SetAlias(name, abs)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	switch {
+	case previous == abs:
+		fmt.Printf("Alias %q already points here (%s).\n", name, abs)
+	case previous != "":
+		fmt.Printf("Re-pointed alias %q to %s (was %s).\n", name, abs, previous)
+	default:
+		fmt.Printf("Added alias %q for %s (stored in %s).\n\n", name, abs, config.Path())
+		fmt.Println("Use it anywhere an Outfit path goes:")
+		fmt.Printf("  outfit apply %s\n", name)
+		fmt.Printf("  outfit serve %s\n", name)
+		fmt.Printf("  outfit harness %s\n", name)
+	}
+	return nil
+}
+
+// cmdUnalias drops a registered alias. The Outfit it pointed at is untouched —
+// only the name goes away.
+func cmdUnalias(args []string) error {
+	fs := flag.NewFlagSet("unalias", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	rest := fs.Args()
+	switch {
+	case len(rest) == 0:
+		return fmt.Errorf("unalias needs an alias name (see `outfit alias --list`)")
+	case len(rest) > 1:
+		return fmt.Errorf("unalias takes a single alias name, got %d", len(rest))
+	}
+	name := rest[0]
+
+	var previous string
+	if err := config.Update(func(f *config.File) error {
+		path, ok := f.Alias(name)
+		if !ok {
+			return fmt.Errorf("unknown alias %q (see `outfit alias --list`)", name)
+		}
+		previous = path
+		f.RemoveAlias(name)
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	fmt.Printf("Removed alias %q (was %s).\n", name, previous)
+	return nil
+}
+
+// writeAliases renders the alias registry into b: every registered name with
+// the Outfit it points at, marking any whose file has since gone. It is shared
+// by `outfit alias --list` and `outfit show`. header controls the heading and
+// the empty-state line, which `show` leaves out — there it is one section among
+// several, and an empty registry is not worth a paragraph.
+func writeAliases(b *strings.Builder, header bool) error {
+	f, err := config.Load()
+	if err != nil {
+		return err
+	}
+	names := f.AliasNames()
+	if len(names) == 0 {
+		if header {
+			b.WriteString("No aliases registered. Add one with `outfit alias` in a directory holding an Outfit.\n")
+		}
+		return nil
+	}
+
+	width := 0
+	for _, name := range names {
+		if len(name) > width {
+			width = len(name)
+		}
+	}
+	if header {
+		fmt.Fprintf(b, "Aliases (from %s):\n\n", config.Path())
+	} else {
+		b.WriteString("\nAliases:\n")
+	}
+	for _, name := range names {
+		path, _ := f.Alias(name)
+		line := fmt.Sprintf("  %-*s  %s", width, name, path)
+		if _, err := os.Stat(path); err != nil {
+			line += " (missing)"
+		}
+		b.WriteString(line + "\n")
+	}
+	return nil
 }
 
 // llamaServerBinary is the llama.cpp server executable that `serve` launches.
@@ -787,15 +1033,34 @@ func cmdHarness(args []string) error {
 		return nil
 	}
 
+	// Take the first positional argument as the Outfit to wear when it names
+	// one — a registered alias, a path, or a directory holding one. Everything
+	// else is forwarded to the harness untouched, so this can only claim an
+	// argument the harness could not have used anyway. An explicit `--` opts
+	// out, for an alias that collides with one of the harness's own
+	// subcommands.
+	rest := fs.Args()
+	if !outfitPath.set && !flagsTerminated(args, rest) && len(rest) > 0 && namesAnOutfitOrAlias(rest[0]) {
+		outfitPath.set, outfitPath.path = true, rest[0]
+		// Reslice rather than rebuild: rest shares its backing array with args,
+		// so appending to it would write over the caller's arguments.
+		rest = rest[1:]
+		// The `--` that separated outfit's Outfit from the harness's own args is
+		// ours to drop; any other `--` belongs to the harness and is forwarded.
+		if len(rest) > 0 && rest[0] == "--" {
+			rest = rest[1:]
+		}
+	}
+
 	if outfitPath.set {
-		if err := applyBeforeLaunch(outfitPath, providers, h, fs.Args()); err != nil {
+		if err := applyBeforeLaunch(outfitPath, providers, h, rest); err != nil {
 			return err
 		}
 	}
 
 	// Launch the harness, forwarding stdio and any trailing args.
 	bin := h.Command()
-	cmd := exec.Command(bin, fs.Args()...)
+	cmd := exec.Command(bin, rest...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -813,14 +1078,49 @@ func cmdHarness(args []string) error {
 	return nil
 }
 
+// flagsTerminated reports whether flag parsing stopped at an explicit bare
+// `--`. The flag package consumes that terminator without reporting it, so the
+// only reliable trace is the last argument it swallowed — scanning args for a
+// `--` before the first non-flag token would misread a detached flag value
+// (`outfit harness -H pi -- run`).
+func flagsTerminated(args, rest []string) bool {
+	n := len(args) - len(rest)
+	return n > 0 && args[n-1] == "--"
+}
+
+// namesAnOutfitOrAlias reports whether arg is a way of naming an Outfit: a path
+// to one (or a directory holding one), or a registered alias. It is the
+// predicate for taking `harness`'s first positional argument as an Outfit
+// rather than forwarding it to the harness.
+//
+// A config that cannot be read is treated as "no aliases" rather than an error:
+// the argument is then forwarded and the harness still launches. Someone who
+// meant an alias gets the real parse error from `outfit apply <name>`, where it
+// is actionable.
+func namesAnOutfitOrAlias(arg string) bool {
+	if namesAnOutfit(arg) {
+		return true
+	}
+	if !config.NameShaped(arg) {
+		return false
+	}
+	f, err := config.Load()
+	if err != nil {
+		return false
+	}
+	_, ok := f.Alias(arg)
+	return ok
+}
+
 // applyBeforeLaunch applies the Outfit named by --outfit/-O to the harness that
 // is about to be launched — exactly the work `outfit apply` does, so one command
 // can dress the harness and then run it. rest is what will be forwarded to the
 // harness, inspected only to catch a path that was meant for the flag.
 func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) error {
-	// The flag's value has to be attached, so `--outfit ./dev/Outfit` would
-	// otherwise apply ./Outfit and quietly hand the path to the harness.
-	if f.path == "" && len(rest) > 0 && namesAnOutfit(rest[0]) {
+	// The flag's value has to be attached, so `--outfit ./dev/Outfit` (or
+	// `--outfit q3`) would otherwise apply ./Outfit and quietly hand the path
+	// or alias to the harness.
+	if f.path == "" && len(rest) > 0 && namesAnOutfitOrAlias(rest[0]) {
 		return fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
 	}
 	sel, path, err := readOutfit("outfit harness --outfit=<file>", f.path)
@@ -839,7 +1139,10 @@ func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, re
 }
 
 // namesAnOutfit reports whether arg points at an Outfit file, or at a directory
-// holding one — the two shapes readOutfit accepts.
+// holding one — the two shapes readOutfit accepts on disk. It is the shared
+// "this string denotes an Outfit here" predicate: it decides whether a path
+// beats a registered alias of the same name, and whether `harness` takes its
+// first positional argument rather than forwarding it.
 func namesAnOutfit(arg string) bool {
 	info, err := os.Stat(arg)
 	if err != nil {
@@ -889,6 +1192,9 @@ func cmdShow(args []string) error {
 
 	if len(states) == 0 {
 		b.WriteString("\nNo providers configured. Add one with `outfit add`.\n")
+		if err := writeAliases(&b, false); err != nil {
+			return err
+		}
 		fmt.Print(b.String())
 		return nil
 	}
@@ -924,6 +1230,9 @@ func cmdShow(args []string) error {
 			}
 			b.WriteString(line + "\n")
 		}
+	}
+	if err := writeAliases(&b, false); err != nil {
+		return err
 	}
 	fmt.Print(b.String())
 	return nil

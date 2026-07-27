@@ -197,6 +197,166 @@ func TestHarness_GetDoesNotApply(t *testing.T) {
 	}
 }
 
+// launchedArgs runs cmdHarness against a stubbed binary and returns what the
+// harness was launched with, plus everything outfit printed on the way.
+func launchedArgs(t *testing.T, args []string) (forwarded, out string) {
+	t.Helper()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	stubHarnessBinary(t, "opencode", argsFile)
+	out = captureStdout(t, func() {
+		if err := cmdHarness(args); err != nil {
+			t.Fatalf("cmdHarness %v: %v", args, err)
+		}
+	})
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("harness was not launched: %v", err)
+	}
+	return strings.TrimSpace(string(got)), out
+}
+
+// aliasFor registers an Outfit selecting model under name, returning the
+// Outfit's path.
+func aliasFor(t *testing.T, name, model string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "Outfit")
+	mustWrite(t, path, "PROVIDER llamacpp\nMODEL "+model+"\n")
+	captureStdout(t, func() {
+		if err := cmdAlias([]string{"-n", name, dir}); err != nil {
+			t.Fatalf("cmdAlias: %v", err)
+		}
+	})
+	return path
+}
+
+// TestHarness_LeadingAliasAppliesThenLaunches checks the shorthand the alias
+// registry exists for: `outfit harness <name> -- <args>` wears the Outfit and
+// hands the harness only its own arguments.
+func TestHarness_LeadingAliasAppliesThenLaunches(t *testing.T) {
+	home := isolateConfig(t)
+	path := aliasFor(t, "q3", "gemma")
+
+	forwarded, out := launchedArgs(t, []string{"q3", "--", "run", "hello"})
+	if !strings.Contains(out, "Applying "+path) {
+		t.Errorf("apply not reported:\n%s", out)
+	}
+	if forwarded != "run\nhello" {
+		t.Errorf("forwarded args = %q, want \"run\\nhello\" (alias and -- consumed)", forwarded)
+	}
+
+	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/gemma" {
+		t.Errorf("the alias was not applied: default model = %v", m["model"])
+	}
+}
+
+// TestHarness_LeadingAliasWithoutDashDash checks that the separator is optional.
+func TestHarness_LeadingAliasWithoutDashDash(t *testing.T) {
+	isolateConfig(t)
+	aliasFor(t, "q3", "gemma")
+
+	if forwarded, _ := launchedArgs(t, []string{"q3", "run"}); forwarded != "run" {
+		t.Errorf("forwarded args = %q, want \"run\"", forwarded)
+	}
+}
+
+// TestHarness_LeadingPositionalIsForwardedWhenNotAnOutfit is the regression
+// guard for the whole feature: an ordinary harness argument must reach the
+// harness untouched, `--` and all.
+func TestHarness_LeadingPositionalIsForwardedWhenNotAnOutfit(t *testing.T) {
+	home := isolateConfig(t)
+
+	forwarded, _ := launchedArgs(t, []string{"run", "--", "--flag"})
+	if forwarded != "run\n--\n--flag" {
+		t.Errorf("forwarded args = %q, want them verbatim", forwarded)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Error("nothing should have been applied")
+	}
+}
+
+// TestHarness_DashDashProtectsAnAliasNamedLikeASubcommand checks the escape
+// hatch for a name that collides with one of the harness's own commands.
+func TestHarness_DashDashProtectsAnAliasNamedLikeASubcommand(t *testing.T) {
+	home := isolateConfig(t)
+	aliasFor(t, "run", "gemma")
+
+	if forwarded, _ := launchedArgs(t, []string{"--", "run"}); forwarded != "run" {
+		t.Errorf("forwarded args = %q, want \"run\"", forwarded)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Error("an explicit -- should have opted out of applying the alias")
+	}
+}
+
+// TestHarness_TerminatorAfterDetachedFlagValue checks that the terminator is
+// still recognised when a flag value precedes it — the case a naive scan for
+// the first non-flag token gets wrong.
+func TestHarness_TerminatorAfterDetachedFlagValue(t *testing.T) {
+	home := isolateConfig(t)
+	aliasFor(t, "run", "gemma")
+
+	if forwarded, _ := launchedArgs(t, []string{"-H", "opencode", "--", "run"}); forwarded != "run" {
+		t.Errorf("forwarded args = %q, want \"run\"", forwarded)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Error("the terminator after a detached flag value was missed")
+	}
+}
+
+// TestHarness_LeadingOutfitPathApplies checks that a path works positionally
+// too, so `harness` reads like apply and serve.
+func TestHarness_LeadingOutfitPathApplies(t *testing.T) {
+	home := isolateConfig(t)
+
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL gemma\n")
+
+	if forwarded, _ := launchedArgs(t, []string{filepath.Join(dir, "Outfit"), "--", "run"}); forwarded != "run" {
+		t.Errorf("forwarded args = %q, want \"run\"", forwarded)
+	}
+	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/gemma" {
+		t.Errorf("the positional Outfit was not applied: default model = %v", m["model"])
+	}
+}
+
+// TestHarness_ExplicitOutfitFlagBeatsLeadingPositional checks that --outfit
+// keeps its meaning: with it, positional args are the harness's again.
+func TestHarness_ExplicitOutfitFlagBeatsLeadingPositional(t *testing.T) {
+	home := isolateConfig(t)
+	aliasFor(t, "q3", "gemma")
+
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL other\n")
+
+	forwarded, _ := launchedArgs(t, []string{"--outfit=" + filepath.Join(dir, "Outfit"), "q3"})
+	if forwarded != "q3" {
+		t.Errorf("forwarded args = %q, want \"q3\"", forwarded)
+	}
+	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/other" {
+		t.Errorf("default model = %v, want llamacpp/other (the flag, not the positional)", m["model"])
+	}
+}
+
+// TestHarness_DetachedAliasIsCaught checks that a detached alias is treated like
+// a detached path: a typo to point out, not an Outfit to guess at.
+func TestHarness_DetachedAliasIsCaught(t *testing.T) {
+	isolateConfig(t)
+	aliasFor(t, "q3", "gemma")
+
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL other\n")
+	t.Chdir(dir)
+
+	err := cmdHarness([]string{"-O", "q3"})
+	if err == nil || !strings.Contains(err.Error(), "--outfit=q3") {
+		t.Errorf("expected the detached-value hint, got %v", err)
+	}
+}
+
 func TestCmdShow(t *testing.T) {
 	isolateConfig(t)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")

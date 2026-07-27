@@ -47,6 +47,10 @@ brews:
     commit_author:
       name: goreleaser-bot
       email: bot@goreleaser.com
+    # Install the bash completion the binary prints, so `brew install` wires
+    # TAB up with no extra step. Only bash is supported, so ask for just that.
+    extra_install: |
+      generate_completions_from_executable(bin/"outfit", "completion", shells: [:bash])
     test: |
       system "#{bin}/outfit", "--help"
 
