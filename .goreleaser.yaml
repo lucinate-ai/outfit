@@ -47,6 +47,10 @@ brews:
     commit_author:
       name: goreleaser-bot
       email: bot@goreleaser.com
+    # Install the completions the binary prints, so `brew install` wires TAB up
+    # with no extra step. (PowerShell is supported too, but not by Homebrew.)
+    extra_install: |
+      generate_completions_from_executable(bin/"outfit", "completion", shells: [:bash, :zsh])
     test: |
       system "#{bin}/outfit", "--help"
 

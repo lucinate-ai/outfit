@@ -71,6 +71,22 @@ func TestRunDispatch(t *testing.T) {
 	if err := run([]string{"bogus"}); err == nil {
 		t.Error("unknown command should error")
 	}
+
+	// The alias commands are routed, not swallowed by the default case. Only
+	// unalias is exercised: a bare `alias` would try to register whatever
+	// ./Outfit this test happens to run beside, and this test has no sandbox.
+	if err := run([]string{"unalias"}); err == nil {
+		t.Error("unalias with no name should error")
+	} else if strings.Contains(err.Error(), "unknown command") {
+		t.Errorf("unalias is not dispatched: %v", err)
+	}
+
+	// The completion helper is dispatched and, whatever it is asked, succeeds.
+	captureStdout(t, func() {
+		if err := run([]string{"__complete", ""}); err != nil {
+			t.Errorf("__complete should never error, got %v", err)
+		}
+	})
 }
 
 func TestVersionFlag(t *testing.T) {

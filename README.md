@@ -149,15 +149,21 @@ outfit add    --provider <name> [--model-family <family>] [--model <id>] [--alia
 outfit remove --provider <name> [--model-family <family>] [--model <id>]
 outfit apply  [path] [--output <size>]   # apply an Outfit file or directory (default ./Outfit)
 outfit unapply [path]                    # remove what an Outfit file selects
+outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
+outfit unalias <name>                    # drop a registered name
 outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
 outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit
-outfit harness [-H <name>] [--outfit[=<path>]] [args...]
-                                         # launch the harness (--outfit applies one first;
-                                         #   --get shows it; --set stores the default)
+outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
+                                         # launch the harness (a leading Outfit or alias is
+                                         #   applied first; --get shows it; --set stores it)
+outfit completion <shell>                # tab completion (bash, zsh, powershell)
 ```
 
-Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit).
+Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
+
+Anywhere a `[path]` appears above you can put a name registered with
+[`outfit alias`](#aliases) instead.
 
 ## Harnesses
 
@@ -176,6 +182,7 @@ outfit harness -H pi       # launch a specific harness, ignoring the default
 
 outfit harness -O          # apply ./Outfit, then launch the harness
 outfit harness --outfit=path/to/Outfit   # ...applying a specific one first
+outfit harness qwen3.6-27b # ...or name one positionally (see Aliases)
 
 outfit show                # what the active harness has configured
 outfit show --harness pi   # ...for a specific harness, without changing the default
@@ -225,6 +232,60 @@ outfit export > Outfit    # capture your current setup as an Outfit
 An `Outfit` describes one provider selection and applies exactly like the
 equivalent `add`. Full syntax is in [`docs/outfit-file.md`](docs/outfit-file.md),
 and ready-to-use examples live under [`examples/`](examples/).
+
+## Aliases
+
+Keeping a directory per model soon means typing a path per command. Name one
+once with `outfit alias` and the name works wherever a path does:
+
+```sh
+$ ls
+Outfit   preset.ini
+
+$ head -2 Outfit
+ALIAS    qwen3.6-27b
+CONTEXT  128k
+
+$ outfit alias
+Added alias "qwen3.6-27b" for /home/me/models/qwen3.6/Outfit …
+
+$ outfit apply   qwen3.6-27b      # from anywhere, no path needed
+$ outfit serve   qwen3.6-27b
+$ outfit harness qwen3.6-27b -- --some-agent-arg
+```
+
+The name defaults to the `Outfit`'s own `ALIAS`; `--name`/`-n` picks a different
+one, and is required when the file has no `ALIAS` to borrow — `outfit` never
+invents a name you didn't write. `--force`/`-F` re-points a name you have
+already used.
+
+```sh
+outfit alias --list          # every name, its Outfit, and whether it still exists
+outfit show                  # ...alongside what the harness has configured
+outfit unalias qwen3.6-27b   # drop the name (the Outfit file is left alone)
+```
+
+A path on disk always wins over a registered name, so adding an alias can never
+change what an already-working command does. Under `outfit harness`, only a
+*leading* argument is read as an Outfit and everything after it goes to the
+agent — put `--` between the two, and start with `--` to opt out entirely if a
+name of yours collides with one of the agent's own subcommands.
+
+The registry lives in `outfit`'s own config
+(`${XDG_CONFIG_HOME:-~/.config}/outfit/config.json`), not in any `Outfit`, so
+your `Outfit` files stay as portable and committable as they were.
+
+### Tab completion
+
+```sh
+source <(outfit completion bash)   # add to ~/.bashrc
+source <(outfit completion zsh)    # or ~/.zshrc (needs compinit)
+outfit completion powershell | Out-String | Invoke-Expression   # or $PROFILE
+```
+
+TAB then completes commands, flags, providers, harnesses, and your registered
+aliases — `outfit unalias <TAB>` offers exactly the names you have. Homebrew
+installs the bash and zsh completions for you.
 
 ## Serving a local model
 

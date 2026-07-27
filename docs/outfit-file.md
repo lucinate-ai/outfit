@@ -51,7 +51,39 @@ outfit harness --outfit=path/to/dir      # ...or a directory holding an Outfit
 
 Given bare, `--outfit` defaults to `./Outfit` like `apply` does; when you name a
 path, attach it to the flag, because anything positional is forwarded to the
-agent (`outfit harness -O run --model x` passes `run --model x` on).
+agent (`outfit harness -O run --model x` passes `run --model x` on). The one
+exception is a *leading* argument that names an Outfit — a path, a directory
+holding one, or a registered name — which is applied rather than forwarded.
+
+## Naming an Outfit
+
+`outfit alias` registers an `Outfit` under a short name, and every command above
+takes that name where it takes a path:
+
+```sh
+outfit alias                 # register ./Outfit under its own ALIAS
+outfit alias path/to/dir     # ...or the Outfit in another directory
+outfit alias -n big .        # ...under a name of your choosing
+outfit alias --list          # what is registered, and whether it still exists
+outfit unalias big           # drop the name; the Outfit file is untouched
+
+outfit apply big
+outfit serve big
+outfit harness big -- --agent-arg
+```
+
+Two senses of "alias" meet here, and they are not the same thing. The `ALIAS`
+**instruction** below names the *model* — it is the key your agent shows, and
+`llama-server --alias` under `serve`. A registered **alias** names the *Outfit
+file* to `outfit`. `outfit alias` defaults the second to the first because you
+have usually already written a good name; `--name`/`-n` separates them, and is
+required when an `Outfit` states no `ALIAS` at all.
+
+A real path always beats a registered name, so registering one cannot change a
+command that already worked. Names are stored, with absolute paths, in
+`outfit`'s own config (`${XDG_CONFIG_HOME:-~/.config}/outfit/config.json`) —
+they are yours and this machine's, never part of an `Outfit`, so a committed
+`Outfit` stays portable.
 
 To undo it again, `outfit unapply` (same default path and arguments) removes
 what the Outfit selects from the active harness's config — the inverse of

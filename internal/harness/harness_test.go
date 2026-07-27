@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/lucinate-ai/outfit/internal/config"
 )
 
 func TestCommand(t *testing.T) {
@@ -89,6 +91,36 @@ func TestPreferenceRoundTrip(t *testing.T) {
 	// Saving an unknown harness is rejected.
 	if err := SavePreference("bogus"); err == nil {
 		t.Error("expected error saving an unknown harness")
+	}
+}
+
+// TestSavePreferenceKeepsAliases guards the reason the config file moved into
+// internal/config: storing the harness rewrites the document, so it must not
+// take the alias registry with it.
+func TestSavePreferenceKeepsAliases(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	if err := config.Update(func(f *config.File) error {
+		f.SetAlias("qwen3.6-27b", "/models/qwen/Outfit")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SavePreference("pi"); err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.Alias("qwen3.6-27b"); !ok {
+		t.Error("SavePreference dropped the alias registry")
+	}
+	if f.Harness != "pi" {
+		t.Errorf("Harness = %q, want pi", f.Harness)
 	}
 }
 
