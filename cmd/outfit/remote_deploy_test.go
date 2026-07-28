@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
@@ -331,6 +332,79 @@ func TestRunnerFor(t *testing.T) {
 	for _, provider := range []string{"openai-compatible", "ollama", "openrouter", ""} {
 		if _, err := runnerFor(provider); err == nil {
 			t.Errorf("runnerFor(%q) should error", provider)
+		}
+	}
+}
+
+// A cold start blocks in one request for minutes, so the command must say what
+// it is doing rather than sit silent — and must say it on stderr, so piping the
+// exports still works.
+func TestRemoteStart_ReportsProgressWhileWaiting(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(120 * time.Millisecond) // stand in for a cold start
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	stderr := captureStderr(t, func() {
+		if err := cmdRemoteStart(nil); err != nil {
+			t.Errorf("cmdRemoteStart: %v", err)
+		}
+	})
+
+	if !strings.Contains(stderr, "Starting the endpoint") {
+		t.Errorf("no opening explanation on stderr, got:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "ready after") {
+		t.Errorf("no completion line on stderr, got:\n%s", stderr)
+	}
+}
+
+func TestStartProgress_HeartbeatsAndStops(t *testing.T) {
+	stderr := captureStderr(t, func() {
+		p := newStartProgress(10 * time.Millisecond)
+		time.Sleep(60 * time.Millisecond)
+		p.close()
+		time.Sleep(40 * time.Millisecond)
+	})
+	if !strings.Contains(stderr, "still starting") {
+		t.Errorf("expected a heartbeat while waiting, got:\n%s", stderr)
+	}
+	// Closing must stop it: 40ms of 10ms ticks after close would add ~4 more.
+	if got := strings.Count(stderr, "still starting"); got > 8 {
+		t.Errorf("heartbeat kept running after close (%d lines):\n%s", got, stderr)
+	}
+}
+
+// Progress must not land on stdout, or `outfit remote start | grep '^export '`
+// would pick it up.
+func TestRemoteStart_StdoutCarriesOnlyTheResult(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteStart(nil); err != nil {
+			t.Errorf("cmdRemoteStart: %v", err)
+		}
+	})
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stdout should be exactly the two exports, got:\n%s", out)
+	}
+	for i, want := range []string{"export OPENAI_BASE_URL=", "export OPENAI_API_KEY="} {
+		if !strings.HasPrefix(lines[i], want) {
+			t.Errorf("stdout line %d = %q, want it to start with %q", i, lines[i], want)
 		}
 	}
 }

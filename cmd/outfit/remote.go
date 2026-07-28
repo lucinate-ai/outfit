@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/contextsize"
@@ -107,6 +108,54 @@ func outfitArg(fs *flag.FlagSet) string {
 	return ""
 }
 
+// heartbeatEvery is how often a start that is still waiting says so. The start
+// endpoint blocks until the model is serving, which on a cold start is minutes,
+// so without this the command looks hung.
+const heartbeatEvery = 30 * time.Second
+
+// startProgress reports what a slow start is doing. Everything it writes goes
+// to stderr, so `outfit remote start | grep '^export '` still yields just the
+// exports while the user watching the terminal still sees progress.
+type startProgress struct {
+	mu    sync.Mutex
+	since time.Time
+	done  chan struct{}
+	stop  sync.Once
+}
+
+func newStartProgress(every time.Duration) *startProgress {
+	p := &startProgress{since: time.Now(), done: make(chan struct{})}
+	go func() {
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-p.done:
+				return
+			case <-ticker.C:
+				p.line(fmt.Sprintf("still starting (%s elapsed)", p.elapsed()))
+			}
+		}
+	}()
+	return p
+}
+
+func (p *startProgress) elapsed() time.Duration {
+	return time.Since(p.since).Round(time.Second)
+}
+
+// line prints one progress line. Serialised, so a heartbeat landing at the same
+// moment as a retry notice cannot interleave with it.
+func (p *startProgress) line(msg string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fmt.Fprintln(os.Stderr, msg)
+}
+
+func (p *startProgress) close() {
+	p.stop.Do(func() { close(p.done) })
+}
+
 func cmdRemoteStart(args []string) error {
 	fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
 	var timeout time.Duration
@@ -119,15 +168,21 @@ func cmdRemoteStart(args []string) error {
 		return err
 	}
 
+	progress := newStartProgress(heartbeatEvery)
+	defer progress.close()
+	progress.line(fmt.Sprintf(
+		"Starting the endpoint. It boots, fetches the weights, and loads them into the GPU,\nwhich takes several minutes from cold; waiting up to %s.", timeout))
+
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	resp, err := remote.Start(ctx, cfg, func(msg string) { fmt.Println(msg) })
+	resp, err := remote.Start(ctx, cfg, progress.line)
 	if err != nil {
 		return err
 	}
+	progress.close()
+	progress.line(fmt.Sprintf("ready after %s", progress.elapsed()))
 
-	fmt.Println("ready")
-	fmt.Println()
+	// stdout carries only the result, so `eval "$(outfit remote start)"` works.
 	fmt.Printf("export OPENAI_BASE_URL=%s\n", resp.BaseURL)
 	fmt.Printf("export OPENAI_API_KEY=%s\n", resp.APIKey)
 	return nil

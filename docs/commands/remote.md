@@ -6,7 +6,7 @@ while you're using it.
 
 ```sh
 outfit remote deploy   # tell the endpoint what to serve
-outfit remote start    # boot it; prints the exports your agent needs
+outfit remote start    # boot it; prints the exports your agent needs (progress on stderr)
 outfit remote status   # is it up? is it healthy?
 outfit remote stop     # shut it down now, rather than waiting for the idle timer
 ```
@@ -19,10 +19,8 @@ it.
 ## The usual flow
 
 ```sh
-outfit remote start                    # ~10 min from cold, then prints:
-                                       #   export OPENAI_BASE_URL=...
-                                       #   export OPENAI_API_KEY=...
-eval "$(outfit remote start | grep '^export ')"
+eval "$(outfit remote start)"           # boots it (~10 min from cold) and sets
+                                       # OPENAI_BASE_URL and OPENAI_API_KEY
 outfit apply                           # point your agent at it
 outfit harness                         # work
 outfit remote stop                     # done
