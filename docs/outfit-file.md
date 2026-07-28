@@ -42,25 +42,31 @@ Every command that takes an Outfit path defaults to `./Outfit` in the current
 directory, accepts a directory that holds one, and takes a
 [registered alias](commands/alias.md) in place of a path.
 
-## Controlling a remote inference instance
+## Running the model on a cloud GPU
 
-An Outfit can name the config for a scale-to-zero cloud GPU endpoint (see the
-`cloud-vm-llm` repo) with `REMOTE`:
+For a model too big for your machine, `REMOTE` names the config of a
+scale-to-zero GPU endpoint — one that runs only while you're using it:
 
 ```dockerfile
 # Outfit
-PROVIDER openai-compatible
-MODEL    Qwen/Qwen3.6-27B-FP8
-REMOTE   remote.json
+PROVIDER llamacpp        # the engine to run there, as it would run here
+ALIAS    qwen3.6-27b
+CONTEXT  131072
+PRESET   ./preset.ini
+REMOTE   ./remote.json
 ```
 
-`outfit remote start|stop|status|deploy` then reads the named file — resolved
-relative to the Outfit, like `PRESET` — so a project can carry its own remote
-config instead of relying on the per-user
+[`outfit remote`](commands/remote.md) then reads the named file — resolved
+relative to the Outfit, like `PRESET` — so a project can carry its own endpoint
+instead of relying on the per-user
 `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json`. With no path argument the
 commands consult `./Outfit` when it exists and fall back to the per-user file;
 an explicit path (`outfit remote status path/to/Outfit`) requires the Outfit
 to carry a `REMOTE` instruction.
+
+Because `PROVIDER` names the engine, this is the same file that would run the
+model locally with [`outfit serve`](commands/serve.md) — pointed at a bigger
+machine.
 
 ## Syntax
 
