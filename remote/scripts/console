@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# Opens an interactive shell on the running cloud-vm-llm instance via SSM
+# Session Manager — no SSH and no extra open port, over the same SSM channel
+# the health and idle checks already use. Run it under your AWS creds:
+#
+#   aws-vault exec outofcoffee -- pnpm console
+#
+# Pass an instance id to target one explicitly; otherwise it finds the running
+# managed instance by tag. Once connected, handy commands:
+#   sudo journalctl -u vllm -f      # tail the vLLM logs
+#   nvidia-smi                      # GPU state
+#   systemctl status vllm           # service state
+
+set -euo pipefail
+
+# Not AWS_REGION — the aws-vault profile may default it elsewhere than the
+# stacks are deployed to. Override with CLOUD_VM_LLM_REGION if needed.
+readonly REGION="${CLOUD_VM_LLM_REGION:-us-east-1}"
+
+if ! command -v session-manager-plugin >/dev/null 2>&1; then
+  echo "Error: session-manager-plugin is not installed (required by 'aws ssm start-session')." >&2
+  echo "  macOS:  brew install --cask session-manager-plugin" >&2
+  echo "  docs:   https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html" >&2
+  exit 1
+fi
+
+instance_id="${1:-}"
+if [[ -z "${instance_id}" ]]; then
+  instance_id="$(aws ec2 describe-instances --region "${REGION}" \
+    --filters Name=tag:cloud-vm-llm,Values=endpoint Name=instance-state-name,Values=running \
+    --query "Reservations[0].Instances[0].InstanceId" --output text)"
+fi
+
+if [[ -z "${instance_id}" || "${instance_id}" == "None" ]]; then
+  echo "Error: no running cloud-vm-llm instance found in ${REGION}." >&2
+  echo "Start it first (e.g. 'outfit remote start'), then retry." >&2
+  exit 1
+fi
+
+echo "Connecting to ${instance_id} (${REGION}) via SSM Session Manager..." >&2
+echo "Tip: 'sudo journalctl -u vllm -f' tails the vLLM logs; Ctrl-D to exit." >&2
+exec aws ssm start-session --region "${REGION}" --target "${instance_id}"

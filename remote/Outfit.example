@@ -1,0 +1,28 @@
+# Remote Qwen endpoint deployed by this directory.
+#
+# The concrete `Outfit` and `remote.json` are generated from the CDK stack
+# outputs by `pnpm write-config` (run for you by `pnpm deploy`) — edit this
+# template, not the generated files. Then, from this directory:
+#   outfit remote deploy  # tell the endpoint what to serve (this file + preset)
+#   outfit remote start   # boot the instance; prints the OPENAI_API_KEY export
+#   outfit apply          # point your coding agent at the endpoint (uses BASEURL)
+#   outfit remote stop    # stop now instead of waiting for the idle timer
+#
+# PROVIDER names the inference engine, so this file is what chooses llama.cpp
+# over vLLM: `outfit remote deploy` asks the cloud for that engine, and the same
+# file runs it locally under `outfit serve`. To cut back to vLLM, set PROVIDER
+# to vllm, drop PRESET, and set MODEL to the FP8 repo (Qwen/Qwen3.6-27B-FP8).
+# Either way the deploy Lambda seeds the weights into S3 if they are not there.
+#
+# ALIAS is both the name your coding agent asks for and the name the server is
+# started under (llama-server's --alias), so the two cannot drift apart.
+#
+# The endpoint is a stable Elastic IP, so BASEURL is static config here rather
+# than something fetched at runtime. remote.json carries the Lambda URLs that
+# `outfit remote` drives.
+PROVIDER llamacpp
+ALIAS    qwen3.6-27b
+CONTEXT  131072
+BASEURL  __BASEURL__
+PRESET   ./preset.ini
+REMOTE   remote.json

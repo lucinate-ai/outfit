@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# Triggers an EC2 Image Builder bake of a runner's AMI. Usage:
+#
+#   aws-vault exec outofcoffee -- pnpm bake <vllm|llamacpp>
+#
+# The image stack (pnpm deploy:image) only defines the pipelines; this starts a
+# build. Builds are asynchronous and take ~20-40 min — this returns as soon as
+# the build is queued, printing how to check on it. A failed build leaves the
+# stack and the previous AMI untouched.
+
+set -euo pipefail
+
+# Not AWS_REGION — the aws-vault profile may default it to a different region
+# than the stacks are deployed to. Override with CLOUD_VM_LLM_REGION if needed.
+readonly REGION="${CLOUD_VM_LLM_REGION:-us-east-1}"
+
+readonly RUNNER="${1:-}"
+case "${RUNNER}" in
+  vllm | llamacpp) ;;
+  *)
+    echo "usage: pnpm bake <vllm|llamacpp>" >&2
+    exit 2
+    ;;
+esac
+
+readonly PIPELINE_NAME="cloud-vm-llm-image-${RUNNER}-pipeline"
+
+pipeline_arn="$(aws imagebuilder list-image-pipelines --region "${REGION}" \
+  --query "imagePipelineList[?name=='${PIPELINE_NAME}'].arn | [0]" --output text)"
+
+if [[ -z "${pipeline_arn}" || "${pipeline_arn}" == "None" ]]; then
+  echo "Error: pipeline '${PIPELINE_NAME}' not found in ${REGION}." >&2
+  echo "Run 'pnpm deploy:image' first (or set CLOUD_VM_LLM_REGION)." >&2
+  exit 1
+fi
+
+build_arn="$(aws imagebuilder start-image-pipeline-execution --region "${REGION}" \
+  --image-pipeline-arn "${pipeline_arn}" --query imageBuildVersionArn --output text)"
+
+echo "Bake started (${RUNNER}): ${build_arn}"
+echo
+echo "Check progress (BUILDING -> ... -> AVAILABLE, ~20-40 min):"
+echo "  aws imagebuilder get-image --region ${REGION} \\"
+echo "    --image-build-version-arn ${build_arn} --query 'image.state' --output json"
+echo
+echo "The runtime start Lambda picks up the new AMI automatically once it is"
+echo "AVAILABLE — no runtime redeploy needed."

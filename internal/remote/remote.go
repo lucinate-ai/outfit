@@ -1,5 +1,5 @@
-// Package remote controls the scale-to-zero GPU inference instance defined in
-// the cloud-vm-llm repo, by calling its start/stop Lambdas through their
+// Package remote controls the scale-to-zero GPU inference instance defined by
+// this repository's remote/ subproject, by calling its Lambdas through their
 // Function URLs. The URLs use IAM auth, so every request is SigV4-signed
 // (service "lambda") with the caller's AWS credentials.
 package remote
@@ -29,8 +29,8 @@ import (
 var httpClient = &http.Client{Timeout: 10 * time.Minute}
 
 // Config holds the connection details for the remote instance's control
-// Lambdas: the cloud-vm-llm stack prints it as the OutfitRemoteConfig output,
-// ready to paste into the config file.
+// Lambdas: deploying remote/ prints it as the OutfitRemoteConfig output, ready
+// to paste into the config file.
 type Config struct {
 	StartURL string `json:"start_url"`
 	StopURL  string `json:"stop_url"`
@@ -79,7 +79,7 @@ func LoadConfigFile(path string, getenv func(string) string) (Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Config{}, fmt.Errorf(
-				"remote config %s does not exist: paste the OutfitRemoteConfig output of the cloud-vm-llm stack there",
+				"remote config %s does not exist: paste the OutfitRemoteConfig output of the remote/ deployment there",
 				path)
 		}
 		return Config{}, err
@@ -108,7 +108,7 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	}
 	if cfg.StartURL == "" || cfg.StopURL == "" {
 		return Config{}, fmt.Errorf(
-			"remote is not configured: paste the OutfitRemoteConfig output of the cloud-vm-llm stack into %s",
+			"remote is not configured: paste the OutfitRemoteConfig output of the remote/ deployment into %s",
 			source)
 	}
 	if cfg.Region == "" {
@@ -180,7 +180,7 @@ type DeployConfig struct {
 func Deploy(ctx context.Context, cfg Config, dc DeployConfig) (*Response, error) {
 	if cfg.DeployURL == "" {
 		return nil, fmt.Errorf(
-			"no deploy_url configured: add the cloud-vm-llm stack's DeployUrl output to the remote config (or set OUTFIT_REMOTE_DEPLOY_URL)")
+			"no deploy_url configured: add the remote/ deployment's DeployUrl output to the remote config (or set OUTFIT_REMOTE_DEPLOY_URL)")
 	}
 	body, err := json.Marshal(dc)
 	if err != nil {

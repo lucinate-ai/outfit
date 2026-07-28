@@ -11,10 +11,9 @@ outfit remote status   # is it up? is it healthy?
 outfit remote stop     # shut it down now, rather than waiting for the idle timer
 ```
 
-The endpoint is the one the companion [`cloud-vm-llm`](https://github.com/lucinate-ai/cloud-vm-llm)
-project deploys: a GPU instance that exists only while you're using it, and
-terminates itself once you stop. `outfit remote` drives it; it doesn't create
-it.
+The endpoint is the one [`remote/`](../../remote/) in this repository deploys: a
+GPU instance that exists only while you're using it, and terminates itself once
+you stop. `outfit remote` drives it; it doesn't create it.
 
 ## The usual flow
 

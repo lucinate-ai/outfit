@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Writes the current machine's public IP to the repo's .env file as
+# ALLOWED_CIDR=<ip>/32. The CDK app reads this when the allowedCidr context
+# value is not passed on the command line.
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly REPO_ROOT
+readonly ENV_FILE="${REPO_ROOT}/.env"
+
+#######################################
+# Fetch the machine's public IPv4 address.
+# Outputs:
+#   Writes the address to stdout.
+# Returns:
+#   0 on success, 1 when no service answered with an IPv4 address.
+#######################################
+fetch_ip() {
+  local service ip
+  for service in 'https://checkip.amazonaws.com' 'https://ifconfig.me'; do
+    ip="$(curl -fsS --max-time 10 "${service}" 2>/dev/null || true)"
+    ip="${ip//[[:space:]]/}"
+    if [[ "${ip}" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+      echo "${ip}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+main() {
+  local ip
+  if ! ip="$(fetch_ip)"; then
+    echo "Error: could not determine the public IP address" >&2
+    exit 1
+  fi
+
+  local cidr="${ip}/32"
+  if [[ -f "${ENV_FILE}" ]] && grep -q '^ALLOWED_CIDR=' "${ENV_FILE}"; then
+    local tmp
+    tmp="$(mktemp)"
+    sed "s|^ALLOWED_CIDR=.*|ALLOWED_CIDR=${cidr}|" "${ENV_FILE}" > "${tmp}"
+    mv "${tmp}" "${ENV_FILE}"
+  else
+    echo "ALLOWED_CIDR=${cidr}" >> "${ENV_FILE}"
+  fi
+  echo "Wrote ALLOWED_CIDR=${cidr} to ${ENV_FILE}"
+}
+
+main "$@"

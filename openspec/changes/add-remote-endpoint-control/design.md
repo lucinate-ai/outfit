@@ -6,7 +6,7 @@ endpoint breaks both properties — it makes network calls and it authenticates 
 so the main design pressure is keeping that blast radius small enough that the
 rest of the tool is unaffected.
 
-The endpoint itself is the companion `cloud-vm-llm` project: a scale-to-zero
+The endpoint itself is this repository's `remote/` subproject: a scale-to-zero
 GPU instance fronted by control Lambdas. It is scale-to-zero precisely because
 a GPU costs money by the hour, which is why starting and stopping are
 first-class commands rather than something the user is trusted to remember.

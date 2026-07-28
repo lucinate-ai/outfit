@@ -18,6 +18,12 @@ jobs:
           # changelog, matching the real release.
           fetch-depth: 0
 
+      # This repository is public, so a committed account id, ARN, endpoint
+      # host, address or resource id would be a disclosure. Checked before
+      # anything else so it fails fast.
+      - name: No cloud identifiers
+        run: scripts/check-no-cloud-identifiers.sh
+
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -37,6 +43,26 @@ jobs:
 
       - name: Test
         run: go test ./... -race -cover
+
+      # remote/ is a TypeScript CDK subproject — the deployment `outfit remote`
+      # drives — so its own checks run here rather than rotting untested.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: remote/pnpm-lock.yaml
+      - name: Remote deployment — install
+        run: pnpm install --frozen-lockfile
+        working-directory: remote
+      - name: Remote deployment — typecheck
+        run: pnpm build
+        working-directory: remote
+      - name: Remote deployment — test
+        run: pnpm test
+        working-directory: remote
 
       # Exercise the full release pipeline without publishing: --snapshot
       # builds every target (and the Homebrew formula) but skips tagging and
