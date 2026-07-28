@@ -17,136 +17,30 @@ BASEURL  https://gateway/v1         # optional; API base URL override
 PRESET   ./preset.ini               # optional; llama.cpp preset for `outfit serve`
 ```
 
-Applying it is the same as running the equivalent `outfit add`, so everything
-you already have in your coding agent's config is preserved.
+Applying it is the same as running the equivalent
+[`outfit add`](commands/add.md), so everything you already have in your coding
+agent's config is preserved.
 
-The **harness** (opencode or Pi) is deliberately *not* part of an Outfit — so the
-same file applies to either. Choose the harness when you apply it, with
-`--harness`/`-H`, the `OUTFIT_HARNESS` env var, or a stored default (`outfit
-harness --set`).
+The **harness** (opencode or Pi) is deliberately *not* part of an Outfit — so
+the same file applies to either. Choose the harness when you apply it, with
+`--harness`/`-H`, the `OUTFIT_HARNESS` env var, or a stored default
+(`outfit harness --set`).
 
-## Applying an Outfit
+## Using an Outfit
 
-```sh
-outfit apply                 # reads ./Outfit in the current directory
-outfit apply path/to/Outfit  # a full path to the file
-outfit apply path/to/dir     # a directory holding an Outfit
-```
+One file, several commands:
 
-Run `outfit apply` with no arguments and it looks for a file named `Outfit`
-in the current directory. Point it at any path to apply a different file, or at
-a directory that holds an `Outfit` and it reads the file inside. Add
-`--harness pi` (or set `OUTFIT_HARNESS`) to apply it to Pi instead of opencode.
+- [`outfit apply`](commands/apply.md) — apply the selection to your agent
+- [`outfit unapply`](commands/unapply.md) — take it back out
+- [`outfit harness -O`](commands/harness.md) — apply it, then launch the agent
+- [`outfit serve`](commands/serve.md) — run `llama-server` for the model it
+  names
+- [`outfit alias`](commands/alias.md) — register it under a short name
+- [`outfit export`](commands/export.md) — write one from your current setup
 
-After applying, just run your coding agent (`opencode`, or `pi`).
-
-Or do both at once — `outfit harness` takes the same Outfit, as `--outfit`/`-O`,
-and applies it before launching the agent:
-
-```sh
-outfit harness -O                        # apply ./Outfit, then launch
-outfit harness --outfit=path/to/Outfit   # ...or a specific one
-outfit harness --outfit=path/to/dir      # ...or a directory holding an Outfit
-```
-
-Given bare, `--outfit` defaults to `./Outfit` like `apply` does; when you name a
-path, attach it to the flag, because anything positional is forwarded to the
-agent (`outfit harness -O run --model x` passes `run --model x` on). The one
-exception is a *leading* argument that names an Outfit — a path, a directory
-holding one, or a registered name — which is applied rather than forwarded.
-
-## Naming an Outfit
-
-`outfit alias` registers an `Outfit` under a short name, and every command above
-takes that name where it takes a path:
-
-```sh
-outfit alias                 # register ./Outfit under its own ALIAS
-outfit alias path/to/dir     # ...or the Outfit in another directory
-outfit alias -n big .        # ...under a name of your choosing
-outfit alias --list          # what is registered, and whether it still exists
-outfit unalias big           # drop the name; the Outfit file is untouched
-
-outfit apply big
-outfit serve big
-outfit harness big -- --agent-arg
-```
-
-Two senses of "alias" meet here, and they are not the same thing. The `ALIAS`
-**instruction** below names the *model* — it is the key your agent shows, and
-`llama-server --alias` under `serve`. A registered **alias** names the *Outfit
-file* to `outfit`. `outfit alias` defaults the second to the first because you
-have usually already written a good name; `--name`/`-n` separates them, and is
-required when an `Outfit` states no `ALIAS` at all.
-
-A real path always beats a registered name, so registering one cannot change a
-command that already worked. Names are stored, with absolute paths, in
-`outfit`'s own config (`${XDG_CONFIG_HOME:-~/.config}/outfit/config.json`) —
-they are yours and this machine's, never part of an `Outfit`, so a committed
-`Outfit` stays portable.
-
-To undo it again, `outfit unapply` (same default path and arguments) removes
-what the Outfit selects from the active harness's config — the inverse of
-`apply`, just as `remove` is to `add`. It honours `--harness`/`-H` and
-`OUTFIT_HARNESS` too, so unapply from whichever harness you applied to.
-
-## Serving a llama.cpp model
-
-`outfit serve` launches `llama-server` for an Outfit, so the same file that
-points opencode at a model can also start it. It works two ways.
-
-```sh
-outfit serve              # reads ./Outfit and runs llama-server
-outfit serve path/to/Outfit
-outfit serve --dry-run    # print the command without launching the server
-```
-
-It prints the command before running it, and does not touch your opencode
-config — pair it with `outfit apply` to point opencode at the server.
-
-### Simple case — straight from the Outfit
-
-With no `PRESET`, `serve` builds the command from the Outfit itself:
-
-```dockerfile
-PROVIDER llamacpp
-MODEL    unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL   # an HF repo, or a .gguf path
-ALIAS    qwen3.6                                    # llama-server --alias
-CONTEXT  32768                                      # llama-server --ctx-size
-BASEURL  http://127.0.0.1:8080/v1                   # llama-server --host/--port
-```
-
-`MODEL` becomes `-hf` (a Hugging Face repo) or `-m` (anything that looks like a
-path or ends in `.gguf`); `ALIAS`, `CONTEXT`, and `BASEURL` fill in the rest.
-
-### Full control — a llama.cpp preset
-
-For flags an Outfit doesn't model — `-ngl`, `--jinja`, KV-cache types, draft
-models — point at a llama.cpp
-[preset `.ini`](https://github.com/ggml-org/llama.cpp/blob/master/docs/preset.md):
-a set of `llama-server` flags grouped under named `[model]` sections, with a
-`[*]` section for shared defaults. Presets are built for the server's router
-(multi-model) mode, so there's no clean way to launch a single model from one —
-which is exactly what `serve` does.
-
-```dockerfile
-PROVIDER llamacpp
-ALIAS    qwen3.6-35b-a3b   # selects the preset's [qwen3.6-35b-a3b] section
-PRESET   ./preset.ini
-```
-
-`serve` flattens the `[*]` defaults and the matching section into explicit
-`llama-server` flags, the section winning over the defaults. Anything the
-**Outfit** also states wins over both,
-so you can keep a shared preset and tweak one field per project: `CONTEXT`
-overrides the section's `ctx-size`, `BASEURL` its `host`/`port`, `ALIAS` its
-`alias`, and `MODEL` its `hf`/`model`. Keys map straight to flags — `ctx-size =
-262144` becomes `--ctx-size 262144`, `hf` becomes `--hf-repo`, and boolean
-toggles like `mmap = 1` become a bare `--mmap`. Which section runs:
-
-- `ALIAS` names the section.
-- With no `ALIAS`, a preset holding exactly one section serves that one.
-- Several sections and no `ALIAS` is an error — name one.
+Every command that takes an Outfit path defaults to `./Outfit` in the current
+directory, accepts a directory that holds one, and takes a
+[registered alias](commands/alias.md) in place of a path.
 
 ## Syntax
 
@@ -172,25 +66,22 @@ Rules:
   give both to add the family but make `MODEL` the default.
 - `MODEL` is the reference the **provider itself** understands: an
   OpenRouter/Bedrock model id, an Ollama name, or — for llama.cpp — a Hugging
-  Face repo (`org/model:quant`) or a path to a `.gguf`. `outfit serve` derives
-  the `llama-server` model source from it.
+  Face repo (`org/model:quant`) or a path to a `.gguf`.
 - `ALIAS` is the friendly name the harness shows for the model (and, under
   `serve`, the name `llama-server` reports and the preset section to run). It
   defaults to `MODEL`. For a llama.cpp server the model key is only a label, so
   an `ALIAS` keeps it readable; an `ALIAS` on its own is enough to select one.
 - `CONTEXT` sets the context window for the model(s). It accepts human suffixes
   (`128k`, `1m`) or an absolute count (`200000`).
-- `OUTPUT` caps the max output tokens, in the same format as `CONTEXT`. opencode
-  requires one whenever a context is set, so if you omit it `outfit` records a
-  quarter of the context. It cannot exceed the context window. A command-line
-  `--output`/`-o` on `outfit apply` overrides whatever the Outfit specifies.
+- `OUTPUT` caps the max output tokens, in the same format as `CONTEXT`. Left
+  out, `outfit` records a quarter of the context. It cannot exceed the context
+  window.
 - `BASEURL` overrides the provider's API base URL — handy for a gateway or a
   llama.cpp server on a non-default port. `URL`, `BASE-URL`, and `BASE_URL` are
   accepted as aliases.
-- `PRESET` points at a llama.cpp [preset `.ini`](https://github.com/ggml-org/llama.cpp/blob/master/docs/preset.md)
-  and is only used by [`outfit serve`](#serving-a-llamacpp-model); `apply`
-  ignores it. When set it overrides the simple `MODEL`-based command. A relative
-  path is resolved against the Outfit's own directory.
+- `PRESET` points at a llama.cpp preset `.ini`, used only by
+  [`outfit serve`](commands/serve.md); `apply` ignores it. A relative path is
+  resolved against the Outfit's own directory.
 - Keywords are **case-insensitive** — `provider`, `Provider`, and `PROVIDER` are
   all accepted — but **UPPERCASE is canonical** and is what `outfit export`
   writes.
@@ -226,23 +117,3 @@ MODEL    my-model
 ```
 
 Ready-to-use Outfits live under [`examples/`](../examples/).
-
-## Capturing your current setup
-
-`outfit export` prints the active harness's configuration as an Outfit, so
-you can save a setup you built by hand:
-
-```sh
-outfit export > Outfit
-outfit export --harness pi > Outfit   # read Pi's config instead
-```
-
-By default it exports the provider behind your default model (or the only
-configured provider). If you have several, choose one with `-p`:
-
-```sh
-outfit export -p openrouter > Outfit
-```
-
-Where the configured models match a known family, export names the `FAMILY`;
-otherwise it writes the specific `MODEL`.

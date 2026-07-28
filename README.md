@@ -165,6 +165,16 @@ Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `
 Anywhere a `[path]` appears above you can put a name registered with
 [`outfit alias`](#aliases) instead.
 
+## Documentation
+
+The [`docs/`](docs/) directory is the user manual:
+
+- [Getting started](docs/getting-started.md) — install to launched agent, end
+  to end
+- [The `Outfit` file](docs/outfit-file.md) — full syntax and examples
+- [Command reference](docs/README.md#commands) — a page per command, under
+  [`docs/commands/`](docs/commands/)
+
 ## Harnesses
 
 A **harness** is the coding agent being configured. opencode is the default; Pi
@@ -173,37 +183,18 @@ file — so the same selection works for either.
 
 ```sh
 outfit add -p ollama -f llama --harness pi   # this command only
-OUTFIT_HARNESS=pi outfit add -p ollama -f llama
-
 outfit harness --set pi    # make Pi the default for future commands
-outfit harness --get       # show the current default
 outfit harness             # launch the active harness (forwards trailing args)
-outfit harness -H pi       # launch a specific harness, ignoring the default
-
 outfit harness -O          # apply ./Outfit, then launch the harness
-outfit harness --outfit=path/to/Outfit   # ...applying a specific one first
-outfit harness qwen3.6-27b # ...or name one positionally (see Aliases)
-
 outfit show                # what the active harness has configured
-outfit show --harness pi   # ...for a specific harness, without changing the default
 ```
-
-`outfit harness --outfit`/`-O` applies an `Outfit` on the way in — the same work
-`outfit apply` does — so one command dresses the agent and launches it. Given
-bare it takes `./Outfit` like every other command; to name one, attach the path
-(`--outfit=<path>`), since everything positional is forwarded to the harness.
-
-Where `outfit list` shows the catalogue of providers you *could* configure,
-`outfit show` reports what a harness *currently has* configured — its providers,
-each provider's models with their context/output limits, and the default model.
-It takes the same `--harness`/`-H` override (and the same precedence) as every
-other command, so you can inspect any harness without touching your stored
-default.
 
 Precedence: `--harness`/`-H` flag, then `OUTFIT_HARNESS`, then your stored
 default, then opencode. Not every provider maps to every harness — `outfit list`
 shows which harnesses each one supports (AWS Bedrock, for instance, is
-opencode-only).
+opencode-only). The full story — launching, dressing on the way in, inspecting
+any harness — is in [`docs/commands/harness.md`](docs/commands/harness.md) and
+[`docs/commands/show.md`](docs/commands/show.md).
 
 ## Outfit files
 
@@ -239,13 +230,6 @@ Keeping a directory per model soon means typing a path per command. Name one
 once with `outfit alias` and the name works wherever a path does:
 
 ```sh
-$ ls
-Outfit   preset.ini
-
-$ head -2 Outfit
-ALIAS    qwen3.6-27b
-CONTEXT  128k
-
 $ outfit alias
 Added alias "qwen3.6-27b" for /home/me/models/qwen3.6/Outfit …
 
@@ -254,26 +238,12 @@ $ outfit serve   qwen3.6-27b
 $ outfit harness qwen3.6-27b -- --some-agent-arg
 ```
 
-The name defaults to the `Outfit`'s own `ALIAS`; `--name`/`-n` picks a different
-one, and is required when the file has no `ALIAS` to borrow — `outfit` never
-invents a name you didn't write. `--force`/`-F` re-points a name you have
-already used.
-
-```sh
-outfit alias --list          # every name, its Outfit, and whether it still exists
-outfit show                  # ...alongside what the harness has configured
-outfit unalias qwen3.6-27b   # drop the name (the Outfit file is left alone)
-```
-
-A path on disk always wins over a registered name, so adding an alias can never
-change what an already-working command does. Under `outfit harness`, only a
-*leading* argument is read as an Outfit and everything after it goes to the
-agent — put `--` between the two, and start with `--` to opt out entirely if a
-name of yours collides with one of the agent's own subcommands.
-
-The registry lives in `outfit`'s own config
-(`${XDG_CONFIG_HOME:-~/.config}/outfit/config.json`), not in any `Outfit`, so
-your `Outfit` files stay as portable and committable as they were.
+The name defaults to the `Outfit`'s own `ALIAS` (`--name`/`-n` picks another),
+a path on disk always beats a registered name — so adding an alias can never
+change what an already-working command does — and the registry lives in
+`outfit`'s own config, never in an `Outfit`, so your files stay portable and
+committable. Listing, re-pointing, and `unalias` are covered in
+[`docs/commands/alias.md`](docs/commands/alias.md).
 
 ### Tab completion
 
@@ -284,8 +254,9 @@ outfit completion powershell | Out-String | Invoke-Expression   # or $PROFILE
 ```
 
 TAB then completes commands, flags, providers, harnesses, and your registered
-aliases — `outfit unalias <TAB>` offers exactly the names you have. Homebrew
-installs the bash and zsh completions for you.
+aliases — details in
+[`docs/commands/completion.md`](docs/commands/completion.md). Homebrew installs
+the bash and zsh completions for you.
 
 ## Serving a local model
 
@@ -311,7 +282,7 @@ models), point at a llama.cpp preset `.ini` with `PRESET` and `serve` flattens
 the chosen section into the command instead — with anything the `Outfit` states
 (like `CONTEXT`) overriding the preset. It's the missing piece presets don't
 cover: launching a *single* model. Details in
-[`docs/outfit-file.md`](docs/outfit-file.md#serving-a-llamacpp-model).
+[`docs/commands/serve.md`](docs/commands/serve.md).
 
 ## Keys and endpoints
 
@@ -347,21 +318,15 @@ Everything `outfit` knows lives in `internal/catalog/providers.yaml`. Add a
 provider, a model family, or a new model there and rebuild — no Go required. The
 file is commented with the schema.
 
-Don't want to rebuild? Point `outfit` at your own catalogue at runtime — the
-flag wins, then the env var, then the built-in default:
-
-```sh
-outfit list --providers ./my-providers.yaml
-OUTFIT_PROVIDERS=./my-providers.yaml outfit list
-```
-
-Need a starting point? `init-providers` drops the built-in catalogue into the
-current directory (it won't overwrite an existing file — pass a path or
-`--force` if you mean to):
+Don't want to rebuild? Write the catalogue out with
+[`outfit init-providers`](docs/commands/init-providers.md), edit it, and point
+`outfit` at it at runtime — the flag wins, then the env var, then the built-in
+default:
 
 ```sh
 outfit init-providers                 # writes ./providers.yaml
 outfit list --providers providers.yaml
+OUTFIT_PROVIDERS=providers.yaml outfit list
 ```
 
 ## Development
