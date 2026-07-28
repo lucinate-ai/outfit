@@ -26,6 +26,27 @@ unrecognised subcommand SHALL fail naming the accepted ones.
 - **WHEN** the user runs `outfit remote frobnicate`
 - **THEN** the command fails listing the accepted subcommands
 
+### Requirement: Reporting a start in progress
+
+Because the endpoint blocks until the model is serving, `start` SHALL report
+that it is waiting rather than appear to hang: it SHALL say what is happening
+before the first attempt and repeat at intervals with the elapsed time, and
+SHALL report how long it took once ready. Progress SHALL be written to standard
+error and the resulting exports to standard output, so the command's output can
+be evaluated directly while a person watching still sees progress.
+
+#### Scenario: A cold start is not silent
+
+- **WHEN** the endpoint takes minutes to become ready
+- **THEN** the command explains what it is waiting for and continues to report
+  the elapsed time until it succeeds
+
+#### Scenario: Only the result is on standard output
+
+- **WHEN** a start succeeds and its output is captured
+- **THEN** standard output holds exactly the environment exports, with every
+  progress line on standard error
+
 ### Requirement: Remote configuration discovery
 
 The endpoint's control URLs SHALL come from a JSON configuration naming a start
