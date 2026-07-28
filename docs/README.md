@@ -15,7 +15,7 @@ Four words carry the whole tool:
   Pi is also supported. Chosen at runtime, so the same selection works for
   either. See [`outfit harness`](commands/harness.md).
 - **Provider and family** — what `outfit` can configure, from a built-in
-  catalogue: OpenRouter, AWS Bedrock, Ollama, llama.cpp, or any
+  catalogue: OpenRouter, AWS Bedrock, Ollama, llama.cpp, vLLM, or any
   OpenAI-compatible endpoint, each with named model families. See
   [`outfit list`](commands/list.md).
 - **Outfit file** — a small, declarative file (like a `Dockerfile`, but for
@@ -28,6 +28,8 @@ Four words carry the whole tool:
 
 - [Getting started](getting-started.md) — the end-to-end flow
 - [The `Outfit` file](outfit-file.md) — syntax and examples
+- [Running on a cloud GPU](commands/remote.md) — the same Outfit, on a
+  machine that stops when you do
 - [Runnable examples](../examples/) — ready-to-apply Outfits with walkthroughs
 
 ## Commands
@@ -43,6 +45,7 @@ Four words carry the whole tool:
 | [`outfit alias`](commands/alias.md) | Name an `Outfit` so the name works anywhere a path does |
 | [`outfit unalias`](commands/unalias.md) | Drop a registered name |
 | [`outfit serve`](commands/serve.md) | Run `llama-server` for the model an `Outfit` names |
+| [`outfit remote`](commands/remote.md) | Run the model on a cloud GPU that stops when you do |
 | [`outfit export`](commands/export.md) | Capture the current setup as an `Outfit` |
 | [`outfit harness`](commands/harness.md) | Launch the agent, optionally dressing it first |
 | [`outfit init-providers`](commands/init-providers.md) | Write the catalogue out to customise |

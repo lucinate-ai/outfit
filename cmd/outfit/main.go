@@ -211,6 +211,12 @@ completion: prints a tab-completion script for bash, zsh, or powershell. Add
       source <(outfit completion bash) to your ~/.bashrc (zsh: swap in zsh) and
       TAB then completes commands, flags, providers, harnesses, and your
       registered aliases.
+remote: runs the model on a cloud GPU that exists only while you use it, from
+      the same Outfit. deploy says what to serve (PROVIDER picks the engine,
+      just as it does for serve); start boots it and prints the exports your
+      agent needs; status reports its state; stop shuts it down rather than
+      waiting for the idle timer. The endpoint's URLs come from the Outfit's
+      REMOTE file, or ~/.config/outfit/remote.json.
 `, strings.Join(harness.Names(), ", "))
 }
 
