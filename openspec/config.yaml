@@ -1,0 +1,28 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+# Add your tech stack, conventions, style guides, domain knowledge, etc.
+context: |
+  outfit is a Go CLI (no runtime dependencies) that configures a coding agent —
+  a "harness" (opencode or Pi) — to use a model provider, by deep-merging
+  provider settings into that harness's config.
+
+  Tech stack: Go; domain logic in internal/ packages (catalog, config,
+  contextsize, harness, opencode, outfit, pi, preset), CLI in cmd/outfit.
+  Providers/models are data in internal/catalog/providers.yaml, not Go code.
+
+  Conventions: keep test coverage >= 80% (go test ./... -cover); gofmt before
+  committing; AGENTS.md documents the architecture and its invariants (in-place
+  merges that never drop user config, 0600 for files that may hold secrets,
+  the harness never appears in an Outfit file).
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
