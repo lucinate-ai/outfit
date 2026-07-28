@@ -70,6 +70,27 @@ still works for `start`/`stop`/`status`; only `deploy` complains, and it says
 what to add. Validating it up front would break working setups for a command
 they do not use.
 
+**The deployment lives in this repository.** The command and the thing it
+commands were in separate repositories, so a change to the deploy contract
+spanned two review queues and two releases, and neither side's CI saw the other.
+Bringing it in as `remote/` makes them one reviewable unit. The cost is a
+polyglot repository — a TypeScript CDK project beside a Go CLI — which is
+handled by giving it its own workflow rather than bending the Go one around it.
+
+**Nothing identifying a deployment may be committed.** The deployment's
+repository was private; this one is not. That is a difference in kind, not
+degree, so it is enforced by a check rather than a convention: the build fails
+on an account id, ARN, Function URL host, public address, bucket name or
+resource id. Documentation and tests use the reserved ranges instead. Logical
+stack names and tag keys are deliberately *not* covered — they are chosen in
+source and identify the running stack, so changing them would orphan it.
+
+**Progress belongs on stderr, results on stdout.** `start` blocks for minutes
+while the model loads, so it has to report; but its useful output is two shell
+exports. Splitting them means `eval "$(outfit remote start)"` works while the
+person watching still sees progress. The alternative — progress on stdout, as it
+was — forced a `grep` in the documented idiom and threw the progress away.
+
 **An optional API key is a catalogue fact, not a special case in code.** The
 same provider covers a keyless local server and an authenticated remote one, so
 the catalogue marks the key optional and the harness builders read that. The
@@ -94,6 +115,12 @@ genuinely resolved later.
 - **The catalogue is embedded at build time**, so a stale binary applies an old
   catalogue and appears to ignore a fix. → Documented as a trap in AGENTS.md;
   the runtime override reads a file instead.
+- **A public repository now holds the deployment's source**, so a careless
+  example could disclose a real account. → The identifier check runs first in
+  CI, and its patterns were verified against real samples of each class.
+- **The keys the launched agent receives are wider than one provider's.** →
+  Only variables outfit can already resolve are passed, never invented, and
+  anything already in the environment is left as it is.
 
 ## Migration Plan
 

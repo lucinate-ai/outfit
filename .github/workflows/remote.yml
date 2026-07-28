@@ -1,0 +1,61 @@
+name: Remote deployment
+
+# The CDK project under remote/ that `outfit remote` drives. It is TypeScript
+# rather than Go, so it has its own workflow; the paths filter keeps it off
+# pull requests that do not touch it.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "remote/**"
+      - ".github/workflows/remote.yml"
+  pull_request:
+    paths:
+      - "remote/**"
+      - ".github/workflows/remote.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: remote
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: remote/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm build
+
+      # The stack assertions: they synthesize each stack and assert over the
+      # resulting template (lambdas, IAM scoping, the deploy-config parameter),
+      # alongside the pure unit tests for the Lambdas' own logic.
+      - name: Test
+        run: pnpm test
+
+      # Synthesizing the app itself covers what the assertions cannot: bin/app.ts
+      # wiring, and esbuild bundling every Lambda. No AWS credentials are needed
+      # — the stacks take their AZs from config rather than looking them up — so
+      # the context values here are placeholders.
+      # Invoked directly rather than through `pnpm synth`: pnpm appends extra
+      # arguments to the end of the script's command line, so the context values
+      # never reach cdk and the synth fails on the required `runner`.
+      - name: Synthesize
+        run: npx cdk synth -c allowedCidr=203.0.113.7/32 -c runner=llamacpp --quiet

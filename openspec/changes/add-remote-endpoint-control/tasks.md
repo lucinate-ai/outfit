@@ -34,4 +34,26 @@ records the specification delta that work introduced, so the boxes are ticked.
 
 - [x] 5.1 Teach the completion table about subcommands and add `remote`, satisfying the dispatch-coverage test
 - [x] 5.2 Document the `REMOTE` instruction in the user documentation
-- [x] 5.3 Update AGENTS.md with the new packages, and record the traps found along the way
+- [x] 5.3 Give `outfit remote` a page in the user manual and list it in the index
+- [x] 5.4 Update AGENTS.md with the new packages, and record the traps found along the way
+
+## 6. Usable output
+
+- [x] 6.1 Report progress while `start` waits, with the elapsed time, since the endpoint blocks until the model is serving
+- [x] 6.2 Put progress on stderr and only the exports on stdout, so the result stays pipeable
+- [x] 6.3 Explain `remote` in the usage text, as every other command is
+
+## 7. Keys that actually work
+
+- [x] 7.1 Warn when a config is written with no resolvable key for a non-local endpoint
+- [x] 7.2 Write opencode's key as an `{env:VAR}` reference so no secret reaches disk
+- [x] 7.3 Keep Pi's reference for a remote endpoint, since a placeholder cannot be repaired later
+- [x] 7.4 Pass the keys outfit can resolve to the agent it launches
+- [x] 7.5 Resolve `.env` beside the Outfit, falling back to the working directory when there is none
+
+## 8. Bringing the deployment in
+
+- [x] 8.1 Move the CDK project into `remote/`, keeping its stack names so the running stack is not orphaned
+- [x] 8.2 Add `scripts/check-no-cloud-identifiers.sh` and run it first in CI
+- [x] 8.3 Add a `Remote deployment` workflow: install, typecheck, test, and synthesize
+- [x] 8.4 Repoint every reference from the old repository to `remote/`

@@ -35,6 +35,22 @@ making local and cloud the same declaration pointed at a different machine.
   remotely). `llamacpp` becomes such a provider.
 - Tab completion for a nested command: `outfit remote <TAB>` offers the
   subcommands, and the argument after one completes as an Outfit.
+- `start` reports progress. The endpoint blocks until the model is serving, so a
+  cold start previously sat silent for minutes; it now says what it is doing and
+  repeats with the elapsed time. Progress goes to stderr and only the exports to
+  stdout, so the output stays pipeable.
+- Applying a config that cannot authenticate is called out. A remote endpoint
+  with no resolvable key succeeded silently and failed later as a rejected
+  request; it now warns, naming the variable to set.
+- **The deployment itself moves into this repository**, as the `remote/`
+  subproject — the CDK application (Lambdas, Image Builder pipelines, S3
+  weights) that `outfit remote` drives. It was a separate private repository, so
+  the command and the thing it commands were versioned and released apart.
+- Because this repository is public and that one was not, no identifier of a
+  deployment may be committed: account ids, ARNs, Function URL hosts, allocated
+  addresses, bucket names, resource ids. `scripts/check-no-cloud-identifiers.sh`
+  fails the build on any of them, and deployment state stays in gitignored files
+  under `remote/`.
 - **BREAKING** for opencode users who relied on the config carrying the key:
   the key is now referenced as `{env:VAR}` and resolved when opencode runs, so
   the variable must be set — `outfit harness` passes on whatever outfit can
@@ -77,7 +93,11 @@ that justification, and stops writing a secret to disk.
 
 - **Code**: new `internal/remote` (the only package making network calls or
   using the AWS SDK) and `cmd/outfit/remote.go`; the Outfit parser, the
-  catalogue schema, the Pi provider builder, and the completion table.
+  catalogue schema, both harness adapters, the key resolver, and the completion
+  table. New `remote/` subproject — the repository's only non-Go code.
+- **CI**: a `No cloud identifiers` step ahead of everything else, and a separate
+  `Remote deployment` workflow that typechecks, tests and synthesizes `remote/`
+  when it changes, so the deployment cannot rot untested.
 - **Dependencies**: `aws-sdk-go-v2` (config + SigV4 signer) — the project's
   first non-stdlib runtime dependency outside YAML parsing. It is reached only
   by `outfit remote`; every other command stays offline.
