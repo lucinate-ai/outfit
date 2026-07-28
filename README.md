@@ -320,7 +320,7 @@ minutes while the instance boots and loads the model; `--timeout` (default
 ## Keys and endpoints
 
 Each provider declares which environment variable holds its key (`outfit
-list` shows them). Values are looked up in `.env` next to the tool first, then
+list` shows them). Values are looked up in a `.env` beside the `Outfit` first, then
 your shell environment. Local providers like Ollama and llama.cpp need no key;
 Bedrock authenticates through your AWS credentials.
 

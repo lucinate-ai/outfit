@@ -5,6 +5,7 @@ package catalog
 import (
 	_ "embed"
 	"fmt"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -202,13 +203,21 @@ func BuildProviderBlock(id string, p *Provider, familyName, modelOverride, baseU
 	}
 	if p.APIKeyEnv != "" {
 		key := resolve(p.APIKeyEnv)
+		baseURL, _ := options["baseURL"].(string)
 		switch {
 		case key == "" && p.APIKeyRequired:
 			return nil, "", fmt.Errorf("%s is not set; add it to your .env or environment", p.APIKeyEnv)
 		case key != "" && p.APIKeyPrefix != "" && !strings.HasPrefix(key, p.APIKeyPrefix):
 			return nil, "", fmt.Errorf("%s does not look right (expected it to start with %q)", p.APIKeyEnv, p.APIKeyPrefix)
-		case key != "":
-			options["apiKey"] = key
+		case key == "" && p.APIKeyOptional && IsLocalEndpoint(baseURL):
+			// A local server that needs no key: leave the option out entirely
+			// rather than point it at a variable nobody will set.
+		default:
+			// opencode substitutes {env:VAR} when it reads the config, so the
+			// secret is never written to disk. The variable has to be set when
+			// opencode runs; `outfit harness` passes on whatever it can resolve,
+			// including from its own .env.
+			options["apiKey"] = EnvRef(p.APIKeyEnv)
 		}
 	}
 	if len(options) > 0 {
@@ -306,12 +315,16 @@ func BuildPiProvider(id string, p *Provider, familyName, modelOverride, baseURLO
 	//
 	// A "$VAR" reference is written whenever the provider has a key env var,
 	// because Pi resolves it at run time: the key need not be set when the
-	// Outfit is applied. The exception is an apiKeyOptional provider whose var
-	// is unset — one provider covers both a keyless local server and an
-	// authenticated remote one, and a reference to a variable set nowhere would
-	// hide the models, which is worse than the placeholder.
+	// Outfit is applied, and exporting it later is enough. The exception is an
+	// apiKeyOptional provider, pointed at a local endpoint, whose var is unset:
+	// one provider covers both a keyless local server and an authenticated
+	// remote one, and for the local server a reference to a variable set
+	// nowhere would hide the models. That exception is deliberately conditioned
+	// on the endpoint rather than only on the key, because a placeholder
+	// written for a remote endpoint could not be repaired by exporting the key
+	// afterwards — Pi would keep sending the placeholder.
 	switch {
-	case p.APIKeyEnv != "" && p.APIKeyOptional && resolve(p.APIKeyEnv) == "":
+	case p.APIKeyEnv != "" && p.APIKeyOptional && resolve(p.APIKeyEnv) == "" && IsLocalEndpoint(prov.BaseURL):
 		prov.APIKey = piPlaceholderAPIKey
 	case p.APIKeyEnv != "":
 		prov.APIKey = "$" + p.APIKeyEnv
@@ -356,4 +369,28 @@ func BuildPiProvider(id string, p *Provider, familyName, modelOverride, baseURLO
 	}
 
 	return prov, defaultModelKey, nil
+}
+
+// EnvRef renders an environment-variable reference in the form opencode
+// substitutes when it reads its config, so a secret never lands on disk.
+func EnvRef(name string) string {
+	return "{env:" + name + "}"
+}
+
+// IsLocalEndpoint reports whether a base URL points at this machine, where a
+// server commonly needs no API key. An empty or unparseable URL counts as
+// local, so callers only treat an endpoint as remote on real evidence.
+func IsLocalEndpoint(baseURL string) bool {
+	if baseURL == "" {
+		return true
+	}
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return true
+	}
+	switch u.Hostname() {
+	case "", "localhost", "127.0.0.1", "0.0.0.0", "::1":
+		return true
+	}
+	return false
 }

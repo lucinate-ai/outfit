@@ -35,9 +35,17 @@ making local and cloud the same declaration pointed at a different machine.
   remotely). `llamacpp` becomes such a provider.
 - Tab completion for a nested command: `outfit remote <TAB>` offers the
   subcommands, and the argument after one completes as an Outfit.
+- **BREAKING** for opencode users who relied on the config carrying the key:
+  the key is now referenced as `{env:VAR}` and resolved when opencode runs, so
+  the variable must be set — `outfit harness` passes on whatever outfit can
+  resolve, and an explicit export always wins.
 
-No breaking changes: every new instruction and command is additive, and an
-Outfit without `REMOTE` behaves exactly as before.
+Everything else is additive: every new instruction and command is new surface,
+and an Outfit without `REMOTE` behaves exactly as before. The one behavioural
+change is the opencode key above — a deliberate reversal of the previous choice
+to embed the secret, which was justified by a global config being unable to rely
+on a project-local `.env`. Passing resolved keys to the launched agent removes
+that justification, and stops writing a secret to disk.
 
 ## Capabilities
 
@@ -53,9 +61,15 @@ Outfit without `REMOTE` behaves exactly as before.
   resolution now also covers the `remote` subcommands.
 - `provider-catalog`: a provider entry may declare that its API key is
   optional.
-- `pi-integration`: the keyless-provider placeholder now also covers a provider
-  whose optional key is unset, rather than only one with no key variable at
-  all.
+- `pi-integration`: the keyless-provider placeholder is now conditioned on the
+  endpoint being local, so a remote endpoint keeps the reference Pi resolves at
+  run time.
+- `opencode-integration`: the API key is referenced as `{env:VAR}` rather than
+  embedded, so no secret is written to disk.
+- `harness-management`: the launched agent inherits the API keys outfit can
+  resolve, since neither harness stores the secret itself.
+- `provider-selection`: a key's `.env` is resolved beside the Outfit being
+  applied rather than relative to the tool.
 - `shell-completion`: completion covers a command's subcommands, not only its
   flags and positionals.
 

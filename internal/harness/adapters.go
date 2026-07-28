@@ -30,8 +30,8 @@ func (opencodeHarness) Command() string { return "opencode" }
 
 func (opencodeHarness) ConfigPath() (string, error) { return opencode.ResolveConfigFile() }
 
-func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int) (Summary, error) {
-	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, opencode.ResolveEnv)
+func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int, resolve func(string) string) (Summary, error) {
+	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, resolve)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -51,8 +51,12 @@ func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextW
 
 	var notes []string
 	if opts, ok := block["options"].(map[string]any); ok {
-		if _, ok := opts["apiKey"]; ok {
-			notes = append(notes, fmt.Sprintf("API key injected from %s.", p.APIKeyEnv))
+		baseURL, _ := opts["baseURL"].(string)
+		if warning := missingKeyWarning(p, baseURL, resolve); warning != "" {
+			notes = append(notes, warning)
+		} else if _, ok := opts["apiKey"]; ok {
+			notes = append(notes, fmt.Sprintf(
+				"API key read from %s when opencode runs (never written to the config).", p.APIKeyEnv))
 		}
 		if b, ok := opts["baseURL"]; ok {
 			notes = append(notes, fmt.Sprintf("Base URL: %v", b))
@@ -95,8 +99,8 @@ func (piHarness) Command() string { return "pi" }
 
 func (piHarness) ConfigPath() (string, error) { return pi.ConfigPath() }
 
-func (piHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int) (Summary, error) {
-	prov, defaultModel, err := catalog.BuildPiProvider(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, opencode.ResolveEnv)
+func (piHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int, resolve func(string) string) (Summary, error) {
+	prov, defaultModel, err := catalog.BuildPiProvider(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, resolve)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -109,7 +113,9 @@ func (piHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow,
 	}
 
 	var notes []string
-	if prov.APIKey != "" {
+	if warning := missingKeyWarning(p, prov.BaseURL, resolve); warning != "" {
+		notes = append(notes, warning)
+	} else if prov.APIKey != "" {
 		notes = append(notes, fmt.Sprintf("API key referenced as %s (set it in your environment or Pi auth.json).", prov.APIKey))
 	}
 	if prov.BaseURL != "" {
@@ -138,4 +144,20 @@ func (piHarness) State() (map[string]ProviderState, string, error) {
 		out[id] = ProviderState{ModelKeys: st.ModelKeys, BaseURL: st.BaseURL, Contexts: st.Contexts, Outputs: st.Outputs}
 	}
 	return out, "", nil
+}
+
+// missingKeyWarning returns a warning when a provider's config is being written
+// with no API key while its endpoint is not a local address — a combination
+// that writes successfully and then fails on the first request. It happens most
+// easily with a provider whose key is optional (the same engine run locally,
+// where no key is needed, and remotely, where one is), so nothing errors and
+// the config simply cannot authenticate. baseURL is empty when the provider
+// declares none.
+func missingKeyWarning(p *catalog.Provider, baseURL string, resolve func(string) string) string {
+	if p.APIKeyEnv == "" || resolve(p.APIKeyEnv) != "" || catalog.IsLocalEndpoint(baseURL) {
+		return ""
+	}
+	return fmt.Sprintf(
+		"Warning: no API key was set, but %s is not a local address, so requests will "+
+			"probably be rejected. Set %s and apply again.", baseURL, p.APIKeyEnv)
 }
