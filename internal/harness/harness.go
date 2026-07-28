@@ -59,7 +59,9 @@ type Harness interface {
 	ConfigPath() (string, error)
 	// Apply writes a single provider selection into the harness config.
 	// contextWindow and outputTokens, when > 0, are the resolved limits to set.
-	Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int) (Summary, error)
+	// resolve looks up an API key variable — see opencode.EnvResolver, which
+	// builds one from the Outfit's directory.
+	Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int, resolve func(string) string) (Summary, error)
 	// Remove removes a provider, or specific model keys within it. With no
 	// modelKeys the whole provider is removed. Returns the number of removals.
 	Remove(providerID string, modelKeys []string) (int, error)

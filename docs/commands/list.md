@@ -21,7 +21,7 @@ This is the *could* view — what's available to configure. For what your agent
 ## Notes
 
 - A provider marked with a required API key won't configure until that
-  variable is set in a `.env` next to the tool or your environment.
+  variable is set in a `.env` beside your `Outfit`, or in your environment.
 - Not every provider maps to every harness — the listing names which harnesses
   each supports (AWS Bedrock, for instance, is opencode-only).
 

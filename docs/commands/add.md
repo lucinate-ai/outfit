@@ -51,7 +51,9 @@ outfit add -p llamacpp -m my-model -c 128k -o 32k
 
 - You need at least one of `--model-family`, `--model`, or `--alias` alongside
   the provider.
-- API keys are read from a `.env` next to the tool, then your environment, and
+- API keys are read from a `.env` beside the `Outfit` — or, for `outfit add`,
+  which has no Outfit, from a `.env` in the current directory — then your
+  environment, and
   never written anywhere they'll leak. A provider that requires a key tells you
   which variable to set.
 - On opencode, `add` sets the chosen model as the default. Pi has no

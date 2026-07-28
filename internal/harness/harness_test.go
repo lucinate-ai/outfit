@@ -1,8 +1,10 @@
 package harness
 
 import (
+	"github.com/lucinate-ai/outfit/internal/catalog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lucinate-ai/outfit/internal/config"
@@ -134,5 +136,29 @@ func TestNamesAndLookup(t *testing.T) {
 	}
 	if _, ok := Lookup("nope"); ok {
 		t.Error("Lookup(nope) should fail")
+	}
+}
+
+// A config written with no key for a remote endpoint succeeds and then fails on
+// the first request, so it has to be called out at the time.
+func TestMissingKeyWarning(t *testing.T) {
+	keyed := &catalog.Provider{APIKeyEnv: "OPENAI_API_KEY"}
+	unset := func(string) string { return "" }
+	set := func(string) string { return "sk-test" }
+
+	if w := missingKeyWarning(keyed, "http://198.51.100.1:8000/v1", unset); w == "" {
+		t.Error("a remote endpoint with no key should warn")
+	} else if !strings.Contains(w, "OPENAI_API_KEY") {
+		t.Errorf("the warning should name the variable to set, got %q", w)
+	}
+
+	if w := missingKeyWarning(keyed, "http://198.51.100.1:8000/v1", set); w != "" {
+		t.Errorf("a key that is set should not warn, got %q", w)
+	}
+	if w := missingKeyWarning(keyed, "http://127.0.0.1:8080/v1", unset); w != "" {
+		t.Errorf("a local server needs no key, got %q", w)
+	}
+	if w := missingKeyWarning(&catalog.Provider{}, "https://api.example.com/v1", unset); w != "" {
+		t.Errorf("a provider with no key variable should not warn, got %q", w)
 	}
 }

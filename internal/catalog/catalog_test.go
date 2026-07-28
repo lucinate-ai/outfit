@@ -266,7 +266,7 @@ func TestLoadCatalogFrom(t *testing.T) {
 	}
 }
 
-func TestBuildProviderBlock_OpenRouterKeyInjected(t *testing.T) {
+func TestBuildProviderBlock_OpenRouterKeyReferenced(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["openrouter"]
 
@@ -280,8 +280,13 @@ func TestBuildProviderBlock_OpenRouterKeyInjected(t *testing.T) {
 		t.Errorf("default model = %q, want %q", model, want)
 	}
 	opts := block["options"].(map[string]any)
-	if opts["apiKey"] != "sk-or-v1-abc" {
-		t.Errorf("apiKey = %v, want injected key", opts["apiKey"])
+	// The secret is never written to the config; opencode substitutes the
+	// reference when it reads it.
+	if opts["apiKey"] != "{env:DEEPSEEK_API_KEY}" {
+		t.Errorf("apiKey = %v, want the env reference", opts["apiKey"])
+	}
+	if opts["apiKey"] == "sk-or-v1-abc" {
+		t.Error("the resolved secret must not be written to the config")
 	}
 	if models := block["models"].(map[string]any); len(models) != 2 {
 		t.Errorf("got %d models, want 2", len(models))
@@ -529,7 +534,7 @@ func TestBuildPiProvider_RequiredKeyKeepsReference(t *testing.T) {
 
 // The opencode block injects the resolved key, so a remote llama.cpp endpoint
 // is authenticated rather than 401ing.
-func TestBuildProviderBlock_LlamacppInjectsKeyWhenSet(t *testing.T) {
+func TestBuildProviderBlock_LlamacppReferencesKeyForRemote(t *testing.T) {
 	cat, _ := Load()
 	resolve := func(name string) string {
 		if name == "OPENAI_API_KEY" {
@@ -542,8 +547,8 @@ func TestBuildProviderBlock_LlamacppInjectsKeyWhenSet(t *testing.T) {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	options := block["options"].(map[string]any)
-	if options["apiKey"] != "sk-remote" {
-		t.Errorf("apiKey = %v, want the resolved key", options["apiKey"])
+	if options["apiKey"] != "{env:OPENAI_API_KEY}" {
+		t.Errorf("apiKey = %v, want the env reference", options["apiKey"])
 	}
 
 	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local", "", "", noEnv)
@@ -552,6 +557,59 @@ func TestBuildProviderBlock_LlamacppInjectsKeyWhenSet(t *testing.T) {
 	}
 	options = block["options"].(map[string]any)
 	if _, ok := options["apiKey"]; ok {
-		t.Error("no apiKey should be injected for a local server when the var is unset")
+		t.Error("a local keyless server should get no apiKey at all")
+	}
+
+	// A remote endpoint keeps the reference even with the key unset, so setting
+	// it before the agent runs is enough.
+	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local", "", "http://198.51.100.1:8000/v1", noEnv)
+	if err != nil {
+		t.Fatalf("BuildProviderBlock: %v", err)
+	}
+	if got := block["options"].(map[string]any)["apiKey"]; got != "{env:OPENAI_API_KEY}" {
+		t.Errorf("apiKey = %v, want the env reference for a remote endpoint", got)
+	}
+}
+
+func TestIsLocalEndpoint(t *testing.T) {
+	for _, u := range []string{
+		"", "http://localhost:8080/v1", "http://127.0.0.1:8080/v1",
+		"http://0.0.0.0:8000/v1", "http://[::1]:8080/v1", "::not a url::",
+	} {
+		if !IsLocalEndpoint(u) {
+			t.Errorf("IsLocalEndpoint(%q) = false, want true", u)
+		}
+	}
+	for _, u := range []string{"http://198.51.100.1:8000/v1", "https://api.example.com/v1"} {
+		if IsLocalEndpoint(u) {
+			t.Errorf("IsLocalEndpoint(%q) = true, want false", u)
+		}
+	}
+}
+
+// Pi resolves its $VAR reference when it runs, so a placeholder written for a
+// remote endpoint can never be repaired by exporting the key afterwards — Pi
+// would keep sending the placeholder. The placeholder is therefore only right
+// for a local server.
+func TestBuildPiProvider_RemoteOptionalKeyKeepsReference(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["llamacpp"] // apiKeyOptional
+
+	prov, _, err := BuildPiProvider("llamacpp", p, "local", "", "http://198.51.100.1:8000/v1", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.APIKey != "$OPENAI_API_KEY" {
+		t.Errorf("apiKey = %q, want the reference so exporting the key later works", prov.APIKey)
+	}
+
+	// The local server keeps the placeholder: it needs no key, and a reference
+	// to a variable set nowhere would hide its models in /model.
+	prov, _, err = BuildPiProvider("llamacpp", p, "local", "", "http://127.0.0.1:8080/v1", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if prov.APIKey != piPlaceholderAPIKey {
+		t.Errorf("apiKey = %q, want the placeholder for a local server", prov.APIKey)
 	}
 }

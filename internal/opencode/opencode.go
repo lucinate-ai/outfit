@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -17,20 +16,27 @@ import (
 
 // envFilePath returns the path to the .env file alongside this program's
 // source, mirroring the original "the .env next to the tool" behaviour.
-func envFilePath() string {
-	if _, file, _, ok := runtime.Caller(0); ok {
-		return filepath.Join(filepath.Dir(file), ".env")
-	}
-	return ".env"
-}
 
-// ResolveEnv looks up an environment variable, preferring the .env file next
-// to the tool and falling back to the process environment.
-func ResolveEnv(name string) string {
-	if v := readEnvFileVar(envFilePath(), name); v != "" {
-		return v
+// EnvResolver returns a lookup that prefers a `.env` beside the Outfit being
+// applied, falling back to the process environment. dir is that Outfit's
+// directory; when empty — a selection made entirely from flags, with no Outfit
+// to sit beside — the working directory is used, so `outfit add` still finds a
+// project's own `.env`.
+//
+// The file sits beside the Outfit rather than beside the binary because that is
+// where it belongs to a project — the same rule PRESET and REMOTE follow — so an
+// Outfit and the key it needs travel together, and an installed binary can find
+// one at all.
+func EnvResolver(dir string) func(string) string {
+	if dir == "" {
+		dir = "."
 	}
-	return os.Getenv(name)
+	return func(name string) string {
+		if v := readEnvFileVar(filepath.Join(dir, ".env"), name); v != "" {
+			return v
+		}
+		return os.Getenv(name)
+	}
 }
 
 // readEnvFileVar returns the value of name from a dotenv-style file, or "".

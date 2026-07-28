@@ -649,3 +649,38 @@ func TestCmdExportRemove_PiRoundTrip(t *testing.T) {
 		t.Error("ollama should have been removed from the Pi config")
 	}
 }
+
+// Neither harness stores the secret — opencode substitutes {env:VAR}, Pi
+// resolves $VAR — so a key kept only in outfit's .env has to reach the agent
+// outfit launches, or the user would have to export it by hand.
+func TestHarnessEnv_CarriesResolvableKeys(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	fromDotEnv := func(name string) string {
+		if name == "OPENAI_API_KEY" {
+			return "sk-from-dotenv"
+		}
+		return ""
+	}
+
+	var found string
+	for _, kv := range harnessEnv("", fromDotEnv) {
+		if strings.HasPrefix(kv, "OPENAI_API_KEY=") {
+			found = kv
+		}
+	}
+	if found != "OPENAI_API_KEY=sk-from-dotenv" {
+		t.Errorf("launched agent's env has %q, want the key from .env", found)
+	}
+}
+
+// An explicit export is the user's own decision and must win.
+func TestHarnessEnv_DoesNotOverrideTheEnvironment(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-exported")
+	fromDotEnv := func(string) string { return "sk-from-dotenv" }
+
+	for _, kv := range harnessEnv("", fromDotEnv) {
+		if kv == "OPENAI_API_KEY=sk-from-dotenv" {
+			t.Error("the .env value overrode an exported one")
+		}
+	}
+}

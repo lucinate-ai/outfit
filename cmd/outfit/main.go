@@ -62,6 +62,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/config"
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/harness"
+	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/preset"
 )
@@ -262,13 +263,16 @@ func cmdAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	return applySelection(sel, h)
+	return applySelection(sel, h, "")
 }
 
 // applySelection writes a single provider selection into the active harness's
 // config. It is the shared core of `add` and `apply`: both resolve a selection
 // (from flags or an Outfit file) and hand it here.
-func applySelection(sel outfit.Selection, h harness.Harness) error {
+// envDir is the directory of the Outfit the selection came from, which is where
+// a `.env` holding its API key belongs; it is empty when no Outfit is involved
+// (an `outfit add` from flags), leaving only the process environment.
+func applySelection(sel outfit.Selection, h harness.Harness, envDir string) error {
 	if sel.Family == "" && sel.Model == "" && sel.Alias == "" {
 		return fmt.Errorf("a provider selection needs a model family, a model, or an alias")
 	}
@@ -304,7 +308,7 @@ func applySelection(sel outfit.Selection, h harness.Harness) error {
 		}
 	}
 
-	summary, err := h.Apply(p, sel, contextSize, outputSize)
+	summary, err := h.Apply(p, sel, contextSize, outputSize, opencode.EnvResolver(envDir))
 	if err != nil {
 		return err
 	}
@@ -427,7 +431,7 @@ func cmdApply(args []string) error {
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
-	sel, _, err := readOutfit("outfit apply <file>", path)
+	sel, outfitPath, err := readOutfit("outfit apply <file>", path)
 	if err != nil {
 		return err
 	}
@@ -436,7 +440,7 @@ func cmdApply(args []string) error {
 	if output != "" {
 		sel.Output = output
 	}
-	return applySelection(sel, h)
+	return applySelection(sel, h, filepath.Dir(outfitPath))
 }
 
 // cmdUnapply reads an Outfit file and removes what it selects — the inverse of
@@ -1071,8 +1075,13 @@ func cmdHarness(args []string) error {
 		}
 	}
 
+	// A .env beside the applied Outfit is where its keys live, so the launched
+	// agent is given the same ones. Without an Outfit there is no such file and
+	// only the environment is passed on.
+	var envDir string
 	if outfitPath.set {
-		if err := applyBeforeLaunch(outfitPath, providers, h, rest); err != nil {
+		var err error
+		if envDir, err = applyBeforeLaunch(outfitPath, providers, h, rest); err != nil {
 			return err
 		}
 	}
@@ -1083,6 +1092,7 @@ func cmdHarness(args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = harnessEnv(providers, opencode.EnvResolver(envDir))
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%s not found — install the %s harness or add it to your PATH", bin, h.Name())
@@ -1095,6 +1105,36 @@ func cmdHarness(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// harnessEnv is the environment for the agent outfit launches: this process's,
+// plus any provider API key outfit can resolve that the environment does not
+// already carry. Neither harness stores the secret itself — opencode
+// substitutes {env:VAR} and Pi resolves $VAR, both when they run — so without
+// this a key kept only in outfit's .env would never reach the agent, and the
+// user would have to export it by hand.
+//
+// A variable already set in the environment is left alone, so an explicit
+// export always wins. A catalogue that cannot be loaded is not fatal: launching
+// the agent matters more than the keys, and it will report its own auth error.
+func harnessEnv(providersPath string, resolve func(string) string) []string {
+	env := os.Environ()
+	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(providersPath))
+	if err != nil {
+		return env
+	}
+	seen := map[string]bool{}
+	for _, name := range cat.SortedProviderNames() {
+		key := cat.Providers[name].APIKeyEnv
+		if key == "" || seen[key] || os.Getenv(key) != "" {
+			continue
+		}
+		seen[key] = true
+		if value := resolve(key); value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
 
 // flagsTerminated reports whether flag parsing stopped at an explicit bare
@@ -1135,26 +1175,29 @@ func namesAnOutfitOrAlias(arg string) bool {
 // is about to be launched — exactly the work `outfit apply` does, so one command
 // can dress the harness and then run it. rest is what will be forwarded to the
 // harness, inspected only to catch a path that was meant for the flag.
-func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) error {
+// It returns the applied Outfit's directory, which is where its `.env` lives,
+// so the launched agent can be given the same keys the apply resolved.
+func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) (string, error) {
 	// The flag's value has to be attached, so `--outfit ./dev/Outfit` (or
 	// `--outfit q3`) would otherwise apply ./Outfit and quietly hand the path
 	// or alias to the harness.
 	if f.path == "" && len(rest) > 0 && namesAnOutfitOrAlias(rest[0]) {
-		return fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
+		return "", fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
 	}
 	sel, path, err := readOutfit("outfit harness --outfit=<file>", f.path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	// As for apply, --providers overrides the catalogue the selection resolves
 	// against (an Outfit never names one).
 	sel.Providers = providers
 	fmt.Printf("Applying %s\n\n", path)
-	if err := applySelection(sel, h); err != nil {
-		return err
+	envDir := filepath.Dir(path)
+	if err := applySelection(sel, h, envDir); err != nil {
+		return "", err
 	}
 	fmt.Println()
-	return nil
+	return envDir, nil
 }
 
 // namesAnOutfit reports whether arg points at an Outfit file, or at a directory
