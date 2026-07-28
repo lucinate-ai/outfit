@@ -1,0 +1,9 @@
+node_modules/
+cdk.out/
+cdk.context.json
+coverage/
+.env
+remote.json
+Outfit
+cdk-outputs.json
+*.tsbuildinfo

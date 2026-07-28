@@ -31,6 +31,8 @@ Four words carry the whole tool:
 - [Running on a cloud GPU](commands/remote.md) — the same Outfit, on a
   machine that stops when you do
 - [Runnable examples](../examples/) — ready-to-apply Outfits with walkthroughs
+- [Deploying your own cloud GPU endpoint](../remote/) — the AWS project behind
+  `outfit remote`
 
 ## Commands
 

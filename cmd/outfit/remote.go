@@ -17,7 +17,7 @@ import (
 )
 
 // cmdRemote dispatches the remote subcommands, which control the
-// scale-to-zero GPU inference instance defined in the cloud-vm-llm repo:
+// scale-to-zero GPU inference instance defined in this repo's remote/:
 // start boots it and prints the endpoint exports, stop shuts it down
 // immediately (its stop Lambda also runs on a schedule to auto-stop on
 // idle), status reports instance state and endpoint health, and deploy sets

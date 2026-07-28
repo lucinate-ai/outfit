@@ -16,8 +16,8 @@ making local and cloud the same declaration pointed at a different machine.
 
 - A new `outfit remote` command group — the CLI's first nested subcommand —
   with `start`, `stop`, `status` and `deploy`. It targets the scale-to-zero
-  endpoint defined by the companion `cloud-vm-llm` project, calling its control
-  Lambdas over SigV4-signed Function URLs.
+  endpoint defined by this repository's `remote/` subproject, calling its
+  control Lambdas over SigV4-signed Function URLs.
 - A new `REMOTE` Outfit instruction naming the file that holds those URLs,
   resolved relative to the Outfit like `PRESET`, so an Outfit and the endpoint
   it belongs to travel together. Without it, a per-user config is used, so
@@ -84,8 +84,8 @@ that justification, and stops writing a secret to disk.
 - **Credentials**: `outfit remote` uses the caller's own AWS credential chain
   and needs only `lambda:InvokeFunctionUrl`. No AWS permissions are needed by
   any other command, and none are stored by outfit.
-- **External contract**: the deploy payload is consumed by `cloud-vm-llm`'s
-  deploy Lambda, which owns storage layout and weight seeding — deliberately
+- **External contract**: the deploy payload is consumed by `remote/`'s deploy
+  Lambda, which owns storage layout and weight seeding — deliberately
   not described here, so outfit states intent rather than infrastructure.
 - The implementation for this change already exists on the `feat/remote`
   branch; this change records the specification delta it introduced.

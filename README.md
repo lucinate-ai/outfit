@@ -289,7 +289,7 @@ cover: launching a *single* model. Details in
 
 ## Remote inference instance
 
-Running a model on your own cloud GPU box (see the `cloud-vm-llm` repo)?
+Running a model on your own cloud GPU box? [`remote/`](remote/) deploys one.
 `outfit remote` drives its scale-to-zero lifecycle: the instance only exists
 while you are using it, and stops itself after a period of idleness.
 
@@ -304,7 +304,7 @@ Configuration is found in one of two places. A project's `Outfit` file can
 name it with a `REMOTE` instruction (`REMOTE remote.json`, resolved relative
 to the Outfit — like `PRESET`, so the pair travel together); otherwise the
 per-user `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json` is used. Either
-way, paste the `OutfitRemoteConfig` output of the `cloud-vm-llm` stack there:
+way, paste the `OutfitRemoteConfig` output of the `remote/` deployment there:
 
 ```json
 {"start_url": "https://...lambda-url...on.aws/", "stop_url": "https://...", "region": "eu-west-1"}
