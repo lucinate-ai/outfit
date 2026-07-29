@@ -1,8 +1,12 @@
-# Provider and model-family catalogue for outfit.
+# Provider catalogue for outfit.
 #
 # This file is embedded into the binary at build time (see //go:embed in
-# catalog.go) but kept external so providers, model families, and endpoints can
-# be maintained without touching the Go code.
+# catalog.go) but kept external so providers and endpoints can be maintained
+# without touching the Go code.
+#
+# The catalogue is provider *plumbing* only — it does not enumerate models. The
+# model a provider serves is named by the selection (MODEL/ALIAS in an Outfit,
+# or --model/--alias on the command line); any model id passes through.
 #
 # Per provider:
 #   name            display name written into the opencode config (optional)
@@ -17,7 +21,6 @@
 #   apiKeyPrefix    sanity-check that the key starts with this
 #   options         static options merged into the provider block
 #   optionsFromEnv  option -> env var; injected into options when the var is set
-#   families        named model sets; each has a defaultModel and a models map
 #   pi              optional block marking the provider as usable by the Pi
 #                   harness (~/.pi/agent/models.json). Holds:
 #                     api      Pi protocol: openai-completions | openai-responses
@@ -35,15 +38,6 @@ providers:
     pi:
       api: openai-completions
       baseUrl: https://openrouter.ai/api/v1
-    families:
-      deepseek-v4:
-        description: DeepSeek V4 (Flash and Pro)
-        defaultModel: deepseek/deepseek-v4-flash
-        models:
-          deepseek/deepseek-v4-flash:
-            name: DeepSeek V4 Flash
-          deepseek/deepseek-v4-pro:
-            name: DeepSeek V4 Pro
 
   amazon-bedrock:
     description: AWS Bedrock (authenticates via your AWS credentials)
@@ -53,15 +47,6 @@ providers:
       region: us-east-1
     optionsFromEnv:
       region: AWS_REGION
-    families:
-      claude:
-        description: Anthropic Claude models on Bedrock
-        defaultModel: anthropic.claude-3-5-sonnet-20241022-v2:0
-        models:
-          "anthropic.claude-3-5-sonnet-20241022-v2:0":
-            name: Claude 3.5 Sonnet
-          "anthropic.claude-3-5-haiku-20241022-v1:0":
-            name: Claude 3.5 Haiku
 
   ollama:
     description: Local Ollama server (OpenAI-compatible API)
@@ -73,15 +58,6 @@ providers:
       baseURL: OLLAMA_BASE_URL
     pi:
       api: openai-completions
-    families:
-      llama:
-        description: Meta Llama models served by Ollama
-        defaultModel: llama3.2
-        models:
-          llama3.2:
-            name: Llama 3.2
-          llama3.1:
-            name: Llama 3.1
 
   llamacpp:
     description: llama.cpp server (OpenAI-compatible API)
@@ -99,13 +75,6 @@ providers:
       baseURL: LLAMACPP_BASE_URL
     pi:
       api: openai-completions
-    families:
-      local:
-        description: Model loaded by your llama.cpp server
-        defaultModel: local-model
-        models:
-          local-model:
-            name: llama.cpp model
 
   vllm:
     description: vLLM server (OpenAI-compatible API)
@@ -120,13 +89,6 @@ providers:
       baseURL: VLLM_BASE_URL
     pi:
       api: openai-completions
-    families:
-      served:
-        description: Model loaded by your vLLM server
-        defaultModel: served-model
-        models:
-          served-model:
-            name: vLLM model
 
   openai-compatible:
     description: Generic OpenAI-compatible endpoint (set base URL and key via env)
@@ -139,12 +101,3 @@ providers:
       baseURL: OPENAI_BASE_URL
     pi:
       api: openai-completions
-    families:
-      gpt:
-        description: OpenAI GPT models (or your endpoint's equivalents)
-        defaultModel: gpt-4o
-        models:
-          gpt-4o:
-            name: GPT-4o
-          gpt-4o-mini:
-            name: GPT-4o mini

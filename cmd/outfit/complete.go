@@ -61,8 +61,6 @@ const (
 	kindAliasOnly                      // registered aliases; a path would be meaningless
 	kindHarness
 	kindProvider
-	kindFamily
-	kindModel
 	kindShell
 )
 
@@ -85,16 +83,17 @@ type command struct {
 
 // selectionFlags are the flags add and remove share (see parseSelection).
 var selectionFlags = []string{
-	"--provider", "-p", "--model-family", "-f", "--model", "-m",
+	"--provider", "-p", "--model", "-m",
 	"--alias", "-a", "--context", "-c", "--output", "-o",
 	"--providers", "--base-url", "-u", "--harness", "-H",
 }
 
-// selectionValues maps those of them that take a value.
+// selectionValues maps those of them that take a value. The model id has no
+// static source to complete against — the catalogue no longer enumerates models
+// — so --model/-m consumes its value without offering candidates.
 var selectionValues = map[string]candidateKind{
 	"--provider": kindProvider, "-p": kindProvider,
-	"--model-family": kindFamily, "-f": kindFamily,
-	"--model": kindModel, "-m": kindModel,
+	"--model": kindNone, "-m": kindNone,
 	"--alias": kindNone, "-a": kindNone,
 	"--context": kindNone, "-c": kindNone,
 	"--output": kindNone, "-o": kindNone,
@@ -308,18 +307,6 @@ func candidatesFor(kind candidateKind, words []string) ([]string, string) {
 			return nil, directiveNoFile
 		}
 		return cat.SortedProviderNames(), directiveNoFile
-	case kindFamily:
-		p := providerOn(words)
-		if p == nil {
-			return nil, directiveNoFile
-		}
-		return p.SortedFamilyNames(), directiveNoFile
-	case kindModel:
-		p := providerOn(words)
-		if p == nil {
-			return nil, directiveNoFile
-		}
-		return modelNames(p, flagValue(words, "--model-family", "-f")), directiveNoFile
 	case kindShell:
 		return completionShells, directiveNoFile
 	default:
@@ -341,34 +328,6 @@ func aliasNames() []string {
 // already on the command line.
 func loadCatalogFor(words []string) (*catalog.Catalog, error) {
 	return catalog.LoadFrom(catalog.ResolveCatalogPath(flagValue(words, "--providers")))
-}
-
-// providerOn returns the provider named by --provider/-p on the command line so
-// far, or nil when there is none (or the catalogue will not load).
-func providerOn(words []string) *catalog.Provider {
-	name := flagValue(words, "--provider", "-p")
-	if name == "" {
-		return nil
-	}
-	cat, err := loadCatalogFor(words)
-	if err != nil {
-		return nil
-	}
-	return cat.Providers[name]
-}
-
-// modelNames returns the model keys of one family, or of every family when none
-// is named.
-func modelNames(p *catalog.Provider, family string) []string {
-	if fam, ok := p.Families[family]; ok {
-		return fam.ModelKeys()
-	}
-	var models []string
-	for _, name := range p.SortedFamilyNames() {
-		models = append(models, p.Families[name].ModelKeys()...)
-	}
-	sort.Strings(models)
-	return models
 }
 
 // flagValue finds the value already given to one of names, in either the

@@ -196,12 +196,6 @@ func TestComplete_FlagValues(t *testing.T) {
 	if got, _ := complete(t, "add", "--provider", ""); !hasAll(got, "llamacpp", "openrouter") {
 		t.Errorf("providers missing from %v", got)
 	}
-	if got, _ := complete(t, "add", "-p", "llamacpp", "-f", ""); len(got) == 0 {
-		t.Error("no families offered for a named provider")
-	}
-	if got, _ := complete(t, "add", "-f", ""); len(got) != 0 {
-		t.Errorf("families offered with no provider named: %v", got)
-	}
 	if _, directive := complete(t, "apply", "--providers", ""); directive != directiveFile {
 		t.Errorf("--providers should complete paths, got %q", directive)
 	}
@@ -228,38 +222,27 @@ func TestComplete_EqualsForm(t *testing.T) {
 	if got, _ := complete(t, "add", "--provider", "=", ""); !hasAll(got, "llamacpp") {
 		t.Errorf("providers missing from %v", got)
 	}
-	// A family still resolves against a provider given in that form.
-	if got, _ := complete(t, "add", "--provider", "=", "llamacpp", "-f", ""); len(got) == 0 {
-		t.Error("no families offered for a provider given as --provider=<name>")
-	}
 }
 
-// TestComplete_ModelValues checks that --model/-m offers the catalogue's model
-// keys — every family's when no family is fixed, and just one family's when it
-// is.
+// TestComplete_ModelValues checks that --model/-m has no static candidates —
+// the catalogue no longer enumerates models — but that the flag still consumes
+// its value so a following flag completes normally rather than being read as the
+// model.
 func TestComplete_ModelValues(t *testing.T) {
 	isolateConfig(t)
 
-	// With a family fixed, only that family's models.
-	got, directive := complete(t, "add", "-p", "openrouter", "-f", "deepseek-v4", "-m", "")
-	if !hasAll(got, "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4-pro") {
-		t.Errorf("family's models missing from %v", got)
+	// No static model source, so no candidates and no error.
+	got, directive := complete(t, "add", "-p", "openrouter", "-m", "")
+	if len(got) != 0 {
+		t.Errorf("expected no model candidates, got %v", got)
 	}
 	if directive != directiveNoFile {
 		t.Errorf("directive = %q, want %q", directive, directiveNoFile)
 	}
 
-	// Without a family, every family's models are offered.
-	if got, _ := complete(t, "add", "--provider", "openrouter", "--model", ""); len(got) == 0 {
-		t.Error("no models offered for a provider with no family fixed")
-	}
-	// With no provider named at all, there is nothing to draw models from.
-	if got, _ := complete(t, "add", "-m", ""); len(got) != 0 {
-		t.Errorf("models offered with no provider: %v", got)
-	}
-	// An unknown provider yields no models rather than an error.
-	if got, _ := complete(t, "add", "-p", "nope", "-m", ""); len(got) != 0 {
-		t.Errorf("models offered for an unknown provider: %v", got)
+	// -m consumes its value: the harness flag after it still completes.
+	if got, _ := complete(t, "add", "-p", "openrouter", "-m", "some-model", "-H", ""); !hasAll(got, "opencode", "pi") {
+		t.Errorf("a flag after --model did not complete; -m may not be consuming its value: %v", got)
 	}
 }
 

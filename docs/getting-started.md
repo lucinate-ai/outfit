@@ -16,23 +16,23 @@ brew install lucinate-ai/tap/outfit
 outfit list
 ```
 
-That's the catalogue: every provider, the API key it needs (if any), and its
-model families.
+That's the catalogue: every provider, the API key it needs (if any), and which
+harnesses support it.
 
 ## 3. Dress your agent
 
-Pick a provider and family. For a hosted one, drop the key in a `.env` or
+Pick a provider and model. For a hosted one, drop the key in a `.env` or
 export it first:
 
 ```sh
 echo 'DEEPSEEK_API_KEY=sk-or-v1-...' > .env
-outfit add -p openrouter -f deepseek-v4
+outfit add -p openrouter -m deepseek/deepseek-v4-flash
 ```
 
 Or go local — no key needed:
 
 ```sh
-outfit add -p ollama -f llama
+outfit add -p ollama -m llama3.2
 ```
 
 Your agent's existing config survives — `outfit` merges the provider in,
@@ -56,7 +56,7 @@ in your project:
 ```dockerfile
 # Outfit
 PROVIDER openrouter
-FAMILY   deepseek-v4
+MODEL    deepseek/deepseek-v4-pro
 ```
 
 Then:

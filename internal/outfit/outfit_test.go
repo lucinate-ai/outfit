@@ -12,14 +12,14 @@ func TestParse(t *testing.T) {
 		want Selection
 	}{
 		{
-			name: "provider and family",
-			in:   "PROVIDER openrouter\nFAMILY deepseek-v4\n",
-			want: Selection{Provider: "openrouter", Family: "deepseek-v4"},
+			name: "provider and model",
+			in:   "PROVIDER openrouter\nMODEL deepseek/deepseek-v4-pro\n",
+			want: Selection{Provider: "openrouter", Model: "deepseek/deepseek-v4-pro"},
 		},
 		{
 			name: "case-insensitive keywords",
-			in:   "provider ollama\nFamily llama\n",
-			want: Selection{Provider: "ollama", Family: "llama"},
+			in:   "provider ollama\nModel llama3.2\n",
+			want: Selection{Provider: "ollama", Model: "llama3.2"},
 		},
 		{
 			name: "model only",
@@ -33,8 +33,8 @@ func TestParse(t *testing.T) {
 		},
 		{
 			name: "extra whitespace and tabs as separator",
-			in:   "PROVIDER\tollama\nFAMILY     llama\n",
-			want: Selection{Provider: "ollama", Family: "llama"},
+			in:   "PROVIDER\tollama\nMODEL     llama3.2\n",
+			want: Selection{Provider: "ollama", Model: "llama3.2"},
 		},
 		{
 			name: "context, output, and base url",
@@ -67,8 +67,9 @@ func TestParse(t *testing.T) {
 
 func TestParse_Errors(t *testing.T) {
 	cases := map[string]string{
-		"missing provider":  "FAMILY llama\n",
+		"missing provider":  "MODEL llama3.2\n",
 		"unknown keyword":   "PROVIDER ollama\nFLAVOUR vanilla\n",
+		"family retired":    "PROVIDER openrouter\nFAMILY deepseek-v4\n",
 		"keyword no value":  "PROVIDER\n",
 		"too many values":   "PROVIDER a b\n",
 		"duplicate keyword": "PROVIDER a\nPROVIDER b\n",
@@ -86,7 +87,6 @@ func TestParse_Errors(t *testing.T) {
 func TestFormatRoundTrip(t *testing.T) {
 	sel := Selection{
 		Provider: "openrouter",
-		Family:   "deepseek-v4",
 		Model:    "deepseek/deepseek-v4-pro",
 		Alias:    "deepseek",
 		Context:  "128000",

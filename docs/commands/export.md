@@ -25,8 +25,7 @@ outfit export -p openrouter > Outfit
 
 ## Notes
 
-- Where the configured models match a known family, export names the `FAMILY`;
-  otherwise it writes the specific `MODEL`.
+- Export names the configured `MODEL` directly.
 - It writes canonical UPPERCASE keywords, and records `CONTEXT`/`OUTPUT` only
   when the exported models agree on a value — it never guesses.
 - Secrets are never exported; keys stay in your `.env` or environment.

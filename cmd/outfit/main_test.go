@@ -123,25 +123,25 @@ func TestVersionFlag(t *testing.T) {
 
 func TestParseSelection(t *testing.T) {
 	// Long flags.
-	s, _, err := parseSelection("add", []string{"--provider", "openrouter", "--model-family", "deepseek-v4", "--model", "m"})
+	s, _, err := parseSelection("add", []string{"--provider", "openrouter", "--model", "m", "--alias", "friendly"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Provider != "openrouter" || s.Family != "deepseek-v4" || s.Model != "m" {
+	if s.Provider != "openrouter" || s.Model != "m" || s.Alias != "friendly" {
 		t.Errorf("long flags parsed wrong: %+v", s)
 	}
 
 	// Short flags.
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "-f", "llama", "-m", "x"})
+	s, _, err = parseSelection("add", []string{"-p", "ollama", "-m", "x", "-a", "y"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Provider != "ollama" || s.Family != "llama" || s.Model != "x" {
+	if s.Provider != "ollama" || s.Model != "x" || s.Alias != "y" {
 		t.Errorf("short flags parsed wrong: %+v", s)
 	}
 
 	// Missing provider.
-	if _, _, err := parseSelection("add", []string{"-f", "llama"}); err == nil {
+	if _, _, err := parseSelection("add", []string{"-m", "llama3.2"}); err == nil {
 		t.Error("expected error when --provider is missing")
 	}
 
@@ -195,8 +195,8 @@ func TestParseSelection(t *testing.T) {
 
 	// Harness flag is returned separately and never leaks into the Selection.
 	for _, args := range [][]string{
-		{"-p", "ollama", "-f", "llama", "--harness", "pi"},
-		{"-p", "ollama", "-f", "llama", "-H", "pi"},
+		{"-p", "ollama", "-m", "llama3.2", "--harness", "pi"},
+		{"-p", "ollama", "-m", "llama3.2", "-H", "pi"},
 	} {
 		_, h, err := parseSelection("add", args)
 		if err != nil {
@@ -214,7 +214,7 @@ func TestCmdAdd_ContextSize(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
 	out := captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "128k"}); err != nil {
+		if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash", "-c", "128k"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -252,7 +252,7 @@ func TestCmdAdd_OutputSize(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
 	out := captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "128k", "-o", "64k"}); err != nil {
+		if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash", "-c", "128k", "-o", "64k"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -276,10 +276,10 @@ func TestCmdAdd_OutputErrors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
-	if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-o", "32k"}); err == nil {
+	if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash", "-o", "32k"}); err == nil {
 		t.Error("expected error for --output without --context")
 	}
-	if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "8k", "-o", "32k"}); err == nil {
+	if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash", "-c", "8k", "-o", "32k"}); err == nil {
 		t.Error("expected error for an output limit exceeding the context")
 	}
 }
@@ -287,7 +287,7 @@ func TestCmdAdd_OutputErrors(t *testing.T) {
 func TestCmdAdd_ContextSizeInvalid(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
-	if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "not-a-size"}); err == nil {
+	if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash", "-c", "not-a-size"}); err == nil {
 		t.Error("expected error for an unparseable context size")
 	}
 }
@@ -298,7 +298,7 @@ func TestCmdAdd_EndToEnd(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
 	out := captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4"}); err != nil {
+		if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -322,7 +322,7 @@ func TestCmdAdd_BaseURLOverride(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-test")
 
 	out := captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "openai-compatible", "-f", "gpt", "-u", "https://proxy.example/v1"}); err != nil {
+		if err := cmdAdd([]string{"-p", "openai-compatible", "-m", "gpt-4o", "-u", "https://proxy.example/v1"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -343,9 +343,9 @@ func TestCmdAdd_Errors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 
 	if err := cmdAdd([]string{"-p", "openrouter"}); err == nil {
-		t.Error("expected error when neither family nor model given")
+		t.Error("expected error when neither model nor alias given")
 	}
-	if err := cmdAdd([]string{"-p", "bogus", "-f", "x"}); err == nil {
+	if err := cmdAdd([]string{"-p", "bogus", "-m", "x"}); err == nil {
 		t.Error("expected error for unknown provider")
 	}
 }
@@ -358,9 +358,9 @@ func TestCmdRemove_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Seed a family, then remove the whole provider via the CLI.
+	// Seed a model, then remove the whole provider via the CLI.
 	cat, _ := catalog.Load()
-	block, dm, _ := catalog.BuildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
+	block, dm, _ := catalog.BuildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek/deepseek-v4-flash", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-x",
 	}))
 	if err := opencode.WriteConfig(path, "openrouter", block, dm); err != nil {
@@ -381,43 +381,38 @@ func TestCmdRemove_EndToEnd(t *testing.T) {
 	}
 }
 
-func TestCmdRemove_FamilyAndNoOp(t *testing.T) {
+func TestCmdRemove_ModelAndNoOp(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	path, _ := opencode.ResolveConfigFile()
 
 	cat, _ := catalog.Load()
-	block, dm, _ := catalog.BuildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek-v4", "", "", envMap(map[string]string{
+	block, dm, _ := catalog.BuildProviderBlock("openrouter", cat.Providers["openrouter"], "deepseek/deepseek-v4-flash", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-x",
 	}))
 	opencode.WriteConfig(path, "openrouter", block, dm)
 
-	// Removing the family should clear all its models (and the default model,
-	// which pointed at one of them).
+	// Removing the named model should clear it (and the default model, which
+	// pointed at it).
 	captureStdout(t, func() {
-		if err := cmdRemove([]string{"-p", "openrouter", "-f", "deepseek-v4"}); err != nil {
-			t.Fatalf("cmdRemove family: %v", err)
+		if err := cmdRemove([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash"}); err != nil {
+			t.Fatalf("cmdRemove model: %v", err)
 		}
 	})
 	m := readConfigMap(t, path)
 	or := m["provider"].(map[string]any)["openrouter"].(map[string]any)
 	if models, ok := or["models"].(map[string]any); ok && len(models) != 0 {
-		t.Errorf("family models not removed: %v", models)
+		t.Errorf("model not removed: %v", models)
 	}
 
 	// A second removal is a no-op.
 	out := captureStdout(t, func() {
-		if err := cmdRemove([]string{"-p", "openrouter", "-f", "deepseek-v4"}); err != nil {
+		if err := cmdRemove([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash"}); err != nil {
 			t.Fatalf("cmdRemove no-op: %v", err)
 		}
 	})
 	if !strings.Contains(out, "Nothing to remove") {
 		t.Errorf("expected no-op message, got:\n%s", out)
-	}
-
-	// Unknown family is an error.
-	if err := cmdRemove([]string{"-p", "openrouter", "-f", "nope"}); err == nil {
-		t.Error("expected error for unknown family")
 	}
 }
 
@@ -427,11 +422,9 @@ func TestCmdList_ProvidersOverride(t *testing.T) {
 	os.WriteFile(path, []byte(`providers:
   mine:
     description: My custom provider
-    families:
-      base:
-        defaultModel: m1
-        models:
-          m1: {name: Model One}
+    npm: "@ai-sdk/openai-compatible"
+    options:
+      baseURL: http://localhost:9999/v1
 `), 0o600)
 
 	// Via the --providers flag.
@@ -462,10 +455,14 @@ func TestCmdList(t *testing.T) {
 			t.Fatalf("cmdList: %v", err)
 		}
 	})
-	for _, want := range []string{"openrouter", "amazon-bedrock", "family", "default:"} {
+	for _, want := range []string{"openrouter", "amazon-bedrock", "api key", "harnesses"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output missing %q:\n%s", want, out)
 		}
+	}
+	// The catalogue no longer enumerates models, so no family lines appear.
+	if strings.Contains(out, "family ") {
+		t.Errorf("list should not print family lines:\n%s", out)
 	}
 }
 

@@ -204,7 +204,7 @@ func TestCmdServe_DerivesBadContext(t *testing.T) {
 func TestCmdServe_NoPresetNoModel(t *testing.T) {
 	dir := t.TempDir()
 	outfitPath := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfitPath, "PROVIDER llamacpp\nFAMILY local\n")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\n")
 	if err := cmdServe([]string{"--dry-run", outfitPath}); err == nil {
 		t.Error("expected error when there is neither a PRESET nor a MODEL")
 	}

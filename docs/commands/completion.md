@@ -16,7 +16,6 @@ TAB completes commands, flags, and — context-aware — the values that follow
 them:
 
 - provider names after `-p` (honouring a `--providers` override on the line)
-- family and model names, scoped to the provider you've already typed
 - harness names after `-H`, `--harness`, or `--set`
 - your [registered aliases](alias.md) wherever an Outfit path goes —
   `outfit unalias <TAB>` offers exactly the names you have

@@ -16,10 +16,8 @@ func envMap(m map[string]string) func(string) string {
 }
 
 // TestCatalogIntegrity guards the embedded providers.yaml against typos and
-// drift from the opencode config schema (https://opencode.ai/docs/config/):
-// the top-level model is "provider/model", so every family's defaultModel must
-// be a real model key, custom providers must declare an npm package, and an
-// apiKeyPrefix is meaningless without an apiKeyEnv.
+// drift: a custom provider supplying a baseURL must declare an npm package, and
+// an apiKeyPrefix is meaningless without an apiKeyEnv.
 func TestCatalogIntegrity(t *testing.T) {
 	cat, err := Load()
 	if err != nil {
@@ -44,50 +42,6 @@ func TestCatalogIntegrity(t *testing.T) {
 		if _, hasBaseURL := p.Options["baseURL"]; hasBaseURL && p.NPM == "" {
 			t.Errorf("provider %q: baseURL set without npm package", name)
 		}
-		if len(p.Families) == 0 {
-			t.Errorf("provider %q: no model families", name)
-		}
-		for fname, fam := range p.Families {
-			if len(fam.Models) == 0 {
-				t.Errorf("provider %q family %q: no models", name, fname)
-			}
-			if fam.DefaultModel == "" {
-				t.Errorf("provider %q family %q: no defaultModel", name, fname)
-				continue
-			}
-			if _, ok := fam.Models[fam.DefaultModel]; !ok {
-				t.Errorf("provider %q family %q: defaultModel %q is not one of its models", name, fname, fam.DefaultModel)
-			}
-		}
-	}
-}
-
-// TestMatchFamily checks the reverse lookup used by `outfit export`: a set of
-// configured model keys maps back to a family only when it matches exactly.
-func TestMatchFamily(t *testing.T) {
-	cat, _ := Load()
-	p := cat.Providers["openrouter"]
-	famKeys := p.Families["deepseek-v4"].ModelKeys()
-
-	if got := MatchFamily(p, famKeys); got != "deepseek-v4" {
-		t.Errorf("exact match = %q, want deepseek-v4", got)
-	}
-
-	// A superset (all the family's models plus a stray) is not a match.
-	if got := MatchFamily(p, append(append([]string{}, famKeys...), "stray-model")); got != "" {
-		t.Errorf("superset matched %q, want no match", got)
-	}
-
-	// A subset (one model short) is not a match either.
-	if len(famKeys) > 1 {
-		if got := MatchFamily(p, famKeys[:len(famKeys)-1]); got != "" {
-			t.Errorf("subset matched %q, want no match", got)
-		}
-	}
-
-	// Unrelated keys match nothing.
-	if got := MatchFamily(p, []string{"something-else"}); got != "" {
-		t.Errorf("unrelated keys matched %q, want no match", got)
 	}
 }
 
@@ -126,11 +80,11 @@ func TestBuildPiProvider_OpenRouter(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["openrouter"]
 
-	prov, model, err := BuildPiProvider("openrouter", p, "deepseek-v4", "", "", noEnv)
+	prov, model, err := BuildPiProvider("openrouter", p, "deepseek/deepseek-v4-pro", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
-	if model != "deepseek/deepseek-v4-flash" {
+	if model != "deepseek/deepseek-v4-pro" {
 		t.Errorf("default model = %q", model)
 	}
 	if prov.API != "openai-completions" {
@@ -143,13 +97,8 @@ func TestBuildPiProvider_OpenRouter(t *testing.T) {
 	if prov.APIKey != "$DEEPSEEK_API_KEY" {
 		t.Errorf("apiKey = %q, want $DEEPSEEK_API_KEY interpolation", prov.APIKey)
 	}
-	if len(prov.Models) != 2 {
-		t.Fatalf("got %d models, want 2", len(prov.Models))
-	}
-	for _, m := range prov.Models {
-		if m.ID == "" || m.Name == "" {
-			t.Errorf("model missing id/name: %+v", m)
-		}
+	if len(prov.Models) != 1 || prov.Models[0].ID != "deepseek/deepseek-v4-pro" {
+		t.Fatalf("models = %+v, want a single deepseek/deepseek-v4-pro entry", prov.Models)
 	}
 }
 
@@ -157,7 +106,7 @@ func TestBuildPiProvider_BaseURLFallbackAndOverride(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["ollama"] // pi block has no baseUrl; falls back to options.baseURL
 
-	prov, _, err := BuildPiProvider("ollama", p, "llama", "", "", noEnv)
+	prov, _, err := BuildPiProvider("ollama", p, "llama3.2", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
@@ -166,7 +115,7 @@ func TestBuildPiProvider_BaseURLFallbackAndOverride(t *testing.T) {
 	}
 
 	// Flag override wins over everything.
-	prov, _, err = BuildPiProvider("ollama", p, "llama", "", "https://flag.example/v1", noEnv)
+	prov, _, err = BuildPiProvider("ollama", p, "llama3.2", "https://flag.example/v1", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
@@ -175,7 +124,7 @@ func TestBuildPiProvider_BaseURLFallbackAndOverride(t *testing.T) {
 	}
 
 	// OUTFIT_BASE_URL wins when no flag is given.
-	prov, _, err = BuildPiProvider("ollama", p, "llama", "", "", envMap(map[string]string{
+	prov, _, err = BuildPiProvider("ollama", p, "llama3.2", "", envMap(map[string]string{
 		baseURLEnv: "https://from-env.example/v1",
 	}))
 	if err != nil {
@@ -190,7 +139,7 @@ func TestBuildPiProvider_ModelOverrideNoKey(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["llamacpp"] // apiKeyOptional, and the var is unset here
 
-	prov, model, err := BuildPiProvider("llamacpp", p, "", "my-local", "", noEnv)
+	prov, model, err := BuildPiProvider("llamacpp", p, "my-local", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
@@ -210,7 +159,7 @@ func TestBuildPiProvider_ModelOverrideNoKey(t *testing.T) {
 func TestBuildPiProvider_UnsupportedProvider(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["amazon-bedrock"] // no pi block
-	if _, _, err := BuildPiProvider("amazon-bedrock", p, "claude", "", "", noEnv); err == nil {
+	if _, _, err := BuildPiProvider("amazon-bedrock", p, "some-model", "", noEnv); err == nil {
 		t.Fatal("expected error for a provider with no pi config")
 	}
 }
@@ -241,12 +190,9 @@ func TestLoadCatalogFrom(t *testing.T) {
 	os.WriteFile(path, []byte(`providers:
   mine:
     description: My custom provider
-    families:
-      base:
-        defaultModel: m1
-        models:
-          m1:
-            name: Model One
+    npm: "@ai-sdk/openai-compatible"
+    options:
+      baseURL: http://localhost:9999/v1
 `), 0o600)
 
 	cat, err := LoadFrom(path)
@@ -270,7 +216,7 @@ func TestBuildProviderBlock_OpenRouterKeyReferenced(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["openrouter"]
 
-	block, model, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
+	block, model, err := BuildProviderBlock("openrouter", p, "deepseek/deepseek-v4-flash", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-abc",
 	}))
 	if err != nil {
@@ -288,15 +234,15 @@ func TestBuildProviderBlock_OpenRouterKeyReferenced(t *testing.T) {
 	if opts["apiKey"] == "sk-or-v1-abc" {
 		t.Error("the resolved secret must not be written to the config")
 	}
-	if models := block["models"].(map[string]any); len(models) != 2 {
-		t.Errorf("got %d models, want 2", len(models))
+	if models := block["models"].(map[string]any); len(models) != 1 {
+		t.Errorf("got %d models, want 1", len(models))
 	}
 }
 
 func TestBuildProviderBlock_RequiredKeyMissing(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["openrouter"]
-	if _, _, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "", noEnv); err == nil {
+	if _, _, err := BuildProviderBlock("openrouter", p, "deepseek/deepseek-v4-flash", "", noEnv); err == nil {
 		t.Fatal("expected error when required key is missing")
 	}
 }
@@ -304,7 +250,7 @@ func TestBuildProviderBlock_RequiredKeyMissing(t *testing.T) {
 func TestBuildProviderBlock_KeyPrefixMismatch(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["openrouter"]
-	_, _, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "", envMap(map[string]string{
+	_, _, err := BuildProviderBlock("openrouter", p, "deepseek/deepseek-v4-flash", "", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "wrong-prefix-key",
 	}))
 	if err == nil || !strings.Contains(err.Error(), "start with") {
@@ -316,7 +262,7 @@ func TestBuildProviderBlock_BedrockNoKeyRegionFromEnv(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["amazon-bedrock"]
 
-	block, model, err := BuildProviderBlock("amazon-bedrock", p, "claude", "", "", envMap(map[string]string{
+	block, model, err := BuildProviderBlock("amazon-bedrock", p, "anthropic.claude-3-5-sonnet", "", envMap(map[string]string{
 		"AWS_REGION": "eu-west-2",
 	}))
 	if err != nil {
@@ -338,7 +284,7 @@ func TestBuildProviderBlock_CustomProviderDefaults(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, model, err := BuildProviderBlock("ollama", p, "llama", "", "", noEnv)
+	block, model, err := BuildProviderBlock("ollama", p, "llama3.2", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
@@ -358,7 +304,7 @@ func TestBuildProviderBlock_ModelOverrideAddsEntry(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, model, err := BuildProviderBlock("ollama", p, "", "my-model", "", noEnv)
+	block, model, err := BuildProviderBlock("ollama", p, "my-model", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
@@ -372,11 +318,19 @@ func TestBuildProviderBlock_ModelOverrideAddsEntry(t *testing.T) {
 	}
 }
 
-func TestBuildProviderBlock_UnknownFamily(t *testing.T) {
+func TestBuildProviderBlock_NoModelIsNoDefault(t *testing.T) {
 	cat, _ := Load()
-	p := cat.Providers["openrouter"]
-	if _, _, err := BuildProviderBlock("openrouter", p, "nope", "", "", noEnv); err == nil {
-		t.Fatal("expected error for unknown family")
+	p := cat.Providers["llamacpp"]
+
+	block, model, err := BuildProviderBlock("llamacpp", p, "", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildProviderBlock: %v", err)
+	}
+	if model != "" {
+		t.Errorf("default model = %q, want empty when no model is named", model)
+	}
+	if _, ok := block["models"]; ok {
+		t.Errorf("block should carry no models when none is named, got %v", block["models"])
 	}
 }
 
@@ -387,7 +341,7 @@ func TestBuildProviderBlock_BaseURLFlagOverrides(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("ollama", p, "llama3.2", "https://flag.example/v1", envMap(map[string]string{
 		"OLLAMA_BASE_URL": "https://per-provider.example/v1",
 	}))
 	if err != nil {
@@ -405,7 +359,7 @@ func TestBuildProviderBlock_BaseURLFromEnv(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("ollama", p, "llama3.2", "", envMap(map[string]string{
 		baseURLEnv: "https://from-env.example/v1",
 	}))
 	if err != nil {
@@ -423,7 +377,7 @@ func TestBuildProviderBlock_BaseURLFlagBeatsEnv(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "https://flag.example/v1", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("ollama", p, "llama3.2", "https://flag.example/v1", envMap(map[string]string{
 		baseURLEnv: "https://from-env.example/v1",
 	}))
 	if err != nil {
@@ -442,7 +396,7 @@ func TestBuildProviderBlock_BaseURLOnPlainProvider(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["openrouter"]
 
-	block, _, err := BuildProviderBlock("openrouter", p, "deepseek-v4", "", "https://gateway.example/v1", envMap(map[string]string{
+	block, _, err := BuildProviderBlock("openrouter", p, "deepseek/deepseek-v4-flash", "https://gateway.example/v1", envMap(map[string]string{
 		"DEEPSEEK_API_KEY": "sk-or-v1-abc",
 	}))
 	if err != nil {
@@ -460,7 +414,7 @@ func TestBuildProviderBlock_NoBaseURLOverride(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["ollama"]
 
-	block, _, err := BuildProviderBlock("ollama", p, "llama", "", "", noEnv)
+	block, _, err := BuildProviderBlock("ollama", p, "llama3.2", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
@@ -502,7 +456,7 @@ func TestBuildPiProvider_OptionalKey(t *testing.T) {
 		}
 		return ""
 	}
-	prov, _, err := BuildPiProvider("llamacpp", p, "local", "", "", withKey)
+	prov, _, err := BuildPiProvider("llamacpp", p, "local-model", "", withKey)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
@@ -510,7 +464,7 @@ func TestBuildPiProvider_OptionalKey(t *testing.T) {
 		t.Errorf("apiKey = %q, want the $VAR reference when the key is set", prov.APIKey)
 	}
 
-	prov, _, err = BuildPiProvider("llamacpp", p, "local", "", "", noEnv)
+	prov, _, err = BuildPiProvider("llamacpp", p, "local-model", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
@@ -523,7 +477,7 @@ func TestBuildPiProvider_OptionalKey(t *testing.T) {
 // the key can be exported after the Outfit is applied.
 func TestBuildPiProvider_RequiredKeyKeepsReference(t *testing.T) {
 	cat, _ := Load()
-	prov, _, err := BuildPiProvider("openai-compatible", cat.Providers["openai-compatible"], "gpt", "", "", noEnv)
+	prov, _, err := BuildPiProvider("openai-compatible", cat.Providers["openai-compatible"], "gpt-4o", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
@@ -542,7 +496,7 @@ func TestBuildProviderBlock_LlamacppReferencesKeyForRemote(t *testing.T) {
 		}
 		return ""
 	}
-	block, _, err := BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local", "", "http://198.51.100.1:8000/v1", resolve)
+	block, _, err := BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local-model", "http://198.51.100.1:8000/v1", resolve)
 	if err != nil {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
@@ -551,7 +505,7 @@ func TestBuildProviderBlock_LlamacppReferencesKeyForRemote(t *testing.T) {
 		t.Errorf("apiKey = %v, want the env reference", options["apiKey"])
 	}
 
-	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local", "", "", noEnv)
+	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local-model", "", noEnv)
 	if err != nil {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
@@ -562,7 +516,7 @@ func TestBuildProviderBlock_LlamacppReferencesKeyForRemote(t *testing.T) {
 
 	// A remote endpoint keeps the reference even with the key unset, so setting
 	// it before the agent runs is enough.
-	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local", "", "http://198.51.100.1:8000/v1", noEnv)
+	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local-model", "http://198.51.100.1:8000/v1", noEnv)
 	if err != nil {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
@@ -595,7 +549,7 @@ func TestBuildPiProvider_RemoteOptionalKeyKeepsReference(t *testing.T) {
 	cat, _ := Load()
 	p := cat.Providers["llamacpp"] // apiKeyOptional
 
-	prov, _, err := BuildPiProvider("llamacpp", p, "local", "", "http://198.51.100.1:8000/v1", noEnv)
+	prov, _, err := BuildPiProvider("llamacpp", p, "local-model", "http://198.51.100.1:8000/v1", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
@@ -605,7 +559,7 @@ func TestBuildPiProvider_RemoteOptionalKeyKeepsReference(t *testing.T) {
 
 	// The local server keeps the placeholder: it needs no key, and a reference
 	// to a variable set nowhere would hide its models in /model.
-	prov, _, err = BuildPiProvider("llamacpp", p, "local", "", "http://127.0.0.1:8080/v1", noEnv)
+	prov, _, err = BuildPiProvider("llamacpp", p, "local-model", "http://127.0.0.1:8080/v1", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}

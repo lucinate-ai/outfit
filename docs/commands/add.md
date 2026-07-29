@@ -5,29 +5,28 @@ the agent's config — other providers, your theme, even your comments stay
 exactly where you left them.
 
 ```sh
-outfit add --provider <name> [--model-family <family>] [--model <id>]
-           [--alias <name>] [--context <size>] [--output <size>]
-           [--base-url <url>]
+outfit add --provider <name> [--model <id>] [--alias <name>]
+           [--context <size>] [--output <size>] [--base-url <url>]
 ```
 
 ## Examples
 
 ```sh
-# A whole family from OpenRouter (key from .env or the environment)
-outfit add -p openrouter -f deepseek-v4
+# A model from OpenRouter (key from .env or the environment)
+outfit add -p openrouter -m deepseek/deepseek-v4-flash
 
 # A local Ollama model (no key required)
-outfit add -p ollama -f llama
+outfit add -p ollama -m llama3.2
 
 # Claude on AWS Bedrock (uses your AWS credentials)
-outfit add -p amazon-bedrock -f claude
+outfit add -p amazon-bedrock -m anthropic.claude-3-5-sonnet
 
 # Any OpenAI-compatible endpoint
 OPENAI_API_KEY=sk-... \
   outfit add -p openai-compatible -m my-model --base-url https://my-endpoint/v1
 
-# Pin a specific default model within a family
-outfit add -p openrouter -f deepseek-v4 -m deepseek/deepseek-v4-pro
+# Pin a specific default model
+outfit add -p openrouter -m deepseek/deepseek-v4-pro
 
 # Record the context window and cap the output tokens
 outfit add -p llamacpp -m my-model -c 128k -o 32k
@@ -38,7 +37,6 @@ outfit add -p llamacpp -m my-model -c 128k -o 32k
 | Flag | Meaning |
 | ---- | ------- |
 | `-p`, `--provider` | Provider name — see [`outfit list`](list.md). Required. |
-| `-f`, `--model-family` | Family to add; brings all its models, its default becomes the default model |
 | `-m`, `--model` | The provider-native model id to add or pin as the default |
 | `-a`, `--alias` | Friendly name for the model — the key your agent shows |
 | `-c`, `--context` | Context window; `128k`, `1m`, `200000`, even `128 K tokens` all work |
@@ -49,8 +47,7 @@ outfit add -p llamacpp -m my-model -c 128k -o 32k
 
 ## Notes
 
-- You need at least one of `--model-family`, `--model`, or `--alias` alongside
-  the provider.
+- You need at least one of `--model` or `--alias` alongside the provider.
 - API keys are read from a `.env` beside the `Outfit` — or, for `outfit add`,
   which has no Outfit, from a `.env` in the current directory — then your
   environment, and

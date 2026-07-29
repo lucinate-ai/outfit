@@ -1,8 +1,7 @@
 # outfit list
 
 Show the catalogue: every provider `outfit` can configure, the API key each one
-needs (if any), which harnesses support it, and its model families with their
-default models.
+needs (if any), and which harnesses support it.
 
 ```sh
 outfit list
