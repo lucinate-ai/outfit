@@ -3,9 +3,9 @@
 `outfit` currently has no code that fetches model metadata over the network; the only HTTP
 client (`internal/remote/remote.go`, a 10-minute-timeout client for AWS Lambda control) is
 unrelated. After `retire-model-families`, the catalogue is provider plumbing only, so there
-is no static list of models to browse. Each provider, however, exposes its own model list:
-OpenAI-compatible servers at `GET /v1/models`, Ollama at `GET /api/tags`. This change adds a
-small, best-effort discovery layer that reads those.
+is no static list of models to browse. Each provider, however, exposes its own model list
+over an OpenAI-compatible `GET {baseURL}/models` — including Ollama and llama.cpp. This
+change adds a small, best-effort discovery layer that reads it.
 
 ## Goals / Non-Goals
 
@@ -26,12 +26,13 @@ small, best-effort discovery layer that reads those.
 
 ## Decisions
 
-**Protocol selected by provider kind, not a new catalogue field where avoidable.** The
-existing `pi.api` value (`openai-completions`, `openai-responses`,
-`google-generative-ai`) plus the provider id already distinguish OpenAI-compatible from
-Ollama. Prefer deriving the protocol from those; add an explicit optional `discovery:`
-field to `providers.yaml` only if the mapping proves ambiguous. Keeping the catalogue free
-of a new required field preserves the "plumbing only" outcome of the prior change.
+**One uniform OpenAI-compatible query, no per-provider protocol switch.** Ollama's
+compatibility layer serves `GET /v1/models` in the same `{"data":[{"id":…}]}` shape as
+OpenRouter, vLLM, llama.cpp, and the generic endpoint, so a single `GET {baseURL}/models`
+path covers every discoverable provider. This removed the need for a separate Ollama
+`/api/tags` adapter and for any protocol field on the provider — discoverability is simply
+"does a base URL resolve?", which keeps the catalogue plumbing-only. AWS Bedrock resolves
+no base URL, so it is not discoverable (its SDK `ListFoundationModels` is out of scope).
 
 **Reuse the base-URL and key resolution the selection path already uses.** Discovery calls
 the same `resolve` closure (`.env` beside the Outfit / working dir, then environment) and
@@ -75,9 +76,9 @@ on discovery.
 
 ## Open Questions
 
-- Do we derive the discovery protocol purely from provider id / `pi.api`, or add an
-  explicit `discovery:` field to `providers.yaml`? Resolve during implementation against
-  the actual provider set.
+- Resolved during implementation: no `discovery:` field or protocol switch is needed —
+  every discoverable provider answers `GET {baseURL}/models`, and discoverability reduces
+  to whether a base URL resolves.
 - Should `outfit list` (no flag) opportunistically show discovered models for *local*
   providers only (llama.cpp/Ollama/vLLM on localhost), where the call is cheap and offline
-  is the norm? Left out for now to keep plain `list` network-free.
+  is the norm? Left out for now to keep plain `list` network-free; `--models` is explicit.

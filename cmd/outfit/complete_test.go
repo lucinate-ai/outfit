@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -231,18 +233,41 @@ func TestComplete_EqualsForm(t *testing.T) {
 func TestComplete_ModelValues(t *testing.T) {
 	isolateConfig(t)
 
-	// No static model source, so no candidates and no error.
-	got, directive := complete(t, "add", "-p", "openrouter", "-m", "")
+	// amazon-bedrock has no models endpoint (no base URL), so discovery makes no
+	// network call and offers nothing — the offline, no-candidates path.
+	got, directive := complete(t, "add", "-p", "amazon-bedrock", "-m", "")
 	if len(got) != 0 {
-		t.Errorf("expected no model candidates, got %v", got)
+		t.Errorf("expected no candidates for a non-discoverable provider, got %v", got)
 	}
 	if directive != directiveNoFile {
 		t.Errorf("directive = %q, want %q", directive, directiveNoFile)
 	}
 
 	// -m consumes its value: the harness flag after it still completes.
-	if got, _ := complete(t, "add", "-p", "openrouter", "-m", "some-model", "-H", ""); !hasAll(got, "opencode", "pi") {
+	if got, _ := complete(t, "add", "-p", "amazon-bedrock", "-m", "some-model", "-H", ""); !hasAll(got, "opencode", "pi") {
 		t.Errorf("a flag after --model did not complete; -m may not be consuming its value: %v", got)
+	}
+}
+
+// TestComplete_ModelDiscovery checks that --model/-m offers the models a
+// provider's endpoint currently serves, sourced live from a stub.
+func TestComplete_ModelDiscovery(t *testing.T) {
+	isolateConfig(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"disc-a"},{"id":"disc-b"}]}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	provPath := filepath.Join(dir, "providers.yaml")
+	mustWrite(t, provPath, "providers:\n  stub:\n    description: Stub\n    npm: \"@ai-sdk/openai-compatible\"\n    options:\n      baseURL: "+srv.URL+"\n")
+
+	got, directive := complete(t, "add", "--providers", provPath, "-p", "stub", "-m", "")
+	if !hasAll(got, "disc-a", "disc-b") {
+		t.Errorf("discovered models not offered: %v", got)
+	}
+	if directive != directiveNoFile {
+		t.Errorf("directive = %q, want %q", directive, directiveNoFile)
 	}
 }
 

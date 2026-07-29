@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
@@ -476,6 +479,53 @@ func TestCmdList(t *testing.T) {
 	// The catalogue no longer enumerates models, so no family lines appear.
 	if strings.Contains(out, "family ") {
 		t.Errorf("list should not print family lines:\n%s", out)
+	}
+}
+
+// TestCmdList_Models covers `outfit list --models`: it fetches each provider's
+// current models live, and a plain `outfit list` makes no network request.
+func TestCmdList_Models(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(`{"data":[{"id":"model-b"},{"id":"model-a"}]}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	provPath := filepath.Join(dir, "providers.yaml")
+	mustWrite(t, provPath, "providers:\n  stub:\n    description: Stub provider\n    npm: \"@ai-sdk/openai-compatible\"\n    options:\n      baseURL: "+srv.URL+"\n")
+
+	// --models on a single provider prints its live models (sorted).
+	out := captureStdout(t, func() {
+		if err := cmdList([]string{"--providers", provPath, "--models", "stub"}); err != nil {
+			t.Fatalf("cmdList --models: %v", err)
+		}
+	})
+	if !strings.Contains(out, "model model-a") || !strings.Contains(out, "model model-b") {
+		t.Errorf("discovered models missing from output:\n%s", out)
+	}
+	if atomic.LoadInt32(&hits) == 0 {
+		t.Error("expected --models to make a discovery request")
+	}
+
+	// A plain list makes no network request at all.
+	before := atomic.LoadInt32(&hits)
+	out = captureStdout(t, func() {
+		if err := cmdList([]string{"--providers", provPath}); err != nil {
+			t.Fatalf("cmdList: %v", err)
+		}
+	})
+	if atomic.LoadInt32(&hits) != before {
+		t.Error("a plain `outfit list` should not hit the network")
+	}
+	if strings.Contains(out, "model model-a") {
+		t.Errorf("plain list should not print models:\n%s", out)
+	}
+
+	// An unknown provider positional is an error.
+	if err := cmdList([]string{"--providers", provPath, "nope"}); err == nil {
+		t.Error("expected an error for an unknown provider filter")
 	}
 }
 

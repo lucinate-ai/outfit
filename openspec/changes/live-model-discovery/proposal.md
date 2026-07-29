@@ -12,9 +12,10 @@ hub like Hugging Face, which does not know what a given provider actually serves
 
 - Add an optional live model-discovery layer that, for a selected provider, fetches the
   models the provider currently serves from the provider's own endpoint:
-  - OpenRouter: `GET {baseURL}/models` (`https://openrouter.ai/api/v1/models`)
-  - Generic OpenAI-compatible / vLLM / llama.cpp: `GET {baseURL}/models`
-  - Ollama: `GET {baseURL}/api/tags`
+  - OpenAI-compatible `GET {baseURL}/models` for every discoverable provider —
+    OpenRouter (`https://openrouter.ai/api/v1/models`), vLLM, llama.cpp, the generic
+    `openai-compatible` endpoint, and Ollama (whose compatibility layer serves
+    `/v1/models`).
   - (Amazon Bedrock `ListFoundationModels` is out of scope for this change.)
 - Surface discovered models through `outfit list --models <provider>` (and enrich the
   per-provider block of `outfit list` when a discovery source is available).

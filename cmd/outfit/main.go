@@ -60,6 +60,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/catalog"
 	"github.com/lucinate-ai/outfit/internal/config"
 	"github.com/lucinate-ai/outfit/internal/contextsize"
+	"github.com/lucinate-ai/outfit/internal/discovery"
 	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
@@ -1114,7 +1115,9 @@ func cmdShow(args []string) error {
 func cmdList(args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
 	var providers string
+	var showModels bool
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
+	fs.BoolVar(&showModels, "models", false, "also fetch each provider's current models live from its endpoint")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1123,9 +1126,27 @@ func cmdList(args []string) error {
 	if err != nil {
 		return err
 	}
+
+	// An optional positional argument narrows the listing to one provider, which
+	// is the natural way to ask for a single provider's live models.
+	names := cat.SortedProviderNames()
+	if rest := fs.Args(); len(rest) > 0 {
+		if _, ok := cat.Providers[rest[0]]; !ok {
+			return fmt.Errorf("unknown provider %q (see `outfit list`)", rest[0])
+		}
+		names = []string{rest[0]}
+	}
+
+	// Only resolve keys and hit the network when --models is asked for; a plain
+	// list stays entirely offline.
+	var resolve func(string) string
+	if showModels {
+		resolve = opencode.EnvResolver("")
+	}
+
 	var b strings.Builder
 	b.WriteString("Available providers:\n")
-	for _, name := range cat.SortedProviderNames() {
+	for _, name := range names {
 		p := cat.Providers[name]
 		fmt.Fprintf(&b, "\n  %s — %s\n", name, p.Description)
 		if p.APIKeyEnv != "" {
@@ -1140,6 +1161,15 @@ func cmdList(args []string) error {
 			harnesses = "opencode, pi"
 		}
 		fmt.Fprintf(&b, "    harnesses: %s\n", harnesses)
+		if showModels {
+			if models, err := discovery.Models(p, "", resolve); err == nil && len(models) > 0 {
+				for _, m := range models {
+					fmt.Fprintf(&b, "    model %s\n", m)
+				}
+			} else {
+				b.WriteString("    models: (none found)\n")
+			}
+		}
 	}
 	fmt.Print(b.String())
 	return nil

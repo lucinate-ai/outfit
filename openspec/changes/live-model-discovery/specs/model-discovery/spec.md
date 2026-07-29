@@ -3,35 +3,33 @@
 ### Requirement: Per-provider model discovery
 
 The system SHALL be able to fetch the set of models a provider currently serves from that
-provider's own HTTP endpoint, using the protocol appropriate to the provider:
-
-- an OpenAI-compatible provider (OpenRouter, vLLM, llama.cpp, generic
-  `openai-compatible`) SHALL be queried with `GET {baseURL}/models`, reading model ids
-  from the returned `data[].id` list;
-- an Ollama provider SHALL be queried with `GET {baseURL}/api/tags`, reading model names
-  from the returned `models[].name` list.
+provider's own OpenAI-compatible endpoint with `GET {baseURL}/models`, reading model ids
+from the returned `data[].id` list and returning them in stable order. This covers every
+discoverable provider — OpenRouter, vLLM, llama.cpp, the generic `openai-compatible`
+endpoint, and Ollama (whose compatibility layer serves `/v1/models`).
 
 The base URL SHALL be resolved with the same precedence a selection uses (`--base-url`,
-then `OUTFIT_BASE_URL`, then the provider's catalogue value). When the provider declares an
-API key variable and it resolves to a value, that value SHALL be sent as the request's
-authorization; a resolved key SHALL NOT be written to disk or logged.
+then `OUTFIT_BASE_URL`, then the provider's catalogue value, then its Pi endpoint). A
+provider with no resolvable base URL (for example AWS Bedrock) is not discoverable. When
+the provider declares an API key variable and it resolves to a value, that value SHALL be
+sent as the request's `Authorization` header; a resolved key SHALL NOT be written to disk
+or logged.
 
-#### Scenario: OpenAI-compatible provider lists its models
+#### Scenario: A provider lists the models it serves
 
 - **WHEN** discovery runs for a provider whose endpoint answers `GET {baseURL}/models`
   with a `data` array of objects carrying `id`
-- **THEN** those ids are returned as the provider's discovered models
+- **THEN** those ids are returned, in stable order, as the provider's discovered models
 
-#### Scenario: Ollama lists its local models
+#### Scenario: A provider with no endpoint is not discoverable
 
-- **WHEN** discovery runs for an Ollama provider and `GET {baseURL}/api/tags` returns a
-  `models` array of objects carrying `name`
-- **THEN** those names are returned as the provider's discovered models
+- **WHEN** discovery runs for a provider with no resolvable base URL (such as AWS Bedrock)
+- **THEN** discovery reports the provider is not discoverable and returns no models
 
 #### Scenario: The resolved key is only sent, never stored
 
 - **WHEN** discovery queries a provider whose key resolves from the environment
-- **THEN** the key is sent as a request header and never written to any file or log
+- **THEN** the key is sent as an `Authorization` header and never written to any file or log
 
 ### Requirement: Discovery is best-effort and quiet
 
