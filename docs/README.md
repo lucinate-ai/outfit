@@ -14,9 +14,9 @@ Four words carry the whole tool:
 - **Harness** — the coding agent being configured. opencode is the default;
   Pi is also supported. Chosen at runtime, so the same selection works for
   either. See [`outfit harness`](commands/harness.md).
-- **Provider and family** — what `outfit` can configure, from a built-in
+- **Provider** — what `outfit` can configure, from a built-in
   catalogue: OpenRouter, AWS Bedrock, Ollama, llama.cpp, vLLM, or any
-  OpenAI-compatible endpoint, each with named model families. See
+  OpenAI-compatible endpoint. See
   [`outfit list`](commands/list.md).
 - **Outfit file** — a small, declarative file (like a `Dockerfile`, but for
   your agent's model) that captures one selection so you can commit it and

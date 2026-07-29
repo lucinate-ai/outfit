@@ -1,38 +1,17 @@
-# Shell Completion Specification
+## REMOVED Requirements
 
-## Purpose
+### Requirement: Completion coverage
 
-Define tab completion: the `outfit completion <shell>` scripts and the hidden
-`outfit __complete` protocol they call, which is the single source of truth for
-what completes to what across bash, zsh, and PowerShell.
-## Requirements
-### Requirement: Completion scripts
+**Reason**: The requirement listed family names among the completable values and
+carried a scenario scoping model completion to a typed family. Families are
+removed, so that value and scenario go; the family-free coverage rules are
+restated by the "Completion surface coverage" requirement below.
 
-`outfit completion <shell>` SHALL print a completion script for `bash`, `zsh`,
-or `powershell`, and SHALL fail listing the supported shells when the argument
-is missing or unsupported. The scripts SHALL be thin: each hands the words
-typed so far to the hidden `outfit __complete` and inserts its results, so the
-candidates never differ between shells.
+**Migration**: Completion offers provider, harness, alias, and shell values;
+`--model`/`-m` has no static candidate source now (a follow-up change sources it
+live from each provider).
 
-#### Scenario: Unsupported shell
-
-- **WHEN** the user runs `outfit completion fish`
-- **THEN** the command fails naming bash, powershell, and zsh as the supported
-  shells
-
-### Requirement: Completion protocol
-
-The hidden `outfit __complete <words…>` SHALL print one candidate per line
-followed by a final directive line — `:nofile` or `:file` — telling the shell
-whether filesystem paths belong alongside the candidates. It SHALL never
-return an error and never write to stderr: an unreadable config, an unloadable
-catalogue, or nonsense input all mean "no candidates", so a completion attempt
-can never spew over the user's prompt.
-
-#### Scenario: Broken config stays quiet
-
-- **WHEN** outfit's own config file is unreadable and completion is attempted
-- **THEN** `__complete` exits zero with no candidates and no stderr output
+## ADDED Requirements
 
 ### Requirement: Completion surface coverage
 
@@ -79,4 +58,3 @@ command's arity SHALL offer nothing.
 - **WHEN** the user completes `outfit add -p openrouter -m <TAB>`
 - **THEN** no model candidates are offered and no error occurs
 - **AND** a flag typed after `--model <value>` still completes normally
-

@@ -31,7 +31,7 @@ func (opencodeHarness) Command() string { return "opencode" }
 func (opencodeHarness) ConfigPath() (string, error) { return opencode.ResolveConfigFile() }
 
 func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int, resolve func(string) string) (Summary, error) {
-	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, resolve)
+	block, defaultModel, err := catalog.BuildProviderBlock(sel.Provider, p, modelKey(sel), sel.BaseURL, resolve)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -100,7 +100,7 @@ func (piHarness) Command() string { return "pi" }
 func (piHarness) ConfigPath() (string, error) { return pi.ConfigPath() }
 
 func (piHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int, resolve func(string) string) (Summary, error) {
-	prov, defaultModel, err := catalog.BuildPiProvider(sel.Provider, p, sel.Family, modelKey(sel), sel.BaseURL, resolve)
+	prov, defaultModel, err := catalog.BuildPiProvider(sel.Provider, p, modelKey(sel), sel.BaseURL, resolve)
 	if err != nil {
 		return Summary{}, err
 	}

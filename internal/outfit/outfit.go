@@ -1,14 +1,13 @@
 // Package outfit defines a provider Selection and the declarative, Dockerfile-
 // style Outfit file that describes one.
 //
-// An Outfit is a declarative description of a single opencode provider plus an
-// optional model family and/or model — the file equivalent of one `outfit
-// add` invocation. It uses a flat, Dockerfile-style syntax:
+// An Outfit is a declarative description of a single opencode provider plus a
+// model — the file equivalent of one `outfit add` invocation. It uses a flat,
+// Dockerfile-style syntax:
 //
 //	# point opencode at one provider
 //	PROVIDER openrouter
-//	FAMILY   deepseek-v4
-//	MODEL    deepseek/deepseek-v4-pro   # optional; the provider-native model ref
+//	MODEL    deepseek/deepseek-v4-pro   # the provider-native model ref
 //	ALIAS    deepseek                   # optional; friendly name for the model
 //	CONTEXT  128k                       # optional; context window
 //	OUTPUT   32k                        # optional; max output tokens
@@ -33,12 +32,11 @@ import (
 	"strings"
 )
 
-// Selection holds the provider, model family and/or model, and optional
-// overrides that describe one opencode provider configuration. It is the shared
-// currency between the CLI flags, the Outfit file, and the apply/export paths.
+// Selection holds the provider, model and/or alias, and optional overrides that
+// describe one opencode provider configuration. It is the shared currency
+// between the CLI flags, the Outfit file, and the apply/export paths.
 type Selection struct {
 	Provider  string
-	Family    string
 	Model     string
 	Alias     string
 	Context   string
@@ -52,7 +50,6 @@ type Selection struct {
 // Outfit keywords, in their canonical (lower-cased) form for matching.
 const (
 	kwProvider = "provider"
-	kwFamily   = "family"
 	kwModel    = "model"
 	kwAlias    = "alias"
 	kwContext  = "context"
@@ -67,7 +64,7 @@ const (
 // "" for an unrecognised keyword.
 func canonicalKeyword(kw string) string {
 	switch kw {
-	case kwProvider, kwFamily, kwModel, kwAlias, kwContext, kwOutput, kwPreset, kwRemote:
+	case kwProvider, kwModel, kwAlias, kwContext, kwOutput, kwPreset, kwRemote:
 		return kw
 	case kwBaseURL, "base-url", "base_url", "url":
 		return kwBaseURL
@@ -95,7 +92,7 @@ func Parse(data []byte) (Selection, error) {
 		fields := strings.Fields(text)
 		canon := canonicalKeyword(strings.ToLower(fields[0]))
 		if canon == "" {
-			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, FAMILY, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, PRESET, or REMOTE)", line, fields[0])
+			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, PRESET, or REMOTE)", line, fields[0])
 		}
 		switch {
 		case len(fields) < 2:
@@ -113,8 +110,6 @@ func Parse(data []byte) (Selection, error) {
 		switch canon {
 		case kwProvider:
 			sel.Provider = value
-		case kwFamily:
-			sel.Family = value
 		case kwModel:
 			sel.Model = value
 		case kwAlias:
@@ -167,7 +162,6 @@ func Format(sel Selection) string {
 		}
 	}
 	line("PROVIDER", sel.Provider)
-	line("FAMILY", sel.Family)
 	line("MODEL", sel.Model)
 	line("ALIAS", sel.Alias)
 	line("CONTEXT", sel.Context)

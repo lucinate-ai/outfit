@@ -43,11 +43,10 @@ type Provider struct {
 	APIKeyRequired bool   `yaml:"apiKeyRequired"`
 	// APIKeyOptional marks a provider that also works unauthenticated (a local
 	// server). It only affects the Pi harness: see BuildPiProvider.
-	APIKeyOptional bool               `yaml:"apiKeyOptional"`
-	APIKeyPrefix   string             `yaml:"apiKeyPrefix"`
-	Options        map[string]any     `yaml:"options"`
-	OptionsFromEnv map[string]string  `yaml:"optionsFromEnv"`
-	Families       map[string]*Family `yaml:"families"`
+	APIKeyOptional bool              `yaml:"apiKeyOptional"`
+	APIKeyPrefix   string            `yaml:"apiKeyPrefix"`
+	Options        map[string]any    `yaml:"options"`
+	OptionsFromEnv map[string]string `yaml:"optionsFromEnv"`
 	// Pi marks the provider as usable by the Pi harness and carries its
 	// Pi-specific settings. Nil when the provider has no `pi:` block, in which
 	// case BuildPiProvider reports it as unsupported.
@@ -61,13 +60,6 @@ type PiConfig struct {
 	API string `yaml:"api"`
 	// BaseURL is the Pi endpoint. Optional; falls back to options.baseURL.
 	BaseURL string `yaml:"baseUrl"`
-}
-
-// Family is a named set of models within a provider.
-type Family struct {
-	Description  string                    `yaml:"description"`
-	DefaultModel string                    `yaml:"defaultModel"`
-	Models       map[string]map[string]any `yaml:"models"`
 }
 
 // ResolveCatalogPath determines which catalogue file to use: the flag value if
@@ -121,63 +113,16 @@ func (c *Catalog) SortedProviderNames() []string {
 	return names
 }
 
-// SortedFamilyNames returns a provider's family names in stable order.
-func (p *Provider) SortedFamilyNames() []string {
-	names := make([]string, 0, len(p.Families))
-	for n := range p.Families {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// ModelKeys returns a family's model keys in stable order.
-func (f *Family) ModelKeys() []string {
-	keys := make([]string, 0, len(f.Models))
-	for k := range f.Models {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// MatchFamily returns the name of the provider family whose model set exactly
-// matches keys, or "" if none does. It lets `outfit export` name a family
-// instead of listing the individual models it expands to.
-func MatchFamily(p *Provider, keys []string) string {
-	want := make(map[string]bool, len(keys))
-	for _, k := range keys {
-		want[k] = true
-	}
-	for _, name := range p.SortedFamilyNames() {
-		fk := p.Families[name].ModelKeys()
-		if len(fk) != len(want) {
-			continue
-		}
-		matched := true
-		for _, k := range fk {
-			if !want[k] {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return name
-		}
-	}
-	return ""
-}
-
-// BuildProviderBlock turns a provider plus an optional family and/or explicit
-// model into an opencode provider block, returning the block and the
-// fully-qualified default model (provider/model), or "" if none was selected.
-// resolve looks up env vars (typically from .env, then the environment).
+// BuildProviderBlock turns a provider plus an explicit model into an opencode
+// provider block, returning the block and the fully-qualified default model
+// (provider/model), or "" if none was selected. resolve looks up env vars
+// (typically from .env, then the environment).
 //
 // baseURLOverride, when non-empty, sets options.baseURL for any provider. It
 // comes from the --base-url flag; when empty, the OUTFIT_BASE_URL env var is
 // consulted via resolve. Either wins over the catalogue's static baseURL and
 // any per-provider optionsFromEnv mapping.
-func BuildProviderBlock(id string, p *Provider, familyName, modelOverride, baseURLOverride string, resolve func(string) string) (block map[string]any, defaultModel string, err error) {
+func BuildProviderBlock(id string, p *Provider, modelOverride, baseURLOverride string, resolve func(string) string) (block map[string]any, defaultModel string, err error) {
 	block = map[string]any{}
 	if p.Name != "" {
 		block["name"] = p.Name
@@ -226,20 +171,8 @@ func BuildProviderBlock(id string, p *Provider, familyName, modelOverride, baseU
 
 	models := map[string]any{}
 	var defaultModelKey string
-	if familyName != "" {
-		fam, ok := p.Families[familyName]
-		if !ok {
-			return nil, "", fmt.Errorf("provider %q has no model family %q (see `outfit list`)", id, familyName)
-		}
-		for k, v := range fam.Models {
-			models[k] = v
-		}
-		defaultModelKey = fam.DefaultModel
-	}
 	if modelOverride != "" {
-		if _, ok := models[modelOverride]; !ok {
-			models[modelOverride] = map[string]any{"name": modelOverride}
-		}
+		models[modelOverride] = map[string]any{"name": modelOverride}
 		defaultModelKey = modelOverride
 	}
 	if len(models) > 0 {
@@ -276,8 +209,8 @@ type PiModel struct {
 	MaxTokens     int    `json:"maxTokens,omitempty"`
 }
 
-// BuildPiProvider turns a provider plus an optional family and/or explicit model
-// into a Pi provider entry, returning the entry and the chosen default model key
+// BuildPiProvider turns a provider plus an explicit model into a Pi provider
+// entry, returning the entry and the chosen default model key
 // (provider-relative), or "" if none was selected. resolve looks up env vars
 // (used only for the OUTFIT_BASE_URL override).
 //
@@ -288,7 +221,7 @@ type PiModel struct {
 // baseURLOverride mirrors BuildProviderBlock: when non-empty it wins; otherwise
 // OUTFIT_BASE_URL is consulted, then the catalogue's pi.baseUrl, then
 // options.baseURL.
-func BuildPiProvider(id string, p *Provider, familyName, modelOverride, baseURLOverride string, resolve func(string) string) (PiProvider, string, error) {
+func BuildPiProvider(id string, p *Provider, modelOverride, baseURLOverride string, resolve func(string) string) (PiProvider, string, error) {
 	if p.Pi == nil {
 		return PiProvider{}, "", fmt.Errorf("provider %q is not supported by the pi harness (no pi config in the catalogue)", id)
 	}
@@ -332,40 +265,10 @@ func BuildPiProvider(id string, p *Provider, familyName, modelOverride, baseURLO
 		prov.APIKey = piPlaceholderAPIKey
 	}
 
-	// Collect models in stable order so the written file is deterministic.
-	names := map[string]string{}
-	var keys []string
 	var defaultModelKey string
-	if familyName != "" {
-		fam, ok := p.Families[familyName]
-		if !ok {
-			return PiProvider{}, "", fmt.Errorf("provider %q has no model family %q (see `outfit list`)", id, familyName)
-		}
-		for _, k := range fam.ModelKeys() {
-			keys = append(keys, k)
-			if n, _ := fam.Models[k]["name"].(string); n != "" {
-				names[k] = n
-			}
-		}
-		defaultModelKey = fam.DefaultModel
-	}
 	if modelOverride != "" {
-		if _, seen := names[modelOverride]; !seen {
-			found := false
-			for _, k := range keys {
-				if k == modelOverride {
-					found = true
-					break
-				}
-			}
-			if !found {
-				keys = append(keys, modelOverride)
-			}
-		}
+		prov.Models = append(prov.Models, PiModel{ID: modelOverride})
 		defaultModelKey = modelOverride
-	}
-	for _, k := range keys {
-		prov.Models = append(prov.Models, PiModel{ID: k, Name: names[k]})
 	}
 
 	return prov, defaultModelKey, nil

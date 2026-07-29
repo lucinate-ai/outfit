@@ -1,12 +1,5 @@
-# Provider Catalog Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Define the catalogue of model providers that `outfit` can configure: where the
-catalogue comes from, what it declares (provider connection plumbing, not
-models), how users inspect it (`outfit list`), and how they replace it with
-their own (`outfit init-providers`, `--providers`, `OUTFIT_PROVIDERS`).
-## Requirements
 ### Requirement: Catalogue listing
 
 `outfit list` SHALL print every provider in the catalogue in stable
@@ -21,42 +14,22 @@ block).
 - **THEN** every embedded provider is printed with its key requirements and
   supported harnesses
 
-### Requirement: Runtime catalogue override
+## REMOVED Requirements
 
-The system SHALL let the user substitute their own catalogue file at runtime,
-resolved with the precedence: `--providers` flag, then the `OUTFIT_PROVIDERS`
-environment variable, then the embedded catalogue.
+### Requirement: Embedded provider catalogue
 
-#### Scenario: Flag wins over environment variable
+**Reason**: This requirement declared named model families and a per-family
+default model, and carried the invariant that a family's `defaultModel` is one
+of its `models`. Families are removed from the catalogue, so that invariant no
+longer holds and the scenario asserting it must go. The family-free
+provider-plumbing rules are restated by the "Embedded provider definitions"
+requirement added below.
 
-- **WHEN** both `--providers ./mine.yaml` and `OUTFIT_PROVIDERS=./other.yaml`
-  are set
-- **THEN** the catalogue is loaded from `./mine.yaml`
+**Migration**: The catalogue no longer declares families or models; the user
+names the model directly in the selection (`MODEL`/`ALIAS`), which already passes
+through the block builders.
 
-#### Scenario: Unreadable override is an error
-
-- **WHEN** the resolved catalogue path cannot be read or parsed as YAML
-- **THEN** the command fails with an error naming the file
-
-### Requirement: Catalogue scaffolding
-
-`outfit init-providers [path]` SHALL write a copy of the embedded catalogue to
-`./providers.yaml` (or the given path) as a starting point for customisation,
-and SHALL refuse to overwrite an existing file unless `--force`/`-F` is given.
-On success it SHALL print how to point `outfit` at the written file.
-
-#### Scenario: Refuses to clobber an existing file
-
-- **WHEN** the user runs `outfit init-providers` and `./providers.yaml` already
-  exists
-- **THEN** the command fails, telling the user to pass a different path or
-  `--force`
-
-#### Scenario: Writing the catalogue out
-
-- **WHEN** the user runs `outfit init-providers custom.yaml` and no such file
-  exists
-- **THEN** the embedded catalogue is written to `custom.yaml` byte-for-byte
+## ADDED Requirements
 
 ### Requirement: Embedded provider definitions
 
@@ -90,4 +63,3 @@ not "a key that is missing".
 
 - **WHEN** the same provider is applied with the key variable unset
 - **THEN** the configuration is written with no key, and the command succeeds
-

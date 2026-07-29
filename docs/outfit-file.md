@@ -1,15 +1,14 @@
 # The `Outfit` file
 
 An **Outfit** is a small, declarative file that captures one provider
-selection — which provider, and which model family and/or model — so you can
+selection — which provider, and which model — so you can
 apply it with a single command instead of remembering flags. Think of it like a
 `Dockerfile`, but for pointing your coding agent at a model.
 
 ```dockerfile
 # Outfit — point your coding agent at one provider
 PROVIDER openrouter
-FAMILY   deepseek-v4
-MODEL    deepseek/deepseek-v4-pro   # optional; the provider-native model ref
+MODEL    deepseek/deepseek-v4-pro   # the provider-native model ref
 ALIAS    deepseek                   # optional; friendly name for the model
 CONTEXT  128k                       # optional; context window
 OUTPUT   32k                        # optional; max output tokens
@@ -75,9 +74,8 @@ One instruction per line: a keyword followed by a single value.
 | Keyword    | Required?                  | Maps to        | Example                        |
 | ---------- | -------------------------- | -------------- | ------------------------------ |
 | `PROVIDER` | yes                              | `--provider`   | `PROVIDER openrouter`          |
-| `FAMILY`   | one of `FAMILY`/`MODEL`/`ALIAS`  | `--model-family` | `FAMILY deepseek-v4`         |
-| `MODEL`    | one of `FAMILY`/`MODEL`/`ALIAS`  | `--model`      | `MODEL deepseek/deepseek-v4-pro` |
-| `ALIAS`    | one of `FAMILY`/`MODEL`/`ALIAS`  | `--alias`      | `ALIAS deepseek`               |
+| `MODEL`    | one of `MODEL`/`ALIAS`           | `--model`      | `MODEL deepseek/deepseek-v4-pro` |
+| `ALIAS`    | one of `MODEL`/`ALIAS`           | `--alias`      | `ALIAS deepseek`               |
 | `CONTEXT`  | no                               | `--context`    | `CONTEXT 128k`                 |
 | `OUTPUT`   | no                               | `--output`     | `OUTPUT 32k`                   |
 | `BASEURL`  | no                               | `--base-url`   | `BASEURL https://gateway/v1`   |
@@ -88,9 +86,8 @@ Rules:
 
 - An Outfit describes **exactly one provider**. `PROVIDER` is required and may
   appear only once; so may every other keyword.
-- You need **at least one** of `FAMILY`, `MODEL`, or `ALIAS`. Give a `FAMILY` to
-  add all of that family's models; give a `MODEL` to add or pin a specific one;
-  give both to add the family but make `MODEL` the default.
+- You need **at least one** of `MODEL` or `ALIAS`. Give a `MODEL` to add a
+  specific model; give an `ALIAS` to name it.
 - `MODEL` is the reference the **provider itself** understands: an
   OpenRouter/Bedrock model id, an Ollama name, or — for llama.cpp — a Hugging
   Face repo (`org/model:quant`) or a path to a `.gguf`.
@@ -115,7 +112,7 @@ Rules:
 - **Comments** start with `#`, either on their own line or at the end of a line.
   Blank lines are ignored.
 
-To see the available providers, families, and models, run `outfit list`.
+To see the available providers, run `outfit list`.
 
 ## Examples
 
@@ -128,12 +125,12 @@ PROVIDER llamacpp
 ALIAS    qwen3.6-35b-a3b
 ```
 
-A whole model family from OpenRouter (its key comes from your `.env` or
+A single model from OpenRouter (its key comes from your `.env` or
 environment, exactly as with `outfit add`):
 
 ```dockerfile
 PROVIDER openrouter
-FAMILY   deepseek-v4
+MODEL    deepseek/deepseek-v4-pro
 ```
 
 Any OpenAI-compatible endpoint, with a single pinned model:

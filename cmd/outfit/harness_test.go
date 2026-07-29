@@ -401,7 +401,7 @@ func TestCmdShow(t *testing.T) {
 	// After an add, show lists the provider, its models, their limits, and the
 	// default model.
 	captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4", "-c", "128k"}); err != nil {
+		if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash", "-c", "128k"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -489,7 +489,7 @@ func TestCmdShow_HarnessOverride(t *testing.T) {
 	// The opencode default is configured...
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 	captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "openrouter", "-f", "deepseek-v4"}); err != nil {
+		if err := cmdAdd([]string{"-p", "openrouter", "-m", "deepseek/deepseek-v4-flash"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -521,7 +521,7 @@ func TestCmdShow_PiPopulated(t *testing.T) {
 	// setting, so `show` must list the provider and its models without inventing
 	// a "Default model:" line.
 	captureStdout(t, func() {
-		if err := cmdAdd([]string{"-H", "pi", "-p", "ollama", "-f", "llama", "-c", "128k"}); err != nil {
+		if err := cmdAdd([]string{"-H", "pi", "-p", "ollama", "-m", "llama3.2", "-c", "128k"}); err != nil {
 			t.Fatalf("cmdAdd -H pi: %v", err)
 		}
 	})
@@ -547,7 +547,7 @@ func TestCmdAdd_PiHarnessViaFlag(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
 	out := captureStdout(t, func() {
-		if err := cmdAdd([]string{"-H", "pi", "-p", "openrouter", "-f", "deepseek-v4", "-c", "128k"}); err != nil {
+		if err := cmdAdd([]string{"-H", "pi", "-p", "openrouter", "-m", "deepseek/deepseek-v4-flash", "-c", "128k"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -584,7 +584,7 @@ func TestCmdAdd_PiHarnessViaEnvAndPreference(t *testing.T) {
 	// Via OUTFIT_HARNESS.
 	t.Setenv("OUTFIT_HARNESS", "pi")
 	captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "ollama", "-f", "llama"}); err != nil {
+		if err := cmdAdd([]string{"-p", "ollama", "-m", "llama3.2"}); err != nil {
 			t.Fatalf("cmdAdd via env: %v", err)
 		}
 	})
@@ -609,7 +609,7 @@ func TestCmdAdd_PiHarnessViaEnvAndPreference(t *testing.T) {
 
 func TestCmdAdd_PiUnsupportedProvider(t *testing.T) {
 	isolateConfig(t)
-	if err := cmdAdd([]string{"-H", "pi", "-p", "amazon-bedrock", "-f", "claude"}); err == nil {
+	if err := cmdAdd([]string{"-H", "pi", "-p", "amazon-bedrock", "-m", "anthropic.claude-3-5-sonnet"}); err == nil {
 		t.Error("expected error adding a Pi-unsupported provider")
 	}
 }
@@ -619,7 +619,7 @@ func TestCmdExportRemove_PiRoundTrip(t *testing.T) {
 	t.Setenv("OUTFIT_HARNESS", "pi")
 
 	captureStdout(t, func() {
-		if err := cmdAdd([]string{"-p", "ollama", "-f", "llama", "-c", "200000"}); err != nil {
+		if err := cmdAdd([]string{"-p", "ollama", "-m", "llama3.2", "-c", "200000"}); err != nil {
 			t.Fatalf("cmdAdd: %v", err)
 		}
 	})
@@ -629,7 +629,7 @@ func TestCmdExportRemove_PiRoundTrip(t *testing.T) {
 			t.Fatalf("cmdExport: %v", err)
 		}
 	})
-	if !strings.Contains(out, "PROVIDER ollama") || !strings.Contains(out, "FAMILY   llama") {
+	if !strings.Contains(out, "PROVIDER ollama") || !strings.Contains(out, "MODEL    llama3.2") {
 		t.Errorf("unexpected Pi export:\n%s", out)
 	}
 	if !strings.Contains(out, "CONTEXT  200000") {

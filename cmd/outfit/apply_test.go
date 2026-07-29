@@ -187,16 +187,15 @@ func TestCmdUnapply_DefaultFileMissing(t *testing.T) {
 	}
 }
 
-// TestCmdUnapply_FamilyRoundTrip checks the realest inverse case: applying an
-// Outfit that names a FAMILY then unapplying the same file clears every model
-// the family added, going through unapply's family-resolution branch.
-func TestCmdUnapply_FamilyRoundTrip(t *testing.T) {
+// TestCmdUnapply_RoundTrip checks the realest inverse case: applying an Outfit
+// that names a MODEL then unapplying the same file clears the model it added.
+func TestCmdUnapply_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
 	outfitFile := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
+	mustWrite(t, outfitFile, "PROVIDER openrouter\nMODEL deepseek/deepseek-v4-flash\n")
 	captureStdout(t, func() {
 		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
@@ -215,7 +214,7 @@ func TestCmdUnapply_FamilyRoundTrip(t *testing.T) {
 	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
 	or, _ := m["provider"].(map[string]any)["openrouter"].(map[string]any)
 	if models, ok := or["models"].(map[string]any); ok && len(models) != 0 {
-		t.Errorf("family models should have been removed, still have: %v", models)
+		t.Errorf("model should have been removed, still have: %v", models)
 	}
 }
 
@@ -301,7 +300,7 @@ func TestCmdApply_EndToEnd(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
 
 	outfitFile := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
+	mustWrite(t, outfitFile, "PROVIDER openrouter\nMODEL deepseek/deepseek-v4-flash\n")
 
 	out := captureStdout(t, func() {
 		if err := cmdApply([]string{outfitFile}); err != nil {
@@ -337,7 +336,7 @@ func TestCmdExport_RoundTripsWithApply(t *testing.T) {
 
 	// Seed config via apply, then export it back out.
 	outfitFile := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\n")
+	mustWrite(t, outfitFile, "PROVIDER openrouter\nMODEL deepseek/deepseek-v4-flash\n")
 	captureStdout(t, func() {
 		if err := cmdApply([]string{outfitFile}); err != nil {
 			t.Fatalf("cmdApply: %v", err)
@@ -349,8 +348,7 @@ func TestCmdExport_RoundTripsWithApply(t *testing.T) {
 			t.Fatalf("cmdExport: %v", err)
 		}
 	})
-	// The family's models match deepseek-v4, so export should name the family.
-	if !strings.Contains(out, "PROVIDER openrouter") || !strings.Contains(out, "FAMILY   deepseek-v4") {
+	if !strings.Contains(out, "PROVIDER openrouter") || !strings.Contains(out, "MODEL    deepseek/deepseek-v4-flash") {
 		t.Errorf("unexpected export:\n%s", out)
 	}
 
@@ -367,10 +365,9 @@ func TestCmdExport_NoProviders(t *testing.T) {
 	}
 }
 
-// TestCmdExport_ModelOnlyFallsBackToModel covers a provider whose configured
-// models match no known family (a bare llama.cpp label): export should still
-// produce a valid Outfit naming the MODEL.
-func TestCmdExport_ModelOnlyFallsBackToModel(t *testing.T) {
+// TestCmdExport_ModelOnly covers a provider configured with a bare model label
+// (a llama.cpp model): export should produce a valid Outfit naming the MODEL.
+func TestCmdExport_ModelOnly(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
@@ -400,45 +397,6 @@ func TestCmdExport_ModelOnlyFallsBackToModel(t *testing.T) {
 	}
 }
 
-// TestCmdExport_FamilyPlusNonDefaultModel checks that when the default model is
-// not the family's own default, export keeps both the FAMILY and the MODEL.
-func TestCmdExport_FamilyPlusNonDefaultModel(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", dir)
-	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
-
-	cat, _ := catalog.Load()
-	fam := cat.Providers["openrouter"].Families["deepseek-v4"]
-	// Find a model in the family that is not its default.
-	var nonDefault string
-	for _, k := range fam.ModelKeys() {
-		if k != fam.DefaultModel {
-			nonDefault = k
-			break
-		}
-	}
-	if nonDefault == "" {
-		t.Skip("family has no non-default model to exercise this path")
-	}
-
-	outfitFile := filepath.Join(dir, "Outfit")
-	mustWrite(t, outfitFile, "PROVIDER openrouter\nFAMILY deepseek-v4\nMODEL "+nonDefault+"\n")
-	captureStdout(t, func() {
-		if err := cmdApply([]string{outfitFile}); err != nil {
-			t.Fatalf("cmdApply: %v", err)
-		}
-	})
-
-	out := captureStdout(t, func() {
-		if err := cmdExport(nil); err != nil {
-			t.Fatalf("cmdExport: %v", err)
-		}
-	})
-	if !strings.Contains(out, "FAMILY   deepseek-v4") || !strings.Contains(out, "MODEL    "+nonDefault) {
-		t.Errorf("expected both FAMILY and the non-default MODEL:\n%s", out)
-	}
-}
-
 // TestCmdExport_MultipleProviders covers provider selection when several are
 // configured: without a hint it errors, with -p it exports the chosen one, and
 // an unknown -p errors.
@@ -450,7 +408,7 @@ func TestCmdExport_MultipleProviders(t *testing.T) {
 	path, _ := opencode.ResolveConfigFile()
 	cat, _ := catalog.Load()
 	for _, id := range []string{"ollama", "llamacpp"} {
-		block, _, err := catalog.BuildProviderBlock(id, cat.Providers[id], "", "label-"+id, "", noEnv)
+		block, _, err := catalog.BuildProviderBlock(id, cat.Providers[id], "label-"+id, "", noEnv)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -482,7 +440,7 @@ func TestCmdApply_BadOutfitContent(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
 	bad := filepath.Join(dir, "Outfit")
-	mustWrite(t, bad, "FAMILY llama\n") // no PROVIDER
+	mustWrite(t, bad, "MODEL llama3.2\n") // no PROVIDER
 	if err := cmdApply([]string{bad}); err == nil {
 		t.Error("expected error for an Outfit without a PROVIDER")
 	}

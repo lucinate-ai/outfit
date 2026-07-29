@@ -1,11 +1,5 @@
-# Outfit Files Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Define the `Outfit` file — a declarative, Dockerfile-style description of one
-provider selection — and the commands that consume and produce it:
-`outfit apply`, `outfit unapply`, and `outfit export`.
-## Requirements
 ### Requirement: Outfit file format
 
 An Outfit SHALL be a flat, line-oriented text file of `KEYWORD value`
@@ -42,45 +36,6 @@ required. Parse errors SHALL name the offending line.
 
 - **WHEN** an Outfit contains `REMOTE ./remote.json`
 - **THEN** it parses, and the value is available to the `remote` command group
-
-### Requirement: Harness neutrality
-
-An Outfit SHALL NOT name a harness, and SHALL NOT name an alias-registry entry:
-both are machine-local, runtime choices. The same Outfit file SHALL be
-applicable to any supported harness.
-
-#### Scenario: One Outfit, two harnesses
-
-- **WHEN** the same Outfit is applied with the opencode harness active and then
-  with `--harness pi`
-- **THEN** each harness's own config is updated from the same file with no
-  change to the file
-
-### Requirement: Outfit path resolution
-
-Commands that take an Outfit path (`apply`, `unapply`, `serve`, `alias`,
-`harness --outfit`, and the `remote` subcommands) SHALL default to `./Outfit`
-when no path is given, SHALL accept a directory and use the `Outfit` file
-inside it, and SHALL accept a registered alias name in place of a path. When
-the default `./Outfit` is missing, the error SHALL suggest passing a path or an
-alias.
-
-#### Scenario: Bare command in a project directory
-
-- **WHEN** the user runs `outfit apply` in a directory holding an `Outfit`
-- **THEN** that file is applied
-
-#### Scenario: Directory argument
-
-- **WHEN** the user runs `outfit apply path/to/dir` and the directory holds an
-  `Outfit`
-- **THEN** `path/to/dir/Outfit` is applied
-
-#### Scenario: A remote subcommand resolves the same way
-
-- **WHEN** the user runs `outfit remote status` in a directory holding an
-  `Outfit`
-- **THEN** that Outfit is read to find the endpoint's configuration
 
 ### Requirement: Applying and unapplying an Outfit
 
@@ -136,4 +91,3 @@ UPPERCASE keywords with aligned values, so `outfit export > Outfit` round-trips.
 
 - **WHEN** the harness config has no providers
 - **THEN** the command fails naming the config file it read
-

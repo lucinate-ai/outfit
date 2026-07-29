@@ -1,7 +1,7 @@
 # outfit init-providers
 
 Write the built-in provider catalogue out as a file you can edit — the starting
-point for adding your own providers, families, or models without rebuilding.
+point for adding your own providers without rebuilding.
 
 ```sh
 outfit init-providers                 # writes ./providers.yaml
@@ -26,8 +26,8 @@ OUTFIT_PROVIDERS=./providers.yaml outfit list
 
 - It refuses to overwrite an existing file unless `--force` is given, so a
   stray run can't destroy a catalogue you've been editing.
-- The written file is commented with the schema — providers, families, key
-  environment variables, and per-harness settings are all data, not code.
+- The written file is commented with the schema — providers, key environment
+  variables, endpoints, and per-harness settings are all data, not code.
 
 ## See also
 

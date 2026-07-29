@@ -86,13 +86,13 @@ See what's in the catalogue:
 outfit list
 ```
 
-Add a provider and a model family:
+Add a provider and a model:
 
 ```sh
 # OpenRouter needs a key — put it in .env first:
 echo 'DEEPSEEK_API_KEY=sk-or-v1-...' > .env
 
-outfit add --provider openrouter --model-family deepseek-v4
+outfit add --provider openrouter --model deepseek/deepseek-v4-flash
 ```
 
 Then just run `opencode`. That's it — your agent is pointed at the new model, and
@@ -102,17 +102,17 @@ the rest of your config is untouched.
 
 ```sh
 # A local Ollama model (no key required)
-outfit add -p ollama -f llama
+outfit add -p ollama -m llama3.2
 
 # Claude on AWS Bedrock (uses your AWS credentials)
-outfit add -p amazon-bedrock -f claude
+outfit add -p amazon-bedrock -m anthropic.claude-3-5-sonnet
 
 # Any OpenAI-compatible endpoint, base URL via flag
 OPENAI_API_KEY=sk-... \
   outfit add -p openai-compatible -m my-model --base-url https://my-endpoint/v1
 
 # Pin a specific default model
-outfit add -p openrouter -f deepseek-v4 -m deepseek/deepseek-v4-pro
+outfit add -p openrouter -m deepseek/deepseek-v4-pro
 
 # Set the context window — human suffixes or an absolute count, both fine
 outfit add -p llamacpp -m my-model -c 128k
@@ -124,8 +124,8 @@ outfit add -p llamacpp -m my-model -c 128k -o 32k
 # Take a provider back out
 outfit remove -p ollama
 
-# Or just drop one family's models
-outfit remove -p openrouter -f deepseek-v4
+# Or just drop one model
+outfit remove -p openrouter -m deepseek/deepseek-v4-flash
 ```
 
 On opencode, `add` sets the chosen model as the default and `remove` clears it
@@ -145,8 +145,8 @@ quarter of the context for you. It can't exceed the context window.
 ```sh
 outfit list
 outfit show   [--harness <name>]         # show what the harness has configured
-outfit add    --provider <name> [--model-family <family>] [--model <id>] [--alias <name>] [--context <size>] [--output <size>] [--base-url <url>]
-outfit remove --provider <name> [--model-family <family>] [--model <id>]
+outfit add    --provider <name> [--model <id>] [--alias <name>] [--context <size>] [--output <size>] [--base-url <url>]
+outfit remove --provider <name> [--model <id>] [--alias <name>]
 outfit apply  [path] [--output <size>]   # apply an Outfit file or directory (default ./Outfit)
 outfit unapply [path]                    # remove what an Outfit file selects
 outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
@@ -163,7 +163,7 @@ outfit remote <start|stop|status|deploy> [path]
                                          #   (deploy sets what it serves, from the Outfit)
 ```
 
-Short flags: `-p` (provider), `-f` (model-family), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
+Short flags: `-p` (provider), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
 
 Anywhere a `[path]` appears above you can put a name registered with
 [`outfit alias`](#aliases) instead.
@@ -185,7 +185,7 @@ is also supported. The harness is chosen at runtime — never baked into an `Out
 file — so the same selection works for either.
 
 ```sh
-outfit add -p ollama -f llama --harness pi   # this command only
+outfit add -p ollama -m llama3.2 --harness pi   # this command only
 outfit harness --set pi    # make Pi the default for future commands
 outfit harness             # launch the active harness (forwards trailing args)
 outfit harness -O          # apply ./Outfit, then launch the harness
@@ -207,8 +207,7 @@ your coding agent? Drop an `Outfit` in your project:
 ```dockerfile
 # Outfit
 PROVIDER openrouter
-FAMILY   deepseek-v4
-MODEL    deepseek/deepseek-v4-pro   # optional; the provider-native model ref
+MODEL    deepseek/deepseek-v4-pro   # the provider-native model ref
 ALIAS    deepseek                   # optional; friendly name for the model
 CONTEXT  128k                       # optional; context window
 OUTPUT   32k                        # optional; max output tokens
@@ -348,7 +347,7 @@ with a ready-to-apply `Outfit`:
 ## Adding providers and models
 
 Everything `outfit` knows lives in `internal/catalog/providers.yaml`. Add a
-provider, a model family, or a new model there and rebuild — no Go required. The
+provider there and rebuild — no Go required. The
 file is commented with the schema.
 
 Don't want to rebuild? Write the catalogue out with

@@ -4,7 +4,7 @@
 // --harness/-H or OUTFIT_HARNESS, or a stored default set via `outfit harness
 // --set`, and defaults to opencode.
 //
-// Providers and model families are defined in providers.yaml, which is embedded
+// Providers are defined in providers.yaml, which is embedded
 // into the binary at build time. For opencode the config is parsed as JSONC so
 // comments and existing settings outside the managed provider block are
 // preserved; for Pi the managed provider is merged into ~/.pi/agent/models.json.
@@ -13,8 +13,8 @@
 //
 //	outfit list
 //	outfit show   [--harness <name>]  # show what the harness has configured
-//	outfit add    --provider <name> [--model-family <family>] [--model <id>]
-//	outfit remove --provider <name> [--model-family <family>] [--model <id>]
+//	outfit add    --provider <name> [--model <id>] [--alias <name>]
+//	outfit remove --provider <name> [--model <id>] [--alias <name>]
 //	outfit apply   [path]  # apply an Outfit file (defaults to ./Outfit)
 //	outfit unapply [path]  # remove what an Outfit file selects
 //	outfit alias   [path] [-n <name>]  # name an Outfit; -l lists them
@@ -28,7 +28,7 @@
 //	outfit remote start|stop|status|deploy # control the remote GPU inference
 //	                                      # instance (deploy sets what it serves)
 //
-// Short flags: -p (provider), -f (model-family), -m (model), -a (alias),
+// Short flags: -p (provider), -m (model), -a (alias),
 // -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
 //
 // The API base URL can be overridden for any provider with --base-url/-u or the
@@ -135,8 +135,8 @@ func usage() {
 Usage:
   outfit list
   outfit show   [--harness <name>]         (providers/models the harness has configured)
-  outfit add    --provider <name> [--model-family <family>] [--model <id>] [--context <size>] [--output <size>]
-  outfit remove --provider <name> [--model-family <family>] [--model <id>]
+  outfit add    --provider <name> [--model <id>] [--alias <name>] [--context <size>] [--output <size>]
+  outfit remove --provider <name> [--model <id>] [--alias <name>]
   outfit apply  [path] [--output <size>]   (defaults to ./Outfit)
   outfit unapply [path]                    (remove what an Outfit selects)
   outfit alias  [path] [-n <name>] [-l]    (name an Outfit; -l lists them)
@@ -154,7 +154,6 @@ Usage:
 
 Flags:
   -p, --provider       provider name (see `+"`outfit list`"+`)
-  -f, --model-family   model family to add or remove
   -m, --model          model id to set as default / to add or remove
   -a, --alias          friendly name for the model (the harness key); for
                        llama.cpp the server's reported model name under serve
@@ -173,10 +172,10 @@ Flags:
                        (or set OUTFIT_PROVIDERS)
 
 add: deep-merges the provider into the active harness's config, preserving
-     everything else. Specify a family and/or an explicit model. --context sets
-     the model's context window; --output sets the max output tokens (opencode
-     requires it alongside a context, defaulting to a quarter of the context).
-remove: removes the provider, or just the named models when a family/model is
+     everything else. Specify a model (or an alias). --context sets the model's
+     context window; --output sets the max output tokens (opencode requires it
+     alongside a context, defaulting to a quarter of the context).
+remove: removes the provider, or just the named model when a model/alias is
         given.
 apply: applies an Outfit file — a declarative, Dockerfile-style description of
        one provider selection — as if you had run the equivalent add.
@@ -230,8 +229,6 @@ func parseSelection(name string, args []string) (outfit.Selection, string, error
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.StringVar(&s.Provider, "provider", "", "provider name")
 	fs.StringVar(&s.Provider, "p", "", "provider name (shorthand)")
-	fs.StringVar(&s.Family, "model-family", "", "model family")
-	fs.StringVar(&s.Family, "f", "", "model family (shorthand)")
 	fs.StringVar(&s.Model, "model", "", "model id")
 	fs.StringVar(&s.Model, "m", "", "model id (shorthand)")
 	fs.StringVar(&s.Alias, "alias", "", "friendly name for the model (overrides the harness key)")
@@ -273,8 +270,8 @@ func cmdAdd(args []string) error {
 // a `.env` holding its API key belongs; it is empty when no Outfit is involved
 // (an `outfit add` from flags), leaving only the process environment.
 func applySelection(sel outfit.Selection, h harness.Harness, envDir string) error {
-	if sel.Family == "" && sel.Model == "" && sel.Alias == "" {
-		return fmt.Errorf("a provider selection needs a model family, a model, or an alias")
+	if sel.Model == "" && sel.Alias == "" {
+		return fmt.Errorf("a provider selection needs a model or an alias")
 	}
 
 	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(sel.Providers))
@@ -314,11 +311,7 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string) erro
 	}
 
 	fmt.Printf("Updated %s\n\n", summary.ConfigPath)
-	line := fmt.Sprintf("Configured provider %q", sel.Provider)
-	if sel.Family != "" {
-		line += fmt.Sprintf(" with family %q", sel.Family)
-	}
-	fmt.Println(line + ".")
+	fmt.Printf("Configured provider %q.\n", sel.Provider)
 	if summary.DefaultModel != "" {
 		fmt.Printf("Default model: %s\n", summary.DefaultModel)
 	}
@@ -854,27 +847,19 @@ func cmdExport(args []string) error {
 
 	cat, catErr := catalog.LoadFrom(catalog.ResolveCatalogPath(providers))
 
-	// Prefer naming a family when the configured models match one, and drop a
-	// MODEL line that would only restate that family's default.
+	// Drop a baseURL that only restates the catalogue's default — keep it only
+	// when it is a genuine override worth recording.
 	if catErr == nil {
 		if p, ok := cat.Providers[provider]; ok {
-			if fam := catalog.MatchFamily(p, st.ModelKeys); fam != "" {
-				sel.Family = fam
-				if p.Families[fam].DefaultModel == sel.Model {
-					sel.Model = ""
-				}
-			}
-			// Drop a baseURL that only restates the catalogue's default — keep it
-			// only when it is a genuine override worth recording.
 			if def, _ := p.Options["baseURL"].(string); sel.BaseURL == def {
 				sel.BaseURL = ""
 			}
 		}
 	}
 
-	// Ensure the Outfit still selects something if we recognised neither a
-	// family nor a default model.
-	if sel.Family == "" && sel.Model == "" && len(st.ModelKeys) > 0 {
+	// Ensure the Outfit still selects a model when the default model did not
+	// name one for this provider.
+	if sel.Model == "" && len(st.ModelKeys) > 0 {
 		sel.Model = st.ModelKeys[0]
 	}
 
@@ -894,10 +879,7 @@ func cmdExport(args []string) error {
 // to differ), so export never invents or guesses a value.
 func exportLimit(sel outfit.Selection, st harness.ProviderState, values map[string]int) string {
 	var keys []string
-	switch {
-	case sel.Family != "":
-		keys = st.ModelKeys // a matched family covers exactly these models
-	case sel.Model != "":
+	if sel.Model != "" {
 		keys = []string{sel.Model}
 	}
 	distinct := map[int]bool{}
@@ -932,12 +914,7 @@ func cmdRemove(args []string) error {
 // selection (from flags or an Outfit file) and hand it here. It is the inverse
 // of applySelection.
 func removeSelection(sel outfit.Selection, h harness.Harness) error {
-	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(sel.Providers))
-	if err != nil {
-		return err
-	}
-
-	// Resolve the model keys to remove. With no family/model, the whole
+	// Resolve the model keys to remove. With no model or alias, the whole
 	// provider is removed.
 	var modelKeys []string
 	if sel.Alias != "" {
@@ -945,17 +922,6 @@ func removeSelection(sel outfit.Selection, h harness.Harness) error {
 	}
 	if sel.Model != "" {
 		modelKeys = append(modelKeys, sel.Model)
-	}
-	if sel.Family != "" {
-		p, ok := cat.Providers[sel.Provider]
-		if !ok {
-			return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.Provider)
-		}
-		fam, ok := p.Families[sel.Family]
-		if !ok {
-			return fmt.Errorf("provider %q has no model family %q (see `outfit list`)", sel.Provider, sel.Family)
-		}
-		modelKeys = append(modelKeys, fam.ModelKeys()...)
 	}
 
 	configFile, err := h.ConfigPath()
@@ -1329,10 +1295,6 @@ func cmdList(args []string) error {
 			harnesses = "opencode, pi"
 		}
 		fmt.Fprintf(&b, "    harnesses: %s\n", harnesses)
-		for _, f := range p.SortedFamilyNames() {
-			fam := p.Families[f]
-			fmt.Fprintf(&b, "    family %s — %s (default: %s)\n", f, fam.Description, fam.DefaultModel)
-		}
 	}
 	fmt.Print(b.String())
 	return nil
