@@ -2,64 +2,24 @@
 
 ## Purpose
 
-Define the catalogue of model providers and model families that `outfit` can
-configure: where the catalogue comes from, what it declares, how users inspect
-it (`outfit list`), and how they replace it with their own
-(`outfit init-providers`, `--providers`, `OUTFIT_PROVIDERS`).
-
+Define the catalogue of model providers that `outfit` can configure: where the
+catalogue comes from, what it declares (provider connection plumbing, not
+models), how users inspect it (`outfit list`), and how they replace it with
+their own (`outfit init-providers`, `--providers`, `OUTFIT_PROVIDERS`).
 ## Requirements
-
-### Requirement: Embedded provider catalogue
-
-The system SHALL ship with a built-in catalogue of providers and model
-families, defined in a YAML file (`providers.yaml`) embedded into the binary at
-build time. Each provider entry declares a description and MAY declare a
-display name, an npm package, an API key environment variable (with optional
-required flag, optional flag, and expected key prefix), static options (such as
-`baseURL`), options resolved from environment variables, a `pi` block marking
-the provider as usable by the Pi harness, and named model families. Each family
-declares a description, a default model, and a set of models.
-
-A provider whose API key is declared optional is one that also works
-unauthenticated — the same engine run as a local server and as an
-authenticated remote endpoint — so an unset key variable SHALL mean "no key",
-not "a key that is missing".
-
-#### Scenario: Catalogue loads without external files
-
-- **WHEN** any command that needs the catalogue runs with no `--providers` flag
-  and no `OUTFIT_PROVIDERS` environment variable
-- **THEN** the embedded catalogue is used, with no file read from disk
-
-#### Scenario: Family default model is always a member of the family
-
-- **WHEN** the catalogue defines a model family
-- **THEN** that family's `defaultModel` is one of the family's `models` keys
-
-#### Scenario: An optional key is injected only when set
-
-- **WHEN** a provider whose API key is optional is applied, with its key
-  variable set
-- **THEN** the key is injected into the harness config
-
-#### Scenario: An optional key that is unset is not an error
-
-- **WHEN** the same provider is applied with the key variable unset
-- **THEN** the configuration is written with no key, and the command succeeds
-
 ### Requirement: Catalogue listing
 
 `outfit list` SHALL print every provider in the catalogue in stable
 (alphabetical) order, showing for each: its id and description, its API key
-environment variable (marked `(required)` when the key is mandatory), the
+environment variable (marked `(required)` when the key is mandatory), and the
 harnesses that support it (`opencode`, plus `pi` when the provider has a `pi`
-block), and each model family with its description and default model.
+block).
 
 #### Scenario: Listing the built-in catalogue
 
 - **WHEN** the user runs `outfit list`
-- **THEN** every embedded provider is printed with its families, key
-  requirements, and supported harnesses
+- **THEN** every embedded provider is printed with its key requirements and
+  supported harnesses
 
 ### Requirement: Runtime catalogue override
 
@@ -97,3 +57,37 @@ On success it SHALL print how to point `outfit` at the written file.
 - **WHEN** the user runs `outfit init-providers custom.yaml` and no such file
   exists
 - **THEN** the embedded catalogue is written to `custom.yaml` byte-for-byte
+
+### Requirement: Embedded provider definitions
+
+The system SHALL ship with a built-in catalogue of providers, defined in a YAML
+file (`providers.yaml`) embedded into the binary at build time. Each provider
+entry declares a description and MAY declare a display name, an npm package, an
+API key environment variable (with optional required flag, optional flag, and
+expected key prefix), static options (such as `baseURL`), options resolved from
+environment variables, and a `pi` block marking the provider as usable by the Pi
+harness. The catalogue SHALL NOT enumerate models: the model a provider serves is
+named by the user's selection, not stored in the catalogue.
+
+A provider whose API key is declared optional is one that also works
+unauthenticated — the same engine run as a local server and as an
+authenticated remote endpoint — so an unset key variable SHALL mean "no key",
+not "a key that is missing".
+
+#### Scenario: Catalogue loads without external files
+
+- **WHEN** any command that needs the catalogue runs with no `--providers` flag
+  and no `OUTFIT_PROVIDERS` environment variable
+- **THEN** the embedded catalogue is used, with no file read from disk
+
+#### Scenario: An optional key is injected only when set
+
+- **WHEN** a provider whose API key is optional is applied, with its key
+  variable set
+- **THEN** the key is injected into the harness config
+
+#### Scenario: An optional key that is unset is not an error
+
+- **WHEN** the same provider is applied with the key variable unset
+- **THEN** the configuration is written with no key, and the command succeeds
+

@@ -1,6 +1,19 @@
-## MODIFIED Requirements
+## REMOVED Requirements
 
 ### Requirement: Completion coverage
+
+**Reason**: The requirement listed family names among the completable values and
+carried a scenario scoping model completion to a typed family. Families are
+removed, so that value and scenario go; the family-free coverage rules are
+restated by the "Completion surface coverage" requirement below.
+
+**Migration**: Completion offers provider, harness, alias, and shell values;
+`--model`/`-m` has no static candidate source now (a follow-up change sources it
+live from each provider).
+
+## ADDED Requirements
+
+### Requirement: Completion surface coverage
 
 Completion SHALL cover the full visible command surface: command names (the
 hidden `__complete` excluded), each command's flags, its subcommands where it
@@ -10,8 +23,8 @@ registered alias names where an Outfit path is accepted, and the supported
 shells for `completion`. The catalogue no longer enumerates models, so
 `--model`/`-m` has no static candidate source; it SHALL still consume its value
 so a following flag completes normally. For a command with subcommands, the
-first positional slot SHALL offer those subcommands and any later slot SHALL
-fall through to what the command otherwise accepts. Positional slots beyond a
+first positional slot SHALL offer those subcommands and any later slot SHALL fall
+through to what the command otherwise accepts. Positional slots beyond a
 command's arity SHALL offer nothing.
 
 #### Scenario: Unalias offers exactly the registered names

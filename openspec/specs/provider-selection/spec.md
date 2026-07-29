@@ -2,58 +2,12 @@
 
 ## Purpose
 
-Define how a single provider selection — a provider plus an optional model
-family, model, alias, context/output limits, and base URL — is validated and
-applied to (or removed from) the active harness's config. This is the shared
-core behind `outfit add`/`outfit remove` and the Outfit-file commands
-`apply`/`unapply`, which route through the same logic.
-
+Define how a single provider selection — a provider plus a model and/or alias,
+context/output limits, and base URL — is validated and applied to (or removed
+from) the active harness's config. This is the shared core behind `outfit
+add`/`outfit remove` and the Outfit-file commands `apply`/`unapply`, which route
+through the same logic.
 ## Requirements
-
-### Requirement: Selection validation
-
-A selection SHALL name a provider (`--provider`/`-p`), and applying one SHALL
-additionally require at least one of a model family, a model, or an alias. The
-provider and any named family MUST exist in the resolved catalogue.
-
-#### Scenario: Missing provider
-
-- **WHEN** the user runs `outfit add` without `--provider`
-- **THEN** the command fails, pointing at `outfit list`
-
-#### Scenario: Provider alone is not enough to apply
-
-- **WHEN** the user runs `outfit add -p openrouter` with no family, model, or
-  alias
-- **THEN** the command fails explaining a selection needs a model family, a
-  model, or an alias
-
-#### Scenario: Unknown provider or family
-
-- **WHEN** the selection names a provider or family not in the catalogue
-- **THEN** the command fails naming the unknown id and pointing at
-  `outfit list`
-
-### Requirement: Family expansion and default model
-
-Selecting a family SHALL configure all of that family's models and make the
-family's default model the selection's default. An explicit `--model` SHALL be
-added (even when not in the family) and SHALL become the default model instead.
-The model key a harness stores a selection under SHALL be the alias when one is
-given, otherwise the provider-native model id.
-
-#### Scenario: Family plus pinned model
-
-- **WHEN** the user runs
-  `outfit add -p openrouter -f deepseek-v4 -m deepseek/deepseek-v4-pro`
-- **THEN** every model in the `deepseek-v4` family is configured and
-  `deepseek/deepseek-v4-pro` becomes the default model
-
-#### Scenario: Alias keys the model
-
-- **WHEN** a selection includes `ALIAS qwen` for model `org/model:quant`
-- **THEN** the harness stores the model under the key `qwen`
-
 ### Requirement: Context and output limits
 
 The system SHALL parse human-friendly token counts for the context window
@@ -144,24 +98,75 @@ environment variable, then the catalogue's per-provider values.
   also set
 - **THEN** the configured base URL is `https://gateway/v1`
 
-### Requirement: Removing a selection
+### Requirement: Apply feedback
 
-`outfit remove` (and `unapply`) SHALL remove the whole provider when no family,
-model, or alias is given, and otherwise SHALL remove exactly the named models —
-a family expands to its catalogue models, and an alias or model id each name
-one key. The command SHALL report how many entries were removed, and SHALL
-report "nothing to remove" (not an error) when none matched.
+After applying a selection the system SHALL report the config file written, the
+provider configured, the default model when one was set, the resolved context
+and output limits when set, and any harness-specific notes (key injection, base
+URL, next steps).
+
+#### Scenario: Successful add
+
+- **WHEN** `outfit add -p openrouter -m deepseek/deepseek-v4-pro -c 128k`
+  succeeds
+- **THEN** the output names the config path, the provider, the default model,
+  and the 128000/32000 token limits
+
+### Requirement: Validating a selection
+
+A selection SHALL name a provider (`--provider`/`-p`), and applying one SHALL
+additionally require at least one of a model or an alias. The named provider
+MUST exist in the resolved catalogue.
+
+#### Scenario: Missing provider
+
+- **WHEN** the user runs `outfit add` without `--provider`
+- **THEN** the command fails, pointing at `outfit list`
+
+#### Scenario: Provider alone is not enough to apply
+
+- **WHEN** the user runs `outfit add -p openrouter` with no model or alias
+- **THEN** the command fails explaining a selection needs a model or an alias
+
+#### Scenario: Unknown provider
+
+- **WHEN** the selection names a provider not in the catalogue
+- **THEN** the command fails naming the unknown id and pointing at
+  `outfit list`
+
+### Requirement: Selection model key
+
+The model key a harness stores a selection under SHALL be the alias when one is
+given, otherwise the provider-native model id. An explicit `--model` SHALL be
+configured and SHALL become the selection's default model.
+
+#### Scenario: Model becomes the default
+
+- **WHEN** the user runs `outfit add -p openrouter -m deepseek/deepseek-v4-pro`
+- **THEN** `deepseek/deepseek-v4-pro` is configured and becomes the default
+  model
+
+#### Scenario: Alias keys the model
+
+- **WHEN** a selection includes `ALIAS qwen` for model `org/model:quant`
+- **THEN** the harness stores the model under the key `qwen`
+
+### Requirement: Removing a provider or model
+
+`outfit remove` (and `unapply`) SHALL remove the whole provider when no model or
+alias is given, and otherwise SHALL remove exactly the named model — an alias or
+model id each name one key. The command SHALL report how many entries were
+removed, and SHALL report "nothing to remove" (not an error) when none matched.
 
 #### Scenario: Removing a whole provider
 
 - **WHEN** the user runs `outfit remove -p ollama`
 - **THEN** the provider block is removed from the harness config
 
-#### Scenario: Removing one family's models
+#### Scenario: Removing one model
 
-- **WHEN** the user runs `outfit remove -p openrouter -f deepseek-v4`
-- **THEN** only that family's models are removed and the provider's other
-  models survive
+- **WHEN** the user runs `outfit remove -p openrouter -m deepseek/deepseek-v4-pro`
+- **THEN** only that model is removed and the provider's other models survive
 
 #### Scenario: Nothing matched
 
@@ -169,15 +174,3 @@ report "nothing to remove" (not an error) when none matched.
 - **THEN** the command reports there was nothing to remove and exits
   successfully
 
-### Requirement: Apply feedback
-
-After applying a selection the system SHALL report the config file written, the
-provider (and family) configured, the default model when one was set, the
-resolved context and output limits when set, and any harness-specific notes
-(key injection, base URL, next steps).
-
-#### Scenario: Successful add
-
-- **WHEN** `outfit add -p openrouter -f deepseek-v4 -c 128k` succeeds
-- **THEN** the output names the config path, provider and family, the default
-  model, and the 128000/32000 token limits

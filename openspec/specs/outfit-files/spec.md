@@ -5,25 +5,23 @@
 Define the `Outfit` file — a declarative, Dockerfile-style description of one
 provider selection — and the commands that consume and produce it:
 `outfit apply`, `outfit unapply`, and `outfit export`.
-
 ## Requirements
-
 ### Requirement: Outfit file format
 
 An Outfit SHALL be a flat, line-oriented text file of `KEYWORD value`
-instructions. The keywords are `PROVIDER`, `FAMILY`, `MODEL`, `ALIAS`,
-`CONTEXT`, `OUTPUT`, `BASEURL` (also accepted as `BASE-URL`, `BASE_URL`, or
-`URL`), `PRESET`, and `REMOTE`. Keywords SHALL match case-insensitively, with
-UPPERCASE as the canonical form. Blank lines, full-line `#` comments, and
-trailing comments introduced by whitespace-then-`#` SHALL be ignored. Each
-instruction SHALL take exactly one value and SHALL appear at most once.
-`PROVIDER` is required. Parse errors SHALL name the offending line.
+instructions. The keywords are `PROVIDER`, `MODEL`, `ALIAS`, `CONTEXT`,
+`OUTPUT`, `BASEURL` (also accepted as `BASE-URL`, `BASE_URL`, or `URL`),
+`PRESET`, and `REMOTE`. Keywords SHALL match case-insensitively, with UPPERCASE
+as the canonical form. Blank lines, full-line `#` comments, and trailing
+comments introduced by whitespace-then-`#` SHALL be ignored. Each instruction
+SHALL take exactly one value and SHALL appear at most once. `PROVIDER` is
+required. Parse errors SHALL name the offending line.
 
 #### Scenario: A minimal Outfit
 
 - **WHEN** a file containing only `PROVIDER openrouter` and
-  `FAMILY deepseek-v4` is parsed
-- **THEN** it yields a selection of that provider and family
+  `MODEL deepseek/deepseek-v4-pro` is parsed
+- **THEN** it yields a selection of that provider and model
 
 #### Scenario: Duplicate instruction
 
@@ -96,8 +94,8 @@ by `outfit serve`.
 
 #### Scenario: Apply equals add
 
-- **WHEN** an Outfit with `PROVIDER ollama` and `FAMILY llama` is applied
-- **THEN** the harness config matches what `outfit add -p ollama -f llama`
+- **WHEN** an Outfit with `PROVIDER ollama` and `MODEL llama3.2` is applied
+- **THEN** the harness config matches what `outfit add -p ollama -m llama3.2`
   would have produced
 
 #### Scenario: Output override
@@ -117,18 +115,16 @@ by `outfit serve`.
 config and print it to stdout. The provider exported is chosen by the
 `--provider`/`-p` flag, else the default model's provider, else the sole
 configured provider; with several providers and no way to choose, the command
-SHALL fail listing them. The output SHALL name a family when the configured
-models exactly match one, SHALL omit a `MODEL` that only restates that family's
-default, SHALL omit a `BASEURL` that only restates the catalogue's default, and
-SHALL record `CONTEXT`/`OUTPUT` only when the exported models agree on a single
-value — never inventing one. Rendered output SHALL use canonical UPPERCASE
-keywords with aligned values, so `outfit export > Outfit` round-trips.
+SHALL fail listing them. The output SHALL name the configured model with a
+`MODEL` instruction, SHALL omit a `BASEURL` that only restates the catalogue's
+default, and SHALL record `CONTEXT`/`OUTPUT` only when the exported models agree
+on a single value — never inventing one. Rendered output SHALL use canonical
+UPPERCASE keywords with aligned values, so `outfit export > Outfit` round-trips.
 
 #### Scenario: Round-trip through export
 
 - **WHEN** the user applies an Outfit and then runs `outfit export`
-- **THEN** the printed Outfit selects the same provider, family/model, and
-  limits
+- **THEN** the printed Outfit selects the same provider, model, and limits
 
 #### Scenario: Ambiguous provider
 
@@ -140,3 +136,4 @@ keywords with aligned values, so `outfit export > Outfit` round-trips.
 
 - **WHEN** the harness config has no providers
 - **THEN** the command fails naming the config file it read
+

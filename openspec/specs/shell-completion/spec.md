@@ -5,9 +5,7 @@
 Define tab completion: the `outfit completion <shell>` scripts and the hidden
 `outfit __complete` protocol they call, which is the single source of truth for
 what completes to what across bash, zsh, and PowerShell.
-
 ## Requirements
-
 ### Requirement: Completion scripts
 
 `outfit completion <shell>` SHALL print a completion script for `bash`, `zsh`,
@@ -36,23 +34,19 @@ can never spew over the user's prompt.
 - **WHEN** outfit's own config file is unreadable and completion is attempted
 - **THEN** `__complete` exits zero with no candidates and no stderr output
 
-### Requirement: Completion coverage
+### Requirement: Completion surface coverage
 
 Completion SHALL cover the full visible command surface: command names (the
 hidden `__complete` excluded), each command's flags, its subcommands where it
 has them, and context-aware values — provider names from the resolved catalogue
-(honouring a `--providers` override already on the line), family and model
-names scoped to the `--provider` (and `--model-family`) already typed, harness
-names, registered alias names where an Outfit path is accepted, and the
-supported shells for `completion`. For a command with subcommands, the first
-positional slot SHALL offer those subcommands and any later slot SHALL fall
+(honouring a `--providers` override already on the line), harness names,
+registered alias names where an Outfit path is accepted, and the supported
+shells for `completion`. The catalogue no longer enumerates models, so
+`--model`/`-m` has no static candidate source; it SHALL still consume its value
+so a following flag completes normally. For a command with subcommands, the
+first positional slot SHALL offer those subcommands and any later slot SHALL fall
 through to what the command otherwise accepts. Positional slots beyond a
 command's arity SHALL offer nothing.
-
-#### Scenario: Families scoped to the typed provider
-
-- **WHEN** the user completes `outfit add -p openrouter -f <TAB>`
-- **THEN** only the families of `openrouter` are offered
 
 #### Scenario: Unalias offers exactly the registered names
 
@@ -74,3 +68,15 @@ command's arity SHALL offer nothing.
 
 - **WHEN** the user completes `outfit remote deploy <TAB>`
 - **THEN** registered alias names and paths are offered
+
+#### Scenario: Providers complete from the catalogue
+
+- **WHEN** the user completes `outfit add -p <TAB>`
+- **THEN** the catalogue's provider names are offered
+
+#### Scenario: The model flag has no static candidates but consumes its value
+
+- **WHEN** the user completes `outfit add -p openrouter -m <TAB>`
+- **THEN** no model candidates are offered and no error occurs
+- **AND** a flag typed after `--model <value>` still completes normally
+
