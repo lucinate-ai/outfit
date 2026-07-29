@@ -10,7 +10,8 @@ in two places and quietly disagree.
 
 An Outfit already describes a model precisely enough to serve it, which
 `outfit serve` proves locally. The same description can drive a remote engine,
-making local and cloud the same declaration pointed at a different machine.
+making local and cloud the same declaration pointed at a different machine — so
+this change delivers both halves: the command, and the deployment it commands.
 
 ## What Changes
 
@@ -42,15 +43,23 @@ making local and cloud the same declaration pointed at a different machine.
 - Applying a config that cannot authenticate is called out. A remote endpoint
   with no resolvable key succeeded silently and failed later as a rejected
   request; it now warns, naming the variable to set.
-- **The deployment itself moves into this repository**, as the `remote/`
-  subproject — the CDK application (Lambdas, Image Builder pipelines, S3
-  weights) that `outfit remote` drives. It was a separate private repository, so
-  the command and the thing it commands were versioned and released apart.
-- Because this repository is public and that one was not, no identifier of a
-  deployment may be committed: account ids, ARNs, Function URL hosts, allocated
-  addresses, bucket names, resource ids. `scripts/check-no-cloud-identifiers.sh`
-  fails the build on any of them, and deployment state stays in gitignored files
-  under `remote/`.
+- **A deployment that runs the model**, under `remote/`: an endpoint that holds
+  no instance until asked for one, launches into whichever zone has GPU
+  capacity, and terminates itself once unused — so it costs nothing at rest and
+  cannot quietly run all night. A retention marker, a maximum runtime and a
+  grace period bound it in that order.
+- **A choice of inference engine**, llama.cpp or vLLM, made per deployment
+  rather than baked in. What to serve — engine, model, quantisation, context,
+  engine flags — is a single stored configuration the endpoint reads when it
+  starts, so changing model is a deploy, not a rebuild.
+- **Weights kept outside the machine image**, in object storage, at a location
+  derived from the engine, model and quantisation. Deploying a model whose
+  weights are absent fetches them first, so nothing has to be staged by hand.
+- Nothing identifying a deployment may be committed: account ids, ARNs,
+  endpoint hostnames, allocated addresses, bucket names, resource ids. This
+  repository is public, so `scripts/check-no-cloud-identifiers.sh` fails the
+  build on any of them, and a deployment's own state stays in files that are
+  never committed.
 - **BREAKING** for opencode users who relied on the config carrying the key:
   the key is now referenced as `{env:VAR}` and resolved when opencode runs, so
   the variable must be set — `outfit harness` passes on whatever outfit can
@@ -70,6 +79,13 @@ that justification, and stops writing a secret to disk.
 - `remote-endpoint`: controlling a remote inference endpoint from an Outfit —
   discovering its configuration, starting and stopping it, reporting its state,
   and deploying what it serves.
+- `endpoint-lifecycle`: an endpoint that exists only while it is used —
+  starting on demand, judging whether it is still wanted, and the bounds that
+  decide when it is torn down.
+- `inference-runners`: which engine serves a deployment and how it is
+  configured, including the stored description of what to serve.
+- `model-weights`: where a model's weights live, how their location is derived,
+  and how they get there.
 
 ### Modified Capabilities
 
@@ -94,7 +110,8 @@ that justification, and stops writing a secret to disk.
 - **Code**: new `internal/remote` (the only package making network calls or
   using the AWS SDK) and `cmd/outfit/remote.go`; the Outfit parser, the
   catalogue schema, both harness adapters, the key resolver, and the completion
-  table. New `remote/` subproject — the repository's only non-Go code.
+  table. The deployment under `remote/` — a CDK application, and the
+  repository's only non-Go code.
 - **CI**: a `No cloud identifiers` step ahead of everything else, and a separate
   `Remote deployment` workflow that typechecks, tests and synthesizes `remote/`
   when it changes, so the deployment cannot rot untested.
@@ -104,8 +121,11 @@ that justification, and stops writing a secret to disk.
 - **Credentials**: `outfit remote` uses the caller's own AWS credential chain
   and needs only `lambda:InvokeFunctionUrl`. No AWS permissions are needed by
   any other command, and none are stored by outfit.
-- **External contract**: the deploy payload is consumed by `remote/`'s deploy
-  Lambda, which owns storage layout and weight seeding — deliberately
-  not described here, so outfit states intent rather than infrastructure.
+- **Internal contract**: the deploy payload is consumed by the deployment's own
+  deploy function, which owns the storage layout and fetching the weights. The
+  CLI states intent; where anything is stored is not its business, which is why
+  the payload names no location.
+- **Cost**: the deployment bills for GPU time only while an instance is up, so
+  the lifecycle bounds are the difference between minutes and hours of it.
 - The implementation for this change already exists on the `feat/remote`
-  branch; this change records the specification delta it introduced.
+  branch; this change records the specification it introduced.

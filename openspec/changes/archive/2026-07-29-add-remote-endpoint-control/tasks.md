@@ -51,9 +51,14 @@ records the specification delta that work introduced, so the boxes are ticked.
 - [x] 7.4 Pass the keys outfit can resolve to the agent it launches
 - [x] 7.5 Resolve `.env` beside the Outfit, falling back to the working directory when there is none
 
-## 8. Bringing the deployment in
+## 8. The deployment
 
-- [x] 8.1 Move the CDK project into `remote/`, keeping its stack names so the running stack is not orphaned
-- [x] 8.2 Add `scripts/check-no-cloud-identifiers.sh` and run it first in CI
-- [x] 8.3 Add a `Remote deployment` workflow: install, typecheck, test, and synthesize
-- [x] 8.4 Repoint every reference from the old repository to `remote/`
+- [x] 8.1 Start on demand: try each zone for capacity, take a stable address, and report ready only once the model answers
+- [x] 8.2 Terminate when unused, judging activity from the engine's own counters and reading the names its engine exposes
+- [x] 8.3 Order the bounds — retention, then maximum runtime, then the grace period — and let a manual stop through regardless
+- [x] 8.4 Serve through a chosen engine, with an image per engine and no default
+- [x] 8.5 Hold what to serve as one stored configuration, owned by whoever deploys and not overwritten by deploying the infrastructure
+- [x] 8.6 Derive where weights live from engine, model and quantisation, ignoring any location a caller supplies
+- [x] 8.7 Fetch absent weights within the deployment, judging presence by a marker written only on completion
+- [x] 8.8 Add `scripts/check-no-cloud-identifiers.sh` and run it first in CI
+- [x] 8.9 Add a `Remote deployment` workflow: install, typecheck, test, and synthesize

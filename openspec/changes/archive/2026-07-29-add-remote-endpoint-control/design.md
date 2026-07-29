@@ -70,17 +70,22 @@ still works for `start`/`stop`/`status`; only `deploy` complains, and it says
 what to add. Validating it up front would break working setups for a command
 they do not use.
 
-**The deployment lives in this repository.** The command and the thing it
-commands were in separate repositories, so a change to the deploy contract
-spanned two review queues and two releases, and neither side's CI saw the other.
-Bringing it in as `remote/` makes them one reviewable unit. The cost is a
-polyglot repository — a TypeScript CDK project beside a Go CLI — which is
-handled by giving it its own workflow rather than bending the Go one around it.
+**The command and the deployment ship together.** They are one feature — a
+change to what the deploy request carries touches both sides — so they live in
+one repository and are reviewed as one unit. The cost is a polyglot repository,
+a TypeScript CDK project beside a Go CLI, handled by giving the deployment its
+own workflow rather than bending the Go one around it.
 
-**Nothing identifying a deployment may be committed.** The deployment's
-repository was private; this one is not. That is a difference in kind, not
-degree, so it is enforced by a check rather than a convention: the build fails
-on an account id, ARN, Function URL host, public address, bucket name or
+**Terminate, do not stop.** A stopped instance still bills for its disk, and
+the endpoint is stateless — the weights are fetched at start — so there is
+nothing worth keeping between sessions. Terminating means the resting cost is
+storage and an address, and a forgotten session costs minutes rather than a
+night. The price is a slower start, which the lifecycle bounds are designed
+around rather than against.
+
+**Nothing identifying a deployment may be committed.** This repository is
+public, so it is enforced by a check rather than a convention: the build fails
+on an account id, ARN, endpoint hostname, public address, bucket name or
 resource id. Documentation and tests use the reserved ranges instead. Logical
 stack names and tag keys are deliberately *not* covered — they are chosen in
 source and identify the running stack, so changing them would orphan it.
