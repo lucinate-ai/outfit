@@ -302,6 +302,34 @@ func TestBuildProviderBlock_VertexRequiredOptionMissing(t *testing.T) {
 	}
 }
 
+func TestBuildProviderBlock_RequiredOptionSources(t *testing.T) {
+	// A required option is satisfied by a static option value, with no env
+	// mapping needed.
+	fromStatic := &Provider{
+		Description:     "custom",
+		Options:         map[string]any{"project": "static-proj"},
+		OptionsRequired: []string{"project"},
+	}
+	block, _, err := BuildProviderBlock("custom", fromStatic, "m", "", noEnv)
+	if err != nil {
+		t.Fatalf("a static required option should satisfy the requirement: %v", err)
+	}
+	if block["options"].(map[string]any)["project"] != "static-proj" {
+		t.Errorf("project = %v, want static-proj", block["options"].(map[string]any)["project"])
+	}
+
+	// A required option with no source at all fails with the catalogue-side
+	// message (there is no env var to name).
+	unmapped := &Provider{
+		Description:     "custom",
+		OptionsRequired: []string{"project"},
+	}
+	_, _, err = BuildProviderBlock("custom", unmapped, "m", "", noEnv)
+	if err == nil || !strings.Contains(err.Error(), "catalogue options") {
+		t.Fatalf("an unmapped required option should fail with the catalogue message, got %v", err)
+	}
+}
+
 func TestBuildProviderBlock_VertexProjectAndLocation(t *testing.T) {
 	cat, _ := Load()
 	for _, id := range []string{"google-vertex", "google-vertex-anthropic"} {

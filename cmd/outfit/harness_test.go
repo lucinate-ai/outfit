@@ -614,6 +614,54 @@ func TestCmdAdd_PiUnsupportedProvider(t *testing.T) {
 	}
 }
 
+func TestCmdAdd_PiUnsupportedVertex(t *testing.T) {
+	isolateConfig(t)
+	for _, p := range []string{"google-vertex", "google-vertex-anthropic"} {
+		t.Setenv("GOOGLE_VERTEX_PROJECT", "my-proj") // a project is set, so the failure is Pi support, not a missing option
+		if err := cmdAdd([]string{"-H", "pi", "-p", p, "-m", "some-model"}); err == nil {
+			t.Errorf("%s: expected error adding a Pi-unsupported provider", p)
+		}
+	}
+}
+
+func TestCmdAdd_VertexRequiresProject(t *testing.T) {
+	home := isolateConfig(t)
+
+	// Without a project, the whole `add` path fails with a clear error.
+	err := cmdAdd([]string{"-p", "google-vertex-anthropic", "-m", "claude-3-5-sonnet-v2@20241022"})
+	if err == nil || !strings.Contains(err.Error(), "GOOGLE_VERTEX_PROJECT") {
+		t.Fatalf("expected a missing-project error naming GOOGLE_VERTEX_PROJECT, got %v", err)
+	}
+
+	// With the project set, the provider is written to the opencode config with
+	// project and the default location, and no apiKey.
+	t.Setenv("GOOGLE_VERTEX_PROJECT", "my-proj")
+	captureStdout(t, func() {
+		if err := cmdAdd([]string{"-p", "google-vertex-anthropic", "-m", "claude-3-5-sonnet-v2@20241022"}); err != nil {
+			t.Fatalf("cmdAdd with project set: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if m["model"] != "google-vertex-anthropic/claude-3-5-sonnet-v2@20241022" {
+		t.Errorf("default model = %v", m["model"])
+	}
+	prov := m["provider"].(map[string]any)["google-vertex-anthropic"].(map[string]any)
+	if _, hasNPM := prov["npm"]; hasNPM {
+		t.Error("google-vertex-anthropic should carry no npm (opencode built-in)")
+	}
+	opts := prov["options"].(map[string]any)
+	if opts["project"] != "my-proj" {
+		t.Errorf("project = %v, want my-proj", opts["project"])
+	}
+	if opts["location"] != "global" {
+		t.Errorf("location = %v, want the global default", opts["location"])
+	}
+	if _, hasKey := opts["apiKey"]; hasKey {
+		t.Error("google-vertex-anthropic should carry no apiKey (ambient credentials)")
+	}
+}
+
 func TestCmdExportRemove_PiRoundTrip(t *testing.T) {
 	home := isolateConfig(t)
 	t.Setenv("OUTFIT_HARNESS", "pi")
