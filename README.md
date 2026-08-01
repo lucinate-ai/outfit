@@ -29,6 +29,27 @@ outfit serve
 That's the whole tool. Your agent is dressed and pointed at the model; the rest
 of your config never moved.
 
+## Supported providers
+
+Every provider below is built in — name it with `-p` and `outfit` fills in the
+base URL, package and key variable for you. Run `outfit list` to see them with
+their models.
+
+| Provider | `-p` name | What it is |
+| --- | --- | --- |
+| OpenRouter | `openrouter` | Hosted model aggregator — hundreds of models behind one key |
+| AWS Bedrock | `amazon-bedrock` | Claude and other models, authenticated with your AWS credentials |
+| Google Vertex AI (Gemini) | `google-vertex` | Gemini models on GCP, via your Google credentials |
+| Google Vertex AI (Claude) | `google-vertex-anthropic` | Anthropic Claude on GCP, via your Google credentials |
+| Ollama | `ollama` | Local Ollama server |
+| llama.cpp | `llamacpp` | Local (or remote) llama-server |
+| oMLX | `omlx` | Local oMLX server on Apple Silicon |
+| vLLM | `vllm` | Local or self-hosted vLLM server |
+| OpenAI-compatible | `openai-compatible` | Any endpoint that speaks the OpenAI API — set the base URL and key |
+
+Adding one that isn't here is a data change, not code — see
+[Adding providers and models](#adding-providers-and-models).
+
 ---
 
 Your coding agent is only as good as the model behind it, and the model you want
