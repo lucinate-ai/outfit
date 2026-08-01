@@ -371,7 +371,8 @@ and the per-provider variables (`OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`,
 Provider- and model-specific walkthroughs live in [`examples/`](examples/), each
 with a ready-to-apply `Outfit`:
 
-- [Qwen3.6-35B-A3B on llama.cpp](examples/llamacpp/qwen3.6/README.md)
+- [Qwen3.6-27B on llama.cpp](examples/llamacpp/qwen3.6-27b/README.md)
+- [Qwen3.6-35B-A3B on llama.cpp](examples/llamacpp/qwen3.6-35b-a3b/README.md)
 - [Gemma-4-12B-IT on llama.cpp](examples/llamacpp/gemma4/README.md)
 - [Qwen3.6-35B-A3B on oMLX (Apple Silicon)](examples/omlx/qwen3.6/README.md)
 - [Gemma-4-E2B on oMLX (Apple Silicon)](examples/omlx/gemma-4-e2b/README.md)

@@ -174,4 +174,4 @@ itself.
 
 - [`outfit serve`](../../../docs/commands/serve.md) — the full command reference
 - [The `Outfit` file](../../../docs/outfit-file.md) — full syntax
-- The same model on llama.cpp: [`examples/llamacpp/qwen3.6`](../../llamacpp/qwen3.6/README.md)
+- The same model on llama.cpp: [`examples/llamacpp/qwen3.6-35b-a3b`](../../llamacpp/qwen3.6-35b-a3b/README.md)

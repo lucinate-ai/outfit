@@ -1,17 +1,19 @@
-# Qwen3.6-35B-A3B on llama.cpp
+# Qwen3.6-27B on llama.cpp
 
-Run Unsloth's GGUF build of Qwen3.6-35B-A3B locally with `llama-server`, then
-point opencode at it with the [`Outfit`](Outfit) in this directory.
+Run Unsloth's GGUF build of Qwen3.6-27B locally with `llama-server`, then point
+opencode at it with the [`Outfit`](Outfit) in this directory.
 
-`A3B` means it's a mixture-of-experts model: ~35B total parameters but only ~3B
-active per token, so it's far lighter to run than its size suggests.
+This is the dense 27B model: every parameter is active on each token. That makes
+it heavier to run than the [35B-A3B mixture-of-experts
+build](../qwen3.6-35b-a3b/README.md) despite the smaller total, but it fits in
+less memory and is a good fit for a single GPU.
 
 ## Prerequisites
 
 - A recent build of [llama.cpp](https://github.com/ggml-org/llama.cpp) that
   includes `llama-server` (e.g. `brew install llama.cpp`, or build from source).
-- A GPU is strongly recommended. The `UD-Q4_K_XL` quant is roughly 20 GB on
-  disk; for comfortable headroom plan for ~24 GB of VRAM (less if you offload
+- A GPU is strongly recommended. The `UD-Q4_K_XL` quant is roughly 17 GB on
+  disk; for comfortable headroom plan for ~20 GB of VRAM (less if you offload
   fewer layers to the GPU).
 
 ## 1. Pull the model
@@ -20,7 +22,7 @@ active per token, so it's far lighter to run than its size suggests.
 with the `:TAG` suffix:
 
 ```sh
-llama-server -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL
+llama-server -hf unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL
 ```
 
 On first run this downloads the `UD-Q4_K_XL` weights into the llama.cpp cache
@@ -29,7 +31,7 @@ On first run this downloads the `UD-Q4_K_XL` weights into the llama.cpp cache
 Prefer to download ahead of time? Use the Hugging Face CLI:
 
 ```sh
-hf download unsloth/Qwen3.6-35B-A3B-GGUF --include "*UD-Q4_K_XL*"
+hf download unsloth/Qwen3.6-27B-GGUF --include "*UD-Q4_K_XL*"
 ```
 
 (`huggingface-cli download ...` works too on older installs.)
@@ -38,7 +40,7 @@ hf download unsloth/Qwen3.6-35B-A3B-GGUF --include "*UD-Q4_K_XL*"
 
 ```sh
 llama-server \
-  -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL \
+  -hf unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL \
   --jinja \
   -ngl 99 \
   --ctx-size 32768 \
@@ -71,7 +73,7 @@ roughly halves that cost. KV-cache quantisation requires flash attention:
 
 ```sh
 llama-server \
-  -hf unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL \
+  -hf unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL \
   --jinja -ngl 99 --ctx-size 32768 --host 127.0.0.1 --port 8080 \
   -fa on \
   --cache-type-k q8_0 \
@@ -94,7 +96,7 @@ curl http://127.0.0.1:8080/v1/models
 the [`Outfit`](Outfit) in this directory:
 
 ```sh
-outfit apply examples/llamacpp/qwen3.6/Outfit
+outfit apply examples/llamacpp/qwen3.6-27b/Outfit
 # or, from this directory:
 outfit apply
 ```
@@ -103,7 +105,7 @@ The Outfit is:
 
 ```dockerfile
 PROVIDER llamacpp
-ALIAS    qwen3.6-35b-a3b
+ALIAS    qwen3.6-27b
 CONTEXT  32768            # match the server's --ctx-size
 PRESET   ./preset.ini
 ```
@@ -122,4 +124,9 @@ file ships one commented out):
 BASEURL http://127.0.0.1:9090/v1
 ```
 
-Now start `opencode` and select `llamacpp/qwen3.6-35b-a3b`.
+Now start `opencode` and select `llamacpp/qwen3.6-27b`.
+
+## See also
+
+- The bigger mixture-of-experts sibling:
+  [`examples/llamacpp/qwen3.6-35b-a3b`](../qwen3.6-35b-a3b/README.md)
