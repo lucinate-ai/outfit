@@ -48,7 +48,8 @@ it dresses the agent for you:
 
 - **One command, any model.** Pick from a built-in catalogue — OpenRouter,
   Bedrock, Ollama, llama.cpp, vLLM, oMLX, or any OpenAI-compatible endpoint. No
-  URLs or model ids to look up.
+  URLs to look up, and `outfit list --models` fetches the model ids straight from
+  the provider.
 - **Your config survives.** Settings are merged *into* what you already have.
   Other providers, your theme, even your comments stay exactly where you left them.
 - **Keys stay where they belong.** Secrets are read from a local `.env` and never
@@ -84,6 +85,12 @@ See what's in the catalogue:
 
 ```sh
 outfit list
+```
+
+Need a model id? Ask the provider itself — no memorising, no guessing:
+
+```sh
+outfit list --models openrouter    # the models it currently serves, live
 ```
 
 Add a provider and a model:
@@ -143,7 +150,7 @@ quarter of the context for you. It can't exceed the context window.
 ## Usage
 
 ```sh
-outfit list
+outfit list   [--models [<provider>]]    # the catalogue; --models fetches live model ids
 outfit show   [--harness <name>]         # show what the harness has configured
 outfit add    --provider <name> [--model <id>] [--alias <name>] [--context <size>] [--output <size>] [--base-url <url>]
 outfit remove --provider <name> [--model <id>] [--alias <name>]
