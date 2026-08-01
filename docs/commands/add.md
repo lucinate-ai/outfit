@@ -21,6 +21,14 @@ outfit add -p ollama -m llama3.2
 # Claude on AWS Bedrock (uses your AWS credentials)
 outfit add -p amazon-bedrock -m anthropic.claude-3-5-sonnet
 
+# Claude on GCP Vertex AI (uses your Google credentials; set the project)
+GOOGLE_VERTEX_PROJECT=my-gcp-project \
+  outfit add -p google-vertex-anthropic -m claude-3-5-sonnet-v2@20241022
+
+# Gemini on GCP Vertex AI
+GOOGLE_VERTEX_PROJECT=my-gcp-project \
+  outfit add -p google-vertex -m gemini-2.0-flash
+
 # Any OpenAI-compatible endpoint
 OPENAI_API_KEY=sk-... \
   outfit add -p openai-compatible -m my-model --base-url https://my-endpoint/v1
@@ -53,6 +61,13 @@ outfit add -p llamacpp -m my-model -c 128k -o 32k
   environment, and
   never written anywhere they'll leak. A provider that requires a key tells you
   which variable to set.
+- Some cloud providers authenticate with ambient credentials instead of an API
+  key: `amazon-bedrock` via your AWS credentials, and `google-vertex` /
+  `google-vertex-anthropic` via Google Application Default Credentials (run
+  `gcloud auth application-default login`, or set `GOOGLE_APPLICATION_CREDENTIALS`
+  to a service-account key file). The Vertex providers need a project — set
+  `GOOGLE_VERTEX_PROJECT` (and optionally `GOOGLE_VERTEX_LOCATION`, which
+  defaults to `global`). These providers are opencode-only.
 - On opencode, `add` sets the chosen model as the default. Pi has no
   default-model setting, so `add` tells you which model to pick with `/model`.
 - `--output` needs `--context`, and cannot exceed it.

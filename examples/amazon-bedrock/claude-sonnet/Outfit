@@ -1,0 +1,7 @@
+# Claude 3.5 Sonnet on AWS Bedrock.
+# No API key: the AWS SDK reads your ambient credentials (see the README).
+# Override the region with AWS_REGION, or edit the provider's options.
+PROVIDER amazon-bedrock
+MODEL    anthropic.claude-3-5-sonnet-20241022-v2:0   # the Bedrock model id opencode calls
+CONTEXT  200k
+OUTPUT   8k

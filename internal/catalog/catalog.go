@@ -47,6 +47,12 @@ type Provider struct {
 	APIKeyPrefix   string            `yaml:"apiKeyPrefix"`
 	Options        map[string]any    `yaml:"options"`
 	OptionsFromEnv map[string]string `yaml:"optionsFromEnv"`
+	// OptionsRequired lists option keys that must resolve to a non-empty value
+	// (from static options or optionsFromEnv) when the provider is applied.
+	// It guards a caller-supplied option that has no usable default — such as a
+	// Vertex AI project — on a provider that injects no API key. See
+	// BuildProviderBlock.
+	OptionsRequired []string `yaml:"optionsRequired"`
 	// Pi marks the provider as usable by the Pi harness and carries its
 	// Pi-specific settings. Nil when the provider has no `pi:` block, in which
 	// case BuildPiProvider reports it as unsupported.
@@ -145,6 +151,17 @@ func BuildProviderBlock(id string, p *Provider, modelOverride, baseURLOverride s
 	}
 	if baseURLOverride != "" {
 		options["baseURL"] = baseURLOverride
+	}
+	// A provider may require caller-supplied options that have no usable default
+	// (e.g. a Vertex AI project). Unlike the API key, these are plain options,
+	// so apiKeyRequired does not cover them.
+	for _, optKey := range p.OptionsRequired {
+		if v, ok := options[optKey]; !ok || v == nil || v == "" {
+			if env := p.OptionsFromEnv[optKey]; env != "" {
+				return nil, "", fmt.Errorf("the %q option is required for provider %q; set %s in your .env or environment", optKey, id, env)
+			}
+			return nil, "", fmt.Errorf("the %q option is required for provider %q; set it in the catalogue options", optKey, id)
+		}
 	}
 	if p.APIKeyEnv != "" {
 		key := resolve(p.APIKeyEnv)

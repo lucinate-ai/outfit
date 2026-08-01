@@ -21,6 +21,10 @@
 #   apiKeyPrefix    sanity-check that the key starts with this
 #   options         static options merged into the provider block
 #   optionsFromEnv  option -> env var; injected into options when the var is set
+#   optionsRequired list of option keys that must resolve to a non-empty value
+#                   (from options or optionsFromEnv); applying the provider fails
+#                   otherwise. For a caller-supplied option with no usable
+#                   default (e.g. a Vertex AI project) on a keyless provider.
 #   pi              optional block marking the provider as usable by the Pi
 #                   harness (~/.pi/agent/models.json). Holds:
 #                     api      Pi protocol: openai-completions | openai-responses
@@ -47,6 +51,33 @@ providers:
       region: us-east-1
     optionsFromEnv:
       region: AWS_REGION
+
+  google-vertex:
+    description: Gemini on GCP Vertex AI (authenticates via your Google credentials)
+    # No apiKey is injected: the Vertex SDK reads Application Default Credentials
+    # (run `gcloud auth application-default login`, or point
+    # GOOGLE_APPLICATION_CREDENTIALS at a service-account key file). The project
+    # is required (there is no sensible default); the location defaults to
+    # `global` and is overridable with GOOGLE_VERTEX_LOCATION.
+    options:
+      location: global
+    optionsRequired:
+      - project
+    optionsFromEnv:
+      project: GOOGLE_VERTEX_PROJECT
+      location: GOOGLE_VERTEX_LOCATION
+
+  google-vertex-anthropic:
+    description: Claude on GCP Vertex AI (authenticates via your Google credentials)
+    # Same authentication and options as google-vertex; this provider serves
+    # Anthropic Claude models rather than Gemini.
+    options:
+      location: global
+    optionsRequired:
+      - project
+    optionsFromEnv:
+      project: GOOGLE_VERTEX_PROJECT
+      location: GOOGLE_VERTEX_LOCATION
 
   ollama:
     description: Local Ollama server (OpenAI-compatible API)
