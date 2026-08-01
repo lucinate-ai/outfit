@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Generates the concrete, gitignored `Outfit` and `remote.json` from the CDK
-// stack outputs that `pnpm deploy` writes (cdk deploy --outputs-file).
+// Generates the gitignored `remote.json` from the CDK stack outputs that
+// `pnpm deploy` writes (cdk deploy --outputs-file).
 //
-// The endpoint's base URL is a stable Elastic IP known at deploy time, so it
-// lives in the Outfit's BASEURL as static config rather than being fetched
-// from a runtime Lambda response. remote.json still carries the start/stop
-// Lambda URLs that `outfit remote` drives.
+// remote.json holds everything about the deployment that is not a choice the
+// user made: the start/stop/deploy Lambda URLs `outfit remote` drives, the
+// region, and the endpoint's base URL (a stable Elastic IP, known at deploy
+// time). The `Outfit` beside it is hand-written and never touched here.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -29,19 +29,21 @@ if (!stack) {
   fail(`no stack outputs found in ${outputsPath}`);
 }
 
-const { BaseUrl, ModelId, OutfitRemoteConfig } = stack;
-for (const [name, value] of Object.entries({ BaseUrl, ModelId, OutfitRemoteConfig })) {
-  if (!value) {
-    fail(`stack output ${name} is missing from ${outputsPath}`);
-  }
+const { BaseUrl, OutfitRemoteConfig } = stack;
+if (!OutfitRemoteConfig) {
+  fail(`stack output OutfitRemoteConfig is missing from ${outputsPath}`);
 }
 
-const template = readFileSync(join(repoRoot, 'Outfit.example'), 'utf8');
-const outfit = template.replaceAll('__BASEURL__', BaseUrl).replaceAll('__MODEL__', ModelId);
-writeFileSync(join(repoRoot, 'Outfit'), outfit);
+const remote = JSON.parse(OutfitRemoteConfig);
+// Outputs from a stack deployed before base_url joined OutfitRemoteConfig
+// still carry the address as its own output.
+if (!remote.base_url && BaseUrl) {
+  remote.base_url = BaseUrl;
+}
+if (!remote.base_url) {
+  fail(`neither OutfitRemoteConfig.base_url nor the BaseUrl output is present in ${outputsPath}`);
+}
 
-// OutfitRemoteConfig is already a JSON string; re-emit it pretty-printed.
-const remote = `${JSON.stringify(JSON.parse(OutfitRemoteConfig), null, 2)}\n`;
-writeFileSync(join(repoRoot, 'remote.json'), remote);
+writeFileSync(join(repoRoot, 'remote.json'), `${JSON.stringify(remote, null, 2)}\n`);
 
-console.log(`Wrote Outfit (BASEURL ${BaseUrl}) and remote.json`);
+console.log(`Wrote remote.json (base_url ${remote.base_url})`);

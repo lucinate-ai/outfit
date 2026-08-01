@@ -461,3 +461,75 @@ func TestCmdApply_DirectoryWithoutOutfit(t *testing.T) {
 		t.Error("expected error for a directory with no Outfit")
 	}
 }
+
+// TestCmdApply_BaseURLFromRemoteConfig checks that an Outfit with a REMOTE and
+// no BASEURL takes the endpoint address from the remote config's base_url —
+// the deployment writes that file, so the Outfit does not have to carry it.
+func TestCmdApply_BaseURLFromRemoteConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := t.TempDir()
+	mustWrite(t, filepath.Join(outfitDir, "remote.json"),
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1"}`)
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE remote.json\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+	if !strings.Contains(out, "http://198.51.100.7:8000/v1") {
+		t.Errorf("expected the remote base URL to be reported:\n%s", out)
+	}
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	llamacpp := m["provider"].(map[string]any)["llamacpp"].(map[string]any)
+	if got := llamacpp["options"].(map[string]any)["baseURL"]; got != "http://198.51.100.7:8000/v1" {
+		t.Errorf("baseURL = %v, want the remote config's base_url", got)
+	}
+}
+
+// TestCmdApply_OutfitBaseURLBeatsRemoteConfig checks the precedence: a BASEURL
+// the user wrote in the Outfit wins over the generated remote config.
+func TestCmdApply_OutfitBaseURLBeatsRemoteConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := t.TempDir()
+	mustWrite(t, filepath.Join(outfitDir, "remote.json"),
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1"}`)
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nBASEURL http://127.0.0.1:9090/v1\nREMOTE remote.json\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	llamacpp := m["provider"].(map[string]any)["llamacpp"].(map[string]any)
+	if got := llamacpp["options"].(map[string]any)["baseURL"]; got != "http://127.0.0.1:9090/v1" {
+		t.Errorf("baseURL = %v, want the Outfit's own BASEURL", got)
+	}
+}
+
+// TestCmdApply_RemoteConfigAbsent checks that an Outfit naming a remote config
+// that does not exist yet still applies: the deployment that writes it may not
+// have run, and apply has nothing to do with starting the endpoint.
+func TestCmdApply_RemoteConfigAbsent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := t.TempDir()
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE remote.json\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+}

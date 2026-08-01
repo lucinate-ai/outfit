@@ -335,8 +335,13 @@ per-user `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json` is used. Either
 way, paste the `OutfitRemoteConfig` output of the `remote/` deployment there:
 
 ```json
-{"start_url": "https://...lambda-url...on.aws/", "stop_url": "https://...", "region": "eu-west-1"}
+{"start_url": "https://...lambda-url...on.aws/", "stop_url": "https://...", "region": "eu-west-1", "base_url": "http://198.51.100.7:8000/v1"}
 ```
+
+`base_url` is the endpoint's own address. `remote` doesn't need it — `start`
+and `status` report the address themselves — but `outfit apply` reads it, so an
+Outfit with a `REMOTE` line can leave `BASEURL` out and still point your agent
+at the endpoint. A `BASEURL` in the Outfit takes precedence.
 
 Each field can be overridden with `OUTFIT_REMOTE_START_URL`,
 `OUTFIT_REMOTE_STOP_URL` and `OUTFIT_REMOTE_REGION`. Requests are SigV4-signed

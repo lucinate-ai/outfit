@@ -29,6 +29,10 @@ opencode. After applying, just run your coding agent — or do both at once with
   directory.
 - An Outfit's `PRESET` line is for [`outfit serve`](serve.md); `apply` ignores
   it.
+- An Outfit with a `REMOTE` line and no `BASEURL` takes the endpoint's address
+  from that [remote config](remote.md)'s `base_url`, which its deployment
+  writes. A `BASEURL` in the Outfit wins over it, and a remote config that
+  isn't there yet is not an error — apply just leaves the base URL alone.
 
 ## See also
 

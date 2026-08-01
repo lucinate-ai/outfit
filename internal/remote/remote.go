@@ -32,13 +32,16 @@ var httpClient = &http.Client{Timeout: 10 * time.Minute}
 // Lambdas: deploying remote/ prints it as the OutfitRemoteConfig output, ready
 // to paste into the config file.
 type Config struct {
-	StartURL string `json:"start_url"`
-	StopURL  string `json:"stop_url"`
-	// DeployURL is the deploy Lambda's Function URL. Unlike the other two it is
-	// optional: configs written before `remote deploy` existed do not have it,
-	// and start/stop work without it. Deploy reports its absence itself.
+	StartURL  string `json:"start_url"`
+	StopURL   string `json:"stop_url"`
 	DeployURL string `json:"deploy_url"`
 	Region    string `json:"region"`
+	// BaseURL is the endpoint's own address (the instance's stable Elastic IP).
+	// It belongs to the deployment rather than to the Outfit, so it is written
+	// here and `apply` reads it back for an Outfit that states no BASEURL. Like
+	// DeployURL it is optional: the control calls do not need it — start and
+	// status report the address themselves — so configs without it still work.
+	BaseURL string `json:"base_url"`
 }
 
 // ConfigPath returns the path of the remote config file, alongside outfit's

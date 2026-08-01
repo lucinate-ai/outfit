@@ -104,7 +104,7 @@ pnpm set-ip            # writes this machine's public IP to .env
 pnpm cdk bootstrap     # once per account/region
 pnpm deploy:image      # creates the bake pipelines — instant, no build yet
 pnpm bake llamacpp     # bakes that engine's AMI — ~15-25 min, in the background
-pnpm run deploy        # deploys the runtime + S3 bucket, generates Outfit/remote.json
+pnpm run deploy        # deploys the runtime + S3 bucket, generates remote.json
 outfit remote deploy   # says what to serve; seeds the weights if they're missing
 ```
 
@@ -115,9 +115,10 @@ outfit remote deploy   # says what to serve; seeds the weights if they're missin
   command the script prints. Re-bake only when the engine version or the driver
   changes; the model is **not** baked in.
 - `pnpm run deploy` deploys the runtime stack (VPC, Lambdas, EIP, **S3 weights
-  bucket**) and generates the two gitignored files outfit reads: `Outfit` (with
-  the endpoint in its `BASEURL`) and `remote.json` (the Lambda URLs), both from
-  [`Outfit.example`](Outfit.example) — nothing to copy by hand.
+  bucket**) and generates the gitignored `remote.json` — the Lambda URLs, the
+  region, and the endpoint's `base_url` — so there is nothing to copy by hand.
+  The [`Outfit`](Outfit) beside it is committed and hand-maintained: it says
+  what to serve, and nothing rewrites it.
 - `outfit remote deploy` reads the `Outfit` and its [`preset.ini`](preset.ini)
   and tells the endpoint what to serve. If those weights are not in S3 it starts
   the seed job itself (~15–20 min, all within AWS) and says so; wait for it
@@ -206,8 +207,9 @@ tail -f /var/log/cloud-init-output.log  # boot: s3 sync progress
 
 ## Daily use
 
-The endpoint is driven by the `outfit` CLI, using the generated `Outfit` and
-`remote.json`. Run these from this directory (`outfit` reads `./Outfit`):
+The endpoint is driven by the `outfit` CLI, using this directory's `Outfit` and
+the generated `remote.json`. Run these from this directory (`outfit` reads
+`./Outfit`):
 
 ```sh
 outfit remote start    # boots the instance, blocks until it is serving,
@@ -217,8 +219,10 @@ outfit remote status   # instance state + endpoint health
 outfit remote stop     # stop immediately instead of waiting for the idle timer
 ```
 
-`outfit apply` writes the endpoint's `BASEURL` and API key into your harness
-config, so export the key that `outfit remote start` prints first. The model
+`outfit apply` writes the endpoint's base URL and API key into your harness
+config, so export the key that `outfit remote start` prints first. The base URL
+comes from `remote.json`'s `base_url`, since the Outfit states none; a `BASEURL`
+in the Outfit would override it. The model
 name to request is the Outfit's `ALIAS` (`qwen3.6-27b`) — the same value the
 server is started under, so the two cannot drift:
 

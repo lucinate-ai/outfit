@@ -39,9 +39,16 @@ Put them in a JSON file:
   "start_url": "https://....lambda-url.us-east-1.on.aws/",
   "stop_url": "https://....lambda-url.us-east-1.on.aws/",
   "deploy_url": "https://....lambda-url.us-east-1.on.aws/",
-  "region": "us-east-1"
+  "region": "us-east-1",
+  "base_url": "http://198.51.100.7:8000/v1"
 }
 ```
+
+`base_url` is the endpoint's own address, and it's optional — `remote` doesn't
+need it, since `start` and `status` report the address themselves. It's there
+for [`outfit apply`](apply.md): an Outfit for a remote endpoint can leave out
+`BASEURL` and let apply take the address from here, so the address stays with
+the deployment that owns it. A `BASEURL` in the Outfit wins if you set one.
 
 Either name it from the Outfit, so a project carries its own endpoint:
 

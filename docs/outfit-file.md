@@ -63,6 +63,11 @@ commands consult `./Outfit` when it exists and fall back to the per-user file;
 an explicit path (`outfit remote status path/to/Outfit`) requires the Outfit
 to carry a `REMOTE` instruction.
 
+Note the missing `BASEURL`: the endpoint's address belongs to the deployment,
+which records it in the named file as `base_url`, and
+[`outfit apply`](commands/apply.md) reads it from there. Write a `BASEURL` only
+to override that.
+
 Because `PROVIDER` names the engine, this is the same file that would run the
 model locally with [`outfit serve`](commands/serve.md) — pointed at a bigger
 machine.

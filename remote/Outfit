@@ -1,11 +1,12 @@
 # Remote Qwen endpoint deployed by this directory.
 #
-# The concrete `Outfit` and `remote.json` are generated from the CDK stack
-# outputs by `pnpm write-config` (run for you by `pnpm deploy`) — edit this
-# template, not the generated files. Then, from this directory:
+# This file is hand-maintained — nothing generates or rewrites it. `pnpm
+# deploy` writes only `remote.json`, which carries the deployment state: the
+# Lambda URLs `outfit remote` drives and the endpoint's base URL. From this
+# directory:
 #   outfit remote deploy  # tell the endpoint what to serve (this file + preset)
 #   outfit remote start   # boot the instance; prints the OPENAI_API_KEY export
-#   outfit apply          # point your coding agent at the endpoint (uses BASEURL)
+#   outfit apply          # point your coding agent at the endpoint
 #   outfit remote stop    # stop now instead of waiting for the idle timer
 #
 # PROVIDER names the inference engine, so this file is what chooses llama.cpp
@@ -17,12 +18,11 @@
 # ALIAS is both the name your coding agent asks for and the name the server is
 # started under (llama-server's --alias), so the two cannot drift apart.
 #
-# The endpoint is a stable Elastic IP, so BASEURL is static config here rather
-# than something fetched at runtime. remote.json carries the Lambda URLs that
-# `outfit remote` drives.
+# There is deliberately no BASEURL: the endpoint's address belongs to the
+# deployment, so `outfit apply` takes it from remote.json's base_url. Add a
+# BASEURL here only to override that.
 PROVIDER llamacpp
 ALIAS    qwen3.6-27b
 CONTEXT  131072
-BASEURL  __BASEURL__
 PRESET   ./preset.ini
 REMOTE   remote.json

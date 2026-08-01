@@ -4,9 +4,7 @@
 
 Define how a remote inference endpoint is discovered, controlled and told
 what to serve from an Outfit: the `outfit remote` command group.
-
 ## Requirements
-
 ### Requirement: Remote command group
 
 The system SHALL provide a `remote` command group with the subcommands `start`,
@@ -57,13 +55,16 @@ be evaluated directly while a person watching still sees progress.
 ### Requirement: Remote configuration discovery
 
 The endpoint's control URLs SHALL come from a JSON configuration naming a start
-URL, a stop URL, an optional deploy URL, and a region. An Outfit's `REMOTE`
-instruction SHALL select that file, resolved relative to the Outfit when the
-value is not absolute. When no Outfit names one, the per-user configuration
-SHALL be used, so the command works outside any project. Environment variables
-SHALL override individual values, and the region SHALL fall back to the
-standard AWS region variable and then to the region named in the URL. A missing
-or incomplete configuration SHALL fail saying where to put it.
+URL, a stop URL, an optional deploy URL, and a region. That configuration MAY
+also name the endpoint's own base URL; it SHALL be optional, since no control
+call needs it, and a configuration without it SHALL remain valid. An Outfit's
+`REMOTE` instruction SHALL select that file, resolved relative to the Outfit
+when the value is not absolute. When no Outfit names one, the per-user
+configuration SHALL be used, so the command works outside any project.
+Environment variables SHALL override individual values, and the region SHALL
+fall back to the standard AWS region variable and then to the region named in
+the URL. A missing or incomplete configuration SHALL fail saying where to put
+it.
 
 #### Scenario: Outfit names the configuration
 
@@ -81,6 +82,13 @@ or incomplete configuration SHALL fail saying where to put it.
 
 - **WHEN** a `remote` subcommand runs outside a project
 - **THEN** the per-user configuration is used
+
+#### Scenario: Configuration without a base URL
+
+- **WHEN** a remote configuration names the control URLs and region but no base
+  URL, and a `remote` subcommand runs
+- **THEN** the subcommand works as it always has, since the endpoint reports its
+  own address in the replies to `start` and `status`
 
 ### Requirement: Authenticated control requests
 
@@ -144,3 +152,4 @@ derived deployment without sending it.
 - **WHEN** a deployment succeeds
 - **THEN** the endpoint is configured but not started, and the report says
   whether the weights still have to be fetched before it can serve
+

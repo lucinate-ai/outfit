@@ -285,6 +285,23 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string) erro
 		return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.Provider)
 	}
 
+	// An Outfit for a remote endpoint states no BASEURL: the address belongs to
+	// the deployment, which records it in the remote config REMOTE names. Take
+	// it from there — but only when the Outfit stated none, so a hand-written
+	// BASEURL still wins.
+	// The harness reports the base URL it wrote, so this needs no announcement
+	// of its own beyond naming where it came from.
+	if sel.BaseURL == "" && sel.Remote != "" {
+		baseURL, err := remoteBaseURL(sel.Remote, envDir)
+		if err != nil {
+			return err
+		}
+		if baseURL != "" {
+			fmt.Printf("Taking the base URL from %s.\n", sel.Remote)
+			sel.BaseURL = baseURL
+		}
+	}
+
 	var contextSize, outputSize int
 	if sel.Output != "" && sel.Context == "" {
 		return fmt.Errorf("--output/-o needs --context/-c: opencode requires a context window before an output limit")

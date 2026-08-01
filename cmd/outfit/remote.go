@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -61,7 +62,7 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		if sel.Remote == "" {
 			return remote.Config{}, fmt.Errorf("%s has no REMOTE instruction", outfitPath)
 		}
-		return remote.LoadConfigFile(remoteConfigPath(sel.Remote, outfitPath), os.Getenv)
+		return remote.LoadConfigFile(remoteConfigPath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 	}
 	if defaultOutfitExists() {
 		sel, outfitPath, err := readOutfit("remote", "")
@@ -69,7 +70,7 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 			return remote.Config{}, err
 		}
 		if sel.Remote != "" {
-			return remote.LoadConfigFile(remoteConfigPath(sel.Remote, outfitPath), os.Getenv)
+			return remote.LoadConfigFile(remoteConfigPath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 		}
 	}
 	return remote.LoadConfig(os.Getenv)
@@ -93,11 +94,34 @@ func defaultOutfitExists() bool {
 	return false
 }
 
-func remoteConfigPath(remoteValue, outfitPath string) string {
+func remoteConfigPath(remoteValue, outfitDir string) string {
 	if filepath.IsAbs(remoteValue) {
 		return remoteValue
 	}
-	return filepath.Join(filepath.Dir(outfitPath), remoteValue)
+	return filepath.Join(outfitDir, remoteValue)
+}
+
+// remoteBaseURL returns the endpoint address recorded in the remote config an
+// Outfit's REMOTE names, resolved relative to outfitDir like every other path
+// an Outfit refers to. The deployment generates that file, so the address lives
+// there rather than in the hand-written Outfit — but only as a fallback: an
+// Outfit that states its own BASEURL never asks. A config that is absent, or
+// that predates base_url, yields "" rather than an error, since an Outfit may
+// name a remote config before the deployment that writes it exists.
+func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
+	path := remoteConfigPath(remoteValue, outfitDir)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var cfg remote.Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return "", fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return cfg.BaseURL, nil
 }
 
 // outfitArg returns the optional positional Outfit path after the flags.

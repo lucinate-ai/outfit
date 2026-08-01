@@ -370,9 +370,11 @@ export class LlmStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'SeedSecurityGroupId', { value: securityGroup.securityGroupId });
     new cdk.CfnOutput(this, 'HfTokenSecretArn', { value: hfSecret?.secretArn ?? '' });
     // `pnpm write-config` reads this from the outputs file to generate
-    // remote.json; the stable BaseUrl above becomes the Outfit's BASEURL.
+    // remote.json. It carries base_url too: the endpoint sits on a stable
+    // Elastic IP, so its address is deployment state that belongs in the
+    // generated config.
     new cdk.CfnOutput(this, 'OutfitRemoteConfig', {
-      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","region":"${this.region}"}`,
+      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","region":"${this.region}","base_url":"${baseUrl}"}`,
     });
   }
 }
