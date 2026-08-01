@@ -1,0 +1,8 @@
+# Qwen3.6-35B-A3B served locally by oMLX on Apple Silicon.
+# oMLX loads a whole model directory and picks per request, so MODEL names what
+# opencode asks for — it is not a launch flag.
+PROVIDER omlx
+MODEL    Qwen3.6-35B-A3B-4bit   # the directory name under the preset's model-dir
+CONTEXT  32768                  # opencode's context window
+PRESET   ./preset.ini           # `outfit serve` launches omlx-cli from this
+# BASEURL http://127.0.0.1:8000/v1   # uncomment for a non-default host/port

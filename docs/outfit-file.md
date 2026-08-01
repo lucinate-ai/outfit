@@ -13,7 +13,7 @@ ALIAS    deepseek                   # optional; friendly name for the model
 CONTEXT  128k                       # optional; context window
 OUTPUT   32k                        # optional; max output tokens
 BASEURL  https://gateway/v1         # optional; API base URL override
-PRESET   ./preset.ini               # optional; llama.cpp preset for `outfit serve`
+PRESET   ./preset.ini               # optional; engine preset for `outfit serve`
 ```
 
 Applying it is the same as running the equivalent
@@ -103,9 +103,11 @@ Rules:
 - `BASEURL` overrides the provider's API base URL — handy for a gateway or a
   llama.cpp server on a non-default port. `URL`, `BASE-URL`, and `BASE_URL` are
   accepted as aliases.
-- `PRESET` points at a llama.cpp preset `.ini`, used only by
+- `PRESET` points at a preset `.ini`, used only by
   [`outfit serve`](commands/serve.md); `apply` ignores it. A relative path is
-  resolved against the Outfit's own directory.
+  resolved against the Outfit's own directory. The file is read in the flag
+  vocabulary of the engine `PROVIDER` names, so a preset written for llama.cpp
+  is not portable to oMLX and vice versa.
 - Keywords are **case-insensitive** — `provider`, `Provider`, and `PROVIDER` are
   all accepted — but **UPPERCASE is canonical** and is what `outfit export`
   writes.

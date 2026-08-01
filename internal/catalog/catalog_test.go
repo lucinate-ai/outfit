@@ -673,3 +673,75 @@ func TestBuildPiProvider_RemoteOptionalKeyKeepsReference(t *testing.T) {
 		t.Errorf("apiKey = %q, want the placeholder for a local server", prov.APIKey)
 	}
 }
+
+// TestBuildProviderBlock_OMLXKeylessLocal checks that a local oMLX server gets
+// no apiKey option at all: the var points nowhere useful for a server that needs
+// no auth, and writing it would make opencode fail to resolve it.
+func TestBuildProviderBlock_OMLXKeylessLocal(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["omlx"]
+	if p == nil {
+		t.Fatal("omlx missing from the catalogue")
+	}
+	block, defaultModel, err := BuildProviderBlock("omlx", p, "my-model", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildProviderBlock: %v", err)
+	}
+	if defaultModel != "omlx/my-model" {
+		t.Errorf("defaultModel = %q, want omlx/my-model", defaultModel)
+	}
+	options := block["options"].(map[string]any)
+	if _, ok := options["apiKey"]; ok {
+		t.Errorf("a keyless local server should get no apiKey: %v", options)
+	}
+	if options["baseURL"] != "http://localhost:8000/v1" {
+		t.Errorf("baseURL = %v", options["baseURL"])
+	}
+}
+
+// TestBuildProviderBlock_OMLXReferencesKeyWhenSet checks the other half of
+// apiKeyOptional: a key that is set is written as an env reference, never as the
+// resolved secret.
+func TestBuildProviderBlock_OMLXReferencesKeyWhenSet(t *testing.T) {
+	cat, _ := Load()
+	block, _, err := BuildProviderBlock("omlx", cat.Providers["omlx"], "my-model", "",
+		envMap(map[string]string{"OPENAI_API_KEY": "sk-secret"}))
+	if err != nil {
+		t.Fatalf("BuildProviderBlock: %v", err)
+	}
+	options := block["options"].(map[string]any)
+	if options["apiKey"] != EnvRef("OPENAI_API_KEY") {
+		t.Errorf("apiKey = %v, want an env reference", options["apiKey"])
+	}
+	if options["apiKey"] == "sk-secret" {
+		t.Error("the resolved secret must never reach the config")
+	}
+}
+
+// TestBuildPiProvider_OMLXPlaceholderThenReference pins both sides of the Pi
+// rule for oMLX: a keyless local server gets the literal placeholder (Pi hides a
+// provider's models until some auth is configured), while a remote endpoint gets
+// the $VAR reference Pi resolves at run time.
+func TestBuildPiProvider_OMLXPlaceholderThenReference(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["omlx"]
+
+	local, _, err := BuildPiProvider("omlx", p, "my-model", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if local.APIKey != piPlaceholderAPIKey {
+		t.Errorf("local apiKey = %q, want %q", local.APIKey, piPlaceholderAPIKey)
+	}
+	if local.API != "openai-completions" {
+		t.Errorf("api = %q, want openai-completions", local.API)
+	}
+
+	remote, _, err := BuildPiProvider("omlx", p, "my-model", "http://mac-studio.local:8000/v1", noEnv)
+	if err != nil {
+		t.Fatalf("BuildPiProvider: %v", err)
+	}
+	if remote.APIKey != "$OPENAI_API_KEY" {
+		t.Errorf("remote apiKey = %q, want $OPENAI_API_KEY", remote.APIKey)
+	}
+}
