@@ -42,6 +42,14 @@ func TestCatalogIntegrity(t *testing.T) {
 		if _, hasBaseURL := p.Options["baseURL"]; hasBaseURL && p.NPM == "" {
 			t.Errorf("provider %q: baseURL set without npm package", name)
 		}
+		// A required option must have a source: a static option or an env mapping.
+		for _, opt := range p.OptionsRequired {
+			_, inStatic := p.Options[opt]
+			_, inEnv := p.OptionsFromEnv[opt]
+			if !inStatic && !inEnv {
+				t.Errorf("provider %q: required option %q has no source (options or optionsFromEnv)", name, opt)
+			}
+		}
 	}
 }
 
@@ -277,6 +285,76 @@ func TestBuildProviderBlock_BedrockNoKeyRegionFromEnv(t *testing.T) {
 	}
 	if !strings.HasPrefix(model, "amazon-bedrock/") {
 		t.Errorf("model = %q, want amazon-bedrock/...", model)
+	}
+}
+
+func TestBuildProviderBlock_VertexRequiredOptionMissing(t *testing.T) {
+	cat, _ := Load()
+	for _, id := range []string{"google-vertex", "google-vertex-anthropic"} {
+		p := cat.Providers[id]
+		_, _, err := BuildProviderBlock(id, p, "some-model", "", noEnv)
+		if err == nil {
+			t.Fatalf("%s: expected error when required option project is missing", id)
+		}
+		if !strings.Contains(err.Error(), "project") || !strings.Contains(err.Error(), "GOOGLE_VERTEX_PROJECT") {
+			t.Errorf("%s: error %q should name the option and its env var", id, err)
+		}
+	}
+}
+
+func TestBuildProviderBlock_VertexProjectAndLocation(t *testing.T) {
+	cat, _ := Load()
+	for _, id := range []string{"google-vertex", "google-vertex-anthropic"} {
+		p := cat.Providers[id]
+		block, model, err := BuildProviderBlock(id, p, "some-model", "", envMap(map[string]string{
+			"GOOGLE_VERTEX_PROJECT": "my-proj",
+		}))
+		if err != nil {
+			t.Fatalf("%s: BuildProviderBlock: %v", id, err)
+		}
+		// Keyed by opencode's built-in id, so no npm is emitted.
+		if _, ok := block["npm"]; ok {
+			t.Errorf("%s: block should have no npm (opencode built-in)", id)
+		}
+		opts := block["options"].(map[string]any)
+		if _, ok := opts["apiKey"]; ok {
+			t.Errorf("%s: block should not carry an apiKey (ambient credentials)", id)
+		}
+		if opts["project"] != "my-proj" {
+			t.Errorf("%s: project = %v, want my-proj (from env)", id, opts["project"])
+		}
+		if opts["location"] != "global" {
+			t.Errorf("%s: location = %v, want the global default", id, opts["location"])
+		}
+		if !strings.HasPrefix(model, id+"/") {
+			t.Errorf("%s: model = %q, want %s/...", id, model, id)
+		}
+	}
+}
+
+func TestBuildProviderBlock_VertexLocationOverride(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["google-vertex"]
+	block, _, err := BuildProviderBlock("google-vertex", p, "gemini-2.0-flash", "", envMap(map[string]string{
+		"GOOGLE_VERTEX_PROJECT":  "my-proj",
+		"GOOGLE_VERTEX_LOCATION": "europe-west4",
+	}))
+	if err != nil {
+		t.Fatalf("BuildProviderBlock: %v", err)
+	}
+	opts := block["options"].(map[string]any)
+	if opts["location"] != "europe-west4" {
+		t.Errorf("location = %v, want europe-west4 (env override)", opts["location"])
+	}
+}
+
+func TestBuildPiProvider_VertexUnsupported(t *testing.T) {
+	cat, _ := Load()
+	for _, id := range []string{"google-vertex", "google-vertex-anthropic"} {
+		p := cat.Providers[id] // no pi block
+		if _, _, err := BuildPiProvider(id, p, "some-model", "", noEnv); err == nil {
+			t.Fatalf("%s: expected pi to reject a provider with no pi block", id)
+		}
 	}
 }
 

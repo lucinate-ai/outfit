@@ -455,9 +455,22 @@ func TestCmdList(t *testing.T) {
 			t.Fatalf("cmdList: %v", err)
 		}
 	})
-	for _, want := range []string{"openrouter", "amazon-bedrock", "api key", "harnesses"} {
+	for _, want := range []string{"openrouter", "amazon-bedrock", "google-vertex", "google-vertex-anthropic", "api key", "harnesses"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output missing %q:\n%s", want, out)
+		}
+	}
+	// Vertex is opencode-only (no pi block) and injects no key, so its entry
+	// carries neither a "pi" harness nor an "api key" line.
+	vertexLine := strings.Index(out, "google-vertex —")
+	if vertexLine < 0 {
+		t.Fatalf("google-vertex entry not found:\n%s", out)
+	}
+	rest := out[vertexLine:]
+	if end := strings.Index(rest[len("google-vertex —"):], "\n\n"); end >= 0 {
+		entry := rest[:end+len("google-vertex —")]
+		if strings.Contains(entry, "pi") {
+			t.Errorf("google-vertex should be opencode-only:\n%s", entry)
 		}
 	}
 	// The catalogue no longer enumerates models, so no family lines appear.
