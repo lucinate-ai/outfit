@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are not self-hosted engines (it previously ran llama-server whatever the
   Outfit said)
 
+### Fixed
+- fix: apply optionsFromEnv and optionsRequired when building a Pi provider, so
+  per-provider endpoint variables (OLLAMA_BASE_URL, LLAMACPP_BASE_URL,
+  OMLX_BASE_URL, VLLM_BASE_URL, OPENAI_BASE_URL) reach the Pi harness and a
+  remote server is no longer handed the keyless placeholder
+
 ## [1.9.0] - 2026-07-29
 ### Added
 - feat: add a vllm provider to the catalogue

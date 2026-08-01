@@ -745,3 +745,130 @@ func TestBuildPiProvider_OMLXPlaceholderThenReference(t *testing.T) {
 		t.Errorf("remote apiKey = %q, want $OPENAI_API_KEY", remote.APIKey)
 	}
 }
+
+// TestBuildPiProvider_HonoursPerProviderBaseURLEnv is the regression test for a
+// bug that made the Pi harness unusable against any non-local server: the Pi
+// builder read the catalogue's static options.baseURL directly and never applied
+// optionsFromEnv, so a per-provider endpoint variable was silently dropped.
+//
+// The dropped base URL was not the damaging part. IsLocalEndpoint then saw
+// "localhost", so an apiKeyOptional provider took the keyless branch and Pi was
+// handed the literal placeholder to authenticate a remote server with.
+func TestBuildPiProvider_HonoursPerProviderBaseURLEnv(t *testing.T) {
+	cat, _ := Load()
+	for _, tc := range []struct{ id, env string }{
+		{"omlx", "OMLX_BASE_URL"},
+		{"llamacpp", "LLAMACPP_BASE_URL"},
+		{"vllm", "VLLM_BASE_URL"},
+		{"ollama", "OLLAMA_BASE_URL"},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			p := cat.Providers[tc.id]
+			if p == nil {
+				t.Fatalf("%s missing from the catalogue", tc.id)
+			}
+			const remote = "http://box.local:9999/v1"
+			prov, _, err := BuildPiProvider(tc.id, p, "m", "", envMap(map[string]string{tc.env: remote}))
+			if err != nil {
+				t.Fatalf("BuildPiProvider: %v", err)
+			}
+			if prov.BaseURL != remote {
+				t.Errorf("baseUrl = %q, want %q", prov.BaseURL, remote)
+			}
+			// A provider with a key variable must get the reference Pi resolves at
+			// run time, not the placeholder meant for keyless local servers.
+			if p.APIKeyEnv != "" && prov.APIKey != "$"+p.APIKeyEnv {
+				t.Errorf("apiKey = %q, want $%s for a remote endpoint", prov.APIKey, p.APIKeyEnv)
+			}
+		})
+	}
+}
+
+// TestBuildPiProvider_BaseURLPrecedence pins the order the two overrides and the
+// two catalogue values resolve in.
+func TestBuildPiProvider_BaseURLPrecedence(t *testing.T) {
+	cat, _ := Load()
+	omlx := cat.Providers["omlx"]
+
+	t.Run("explicit override beats the provider variable", func(t *testing.T) {
+		prov, _, err := BuildPiProvider("omlx", omlx, "m", "http://explicit:1/v1",
+			envMap(map[string]string{"OMLX_BASE_URL": "http://from-env:2/v1"}))
+		if err != nil {
+			t.Fatalf("BuildPiProvider: %v", err)
+		}
+		if prov.BaseURL != "http://explicit:1/v1" {
+			t.Errorf("baseUrl = %q, want the explicit override", prov.BaseURL)
+		}
+	})
+
+	t.Run("OUTFIT_BASE_URL beats the provider variable", func(t *testing.T) {
+		prov, _, err := BuildPiProvider("omlx", omlx, "m", "", envMap(map[string]string{
+			"OUTFIT_BASE_URL": "http://generic:1/v1",
+			"OMLX_BASE_URL":   "http://from-env:2/v1",
+		}))
+		if err != nil {
+			t.Fatalf("BuildPiProvider: %v", err)
+		}
+		if prov.BaseURL != "http://generic:1/v1" {
+			t.Errorf("baseUrl = %q, want the generic override", prov.BaseURL)
+		}
+	})
+
+	t.Run("unset variable leaves the catalogue value", func(t *testing.T) {
+		prov, _, err := BuildPiProvider("omlx", omlx, "m", "", noEnv)
+		if err != nil {
+			t.Fatalf("BuildPiProvider: %v", err)
+		}
+		if prov.BaseURL != "http://localhost:8000/v1" {
+			t.Errorf("baseUrl = %q, want the catalogue default", prov.BaseURL)
+		}
+	})
+
+	t.Run("pi.baseUrl still wins where no variable applies", func(t *testing.T) {
+		prov, _, err := BuildPiProvider("openrouter", cat.Providers["openrouter"], "m", "", noEnv)
+		if err != nil {
+			t.Fatalf("BuildPiProvider: %v", err)
+		}
+		if prov.BaseURL != "https://openrouter.ai/api/v1" {
+			t.Errorf("baseUrl = %q, want the pi block's endpoint", prov.BaseURL)
+		}
+	})
+}
+
+// TestBuildPiProvider_RequiresOptions closes the second half of the same split:
+// optionsRequired was enforced when building an opencode block but not a Pi one,
+// so a Pi-capable provider missing a required option produced an entry silently
+// lacking it. Pi's schema has no general options map, so failing is the only
+// honest outcome. The catalogue cannot currently express this pairing, but a
+// runtime one supplied via --providers can.
+func TestBuildPiProvider_RequiresOptions(t *testing.T) {
+	p := &Provider{
+		Description:     "test",
+		Options:         map[string]any{"baseURL": "https://example.invalid/v1"},
+		OptionsRequired: []string{"project"},
+		OptionsFromEnv:  map[string]string{"project": "TEST_PROJECT"},
+		Pi:              &PiConfig{API: "openai-completions"},
+	}
+
+	if _, _, err := BuildPiProvider("custom", p, "m", "", noEnv); err == nil {
+		t.Error("expected an error when a required option is unset")
+	} else if !strings.Contains(err.Error(), "TEST_PROJECT") {
+		t.Errorf("error should name the variable to set, got %v", err)
+	}
+
+	if _, _, err := BuildPiProvider("custom", p, "m", "", envMap(map[string]string{"TEST_PROJECT": "p"})); err != nil {
+		t.Errorf("a satisfied requirement should build: %v", err)
+	}
+}
+
+// TestCatalogRequiredOptionsAreNotPiCapable holds the invariant that lets the
+// embedded catalogue avoid the case above: Pi's schema carries no options map,
+// so a provider needing one cannot be served by Pi.
+func TestCatalogRequiredOptionsAreNotPiCapable(t *testing.T) {
+	cat, _ := Load()
+	for name, p := range cat.Providers {
+		if len(p.OptionsRequired) > 0 && p.Pi != nil {
+			t.Errorf("provider %q requires options %v but declares a pi block; Pi cannot carry them", name, p.OptionsRequired)
+		}
+	}
+}

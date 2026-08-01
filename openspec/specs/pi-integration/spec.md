@@ -99,7 +99,8 @@ A provider SHALL be usable with the Pi harness only when the catalogue gives it
 a `pi` block (declaring the protocol `api` and optionally a Pi-specific base
 URL). Selecting an unsupported provider under Pi SHALL fail saying the provider
 is not supported by the pi harness. The Pi base URL SHALL resolve as: explicit
-override, then the `pi` block's `baseUrl`, then the provider's `options.baseURL`.
+override, then the provider's own `optionsFromEnv` endpoint variable, then the
+`pi` block's `baseUrl`, then the provider's `options.baseURL`.
 
 #### Scenario: Bedrock is opencode-only
 

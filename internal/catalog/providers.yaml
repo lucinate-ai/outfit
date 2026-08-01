@@ -30,8 +30,12 @@
 #                     api      Pi protocol: openai-completions | openai-responses
 #                              | anthropic-messages | google-generative-ai
 #                     baseUrl  Pi endpoint (optional; falls back to
-#                              options.baseURL). Providers without a pi block
-#                              are reported as unsupported by the Pi harness.
+#                              options.baseURL, and is itself overridden by this
+#                              provider's optionsFromEnv baseURL variable).
+#                              Providers without a pi block are reported as
+#                              unsupported by the Pi harness. Pi's schema carries
+#                              no general options map, so a provider using
+#                              optionsRequired cannot declare a pi block.
 
 providers:
   openrouter:

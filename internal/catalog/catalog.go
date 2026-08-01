@@ -119,6 +119,49 @@ func (c *Catalog) SortedProviderNames() []string {
 	return names
 }
 
+// ResolveOptions returns the provider's options with its optionsFromEnv mapping
+// applied over the static ones, which is the view *both* harness builders need:
+// a per-provider variable like OLLAMA_BASE_URL is a user's runtime statement
+// about where the server is, so it is not opencode-specific. resolve looks up
+// env vars (typically a .env, then the environment).
+//
+// The returned map is a fresh copy, so callers may layer their own overrides
+// over it without mutating the catalogue.
+func (p *Provider) ResolveOptions(resolve func(string) string) map[string]any {
+	options := make(map[string]any, len(p.Options)+len(p.OptionsFromEnv))
+	for k, v := range p.Options {
+		options[k] = v
+	}
+	for optKey, envVar := range p.OptionsFromEnv {
+		if v := resolve(envVar); v != "" {
+			options[optKey] = v
+		}
+	}
+	return options
+}
+
+// RequireOptions checks that every option in OptionsRequired resolved to a
+// non-empty value. A provider may require caller-supplied options that have no
+// usable default (e.g. a Vertex AI project); unlike the API key, these are plain
+// options, so apiKeyRequired does not cover them.
+//
+// Both builders call this. Pi's schema carries no general options map, so a
+// provider that both requires an option and declares a `pi` block cannot express
+// it there — failing loudly beats writing an entry that is missing something
+// essential. The embedded catalogue never pairs the two (TestCatalogPiIntegrity
+// enforces that), but a runtime catalogue supplied via --providers can.
+func (p *Provider) RequireOptions(id string, options map[string]any) error {
+	for _, optKey := range p.OptionsRequired {
+		if v, ok := options[optKey]; !ok || v == nil || v == "" {
+			if env := p.OptionsFromEnv[optKey]; env != "" {
+				return fmt.Errorf("the %q option is required for provider %q; set %s in your .env or environment", optKey, id, env)
+			}
+			return fmt.Errorf("the %q option is required for provider %q; set it in the catalogue options", optKey, id)
+		}
+	}
+	return nil
+}
+
 // BuildProviderBlock turns a provider plus an explicit model into an opencode
 // provider block, returning the block and the fully-qualified default model
 // (provider/model), or "" if none was selected. resolve looks up env vars
@@ -137,31 +180,15 @@ func BuildProviderBlock(id string, p *Provider, modelOverride, baseURLOverride s
 		block["npm"] = p.NPM
 	}
 
-	options := map[string]any{}
-	for k, v := range p.Options {
-		options[k] = v
-	}
-	for optKey, envVar := range p.OptionsFromEnv {
-		if v := resolve(envVar); v != "" {
-			options[optKey] = v
-		}
-	}
+	options := p.ResolveOptions(resolve)
 	if baseURLOverride == "" {
 		baseURLOverride = resolve(baseURLEnv)
 	}
 	if baseURLOverride != "" {
 		options["baseURL"] = baseURLOverride
 	}
-	// A provider may require caller-supplied options that have no usable default
-	// (e.g. a Vertex AI project). Unlike the API key, these are plain options,
-	// so apiKeyRequired does not cover them.
-	for _, optKey := range p.OptionsRequired {
-		if v, ok := options[optKey]; !ok || v == nil || v == "" {
-			if env := p.OptionsFromEnv[optKey]; env != "" {
-				return nil, "", fmt.Errorf("the %q option is required for provider %q; set %s in your .env or environment", optKey, id, env)
-			}
-			return nil, "", fmt.Errorf("the %q option is required for provider %q; set it in the catalogue options", optKey, id)
-		}
+	if err := p.RequireOptions(id, options); err != nil {
+		return nil, "", err
 	}
 	if p.APIKeyEnv != "" {
 		key := resolve(p.APIKeyEnv)
@@ -245,16 +272,34 @@ func BuildPiProvider(id string, p *Provider, modelOverride, baseURLOverride stri
 
 	prov := PiProvider{API: p.Pi.API}
 
+	options := p.ResolveOptions(resolve)
 	if baseURLOverride == "" {
 		baseURLOverride = resolve(baseURLEnv)
+	}
+	// Precedence: the explicit override (--base-url, then OUTFIT_BASE_URL), then
+	// the provider's own endpoint variable, then the catalogue's Pi endpoint,
+	// then its opencode one. The per-provider variable sits above both catalogue
+	// values because it is the user speaking about their own machine, and below
+	// the explicit override because that is the user speaking more specifically.
+	var envBaseURL string
+	if v := p.OptionsFromEnv["baseURL"]; v != "" {
+		envBaseURL = resolve(v)
 	}
 	switch {
 	case baseURLOverride != "":
 		prov.BaseURL = baseURLOverride
+	case envBaseURL != "":
+		prov.BaseURL = envBaseURL
 	case p.Pi.BaseURL != "":
 		prov.BaseURL = p.Pi.BaseURL
 	default:
 		prov.BaseURL, _ = p.Options["baseURL"].(string)
+	}
+	if prov.BaseURL != "" {
+		options["baseURL"] = prov.BaseURL
+	}
+	if err := p.RequireOptions(id, options); err != nil {
+		return PiProvider{}, "", err
 	}
 
 	// Pi only surfaces a provider's models in /model once auth is configured;
