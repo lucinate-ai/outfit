@@ -1,0 +1,8 @@
+# Claude 3.5 Sonnet on GCP Vertex AI.
+# No API key: the Vertex SDK reads your Google Application Default Credentials.
+# Set GOOGLE_VERTEX_PROJECT (required) and optionally GOOGLE_VERTEX_LOCATION
+# (defaults to `global`). See the README.
+PROVIDER google-vertex-anthropic
+MODEL    claude-3-5-sonnet-v2@20241022   # the Vertex (publisher: anthropic) model id
+CONTEXT  200k
+OUTPUT   8k
