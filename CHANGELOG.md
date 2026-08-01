@@ -6,21 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.10.0] - 2026-08-01
 ### Added
-- feat: add an omlx provider to the catalogue
-- feat: teach outfit serve to launch oMLX on Apple Silicon
+- feat: add GCP Vertex AI providers
+- feat: add live per-provider model discovery
+- feat: add oMLX as a provider and a serve engine (#24)
+- feat: retire model families from the provider catalogue
 
 ### Changed
-- feat!: outfit serve picks its engine from PROVIDER, and rejects providers that
-  are not self-hosted engines (it previously ran llama-server whatever the
-  Outfit said)
+- chore: archive add-omlx-provider change
+- chore: archive live-model-discovery and fix-pi-option-resolution changes
+- chore: mark add-omlx-provider validation task complete
+- docs: list supported providers early in the README
 
 ### Fixed
-- fix: apply optionsFromEnv and optionsRequired when building a Pi provider, so
-  per-provider endpoint variables (OLLAMA_BASE_URL, LLAMACPP_BASE_URL,
-  OMLX_BASE_URL, VLLM_BASE_URL, OPENAI_BASE_URL) reach the Pi harness and a
-  remote server is no longer handed the keyless placeholder
+- fix: share option resolution between the opencode and Pi builders (#26)
 
 ## [1.9.0] - 2026-07-29
 ### Added
