@@ -15,8 +15,8 @@ Four words carry the whole tool:
   Pi is also supported. Chosen at runtime, so the same selection works for
   either. See [`outfit harness`](commands/harness.md).
 - **Provider** — what `outfit` can configure, from a built-in
-  catalogue: OpenRouter, AWS Bedrock, Ollama, llama.cpp, vLLM, or any
-  OpenAI-compatible endpoint. See
+  catalogue: OpenRouter, AWS Bedrock, Ollama, llama.cpp, vLLM, oMLX (Apple
+  Silicon), or any OpenAI-compatible endpoint. See
   [`outfit list`](commands/list.md).
 - **Outfit file** — a small, declarative file (like a `Dockerfile`, but for
   your agent's model) that captures one selection so you can commit it and
@@ -46,7 +46,7 @@ Four words carry the whole tool:
 | [`outfit unapply`](commands/unapply.md) | Remove what an `Outfit` file selects |
 | [`outfit alias`](commands/alias.md) | Name an `Outfit` so the name works anywhere a path does |
 | [`outfit unalias`](commands/unalias.md) | Drop a registered name |
-| [`outfit serve`](commands/serve.md) | Run `llama-server` for the model an `Outfit` names |
+| [`outfit serve`](commands/serve.md) | Run the inference server for the model an `Outfit` names |
 | [`outfit remote`](commands/remote.md) | Run the model on a cloud GPU that stops when you do |
 | [`outfit export`](commands/export.md) | Capture the current setup as an `Outfit` |
 | [`outfit harness`](commands/harness.md) | Launch the agent, optionally dressing it first |
@@ -63,7 +63,7 @@ Four words carry the whole tool:
 | `OUTFIT_PROVIDERS` | Path to a custom provider catalogue (`--providers` beats it) |
 | `OUTFIT_BASE_URL` | Overrides any provider's API base URL (`--base-url`/`-u` beats it) |
 | `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, … | Provider API keys — `outfit list` shows which each provider reads |
-| `OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`, `OPENAI_BASE_URL` | Per-provider endpoint overrides |
+| `OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`, `OMLX_BASE_URL`, `VLLM_BASE_URL`, `OPENAI_BASE_URL` | Per-provider endpoint overrides |
 | `AWS_REGION` | Region for AWS Bedrock |
 
 Keys are looked up in a `.env` file **beside the `Outfit` being applied** first
@@ -72,5 +72,6 @@ shell environment — so a project keeps its own key next to the file that needs
 it, the same way `PRESET` and `REMOTE` travel with an Outfit. They are **never written into the agent's config** — outfit writes
 a reference the agent resolves when it runs, and `outfit harness` passes the
 keys it can resolve to the agent it launches. If you start the agent yourself,
-set the variable in your own environment. Local providers (Ollama, llama.cpp on
-localhost) need no key; Bedrock uses your AWS credentials.
+set the variable in your own environment. Local providers on localhost (Ollama,
+llama.cpp) need no key; Bedrock uses your AWS credentials. oMLX needs one only if
+you enabled its API-key auth — set `OPENAI_API_KEY` before applying if you did.

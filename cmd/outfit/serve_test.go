@@ -28,18 +28,56 @@ func writePresetOutfit(t *testing.T, outfitBody string) string {
 	return outfitPath
 }
 
-// stubLlamaServer points llamaServerBinary at a script that records its argv to
-// argsFile, and restores the original binary afterwards.
-func stubLlamaServer(t *testing.T, argsFile string) {
+// stubServer writes a script named binName that records its argv to argsFile,
+// points *target at it, and restores the original afterwards.
+func stubServer(t *testing.T, target *string, binName, argsFile string) {
 	t.Helper()
-	script := filepath.Join(t.TempDir(), "llama-server")
+	script := filepath.Join(t.TempDir(), binName)
 	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	orig := llamaServerBinary
-	llamaServerBinary = script
-	t.Cleanup(func() { llamaServerBinary = orig })
+	orig := *target
+	*target = script
+	t.Cleanup(func() { *target = orig })
+}
+
+// stubLlamaServer points llamaServerBinary at a script that records its argv to
+// argsFile, and restores the original binary afterwards.
+func stubLlamaServer(t *testing.T, argsFile string) {
+	t.Helper()
+	stubServer(t, &llamaServerBinary, "llama-server", argsFile)
+}
+
+// stubOMLX does the same for the oMLX CLI, so no Apple Silicon (or oMLX
+// install) is needed to pin the argv serve builds for it.
+func stubOMLX(t *testing.T, argsFile string) {
+	t.Helper()
+	stubServer(t, &omlxBinary, "omlx-cli", argsFile)
+}
+
+// omlxPreset is a preset written in oMLX's own flag vocabulary. `m` is here
+// deliberately: llama.cpp's dialect would rewrite it to --model, and this preset
+// must not be read that way.
+const omlxPreset = `[*]
+model-dir = /Users/me/models
+host      = 127.0.0.1
+port      = 8000
+
+[qwen]
+memory-guard = safe
+m            = should-stay-literal
+`
+
+// writeOMLXOutfit writes an oMLX preset.ini and an Outfit referencing it into a
+// fresh temp dir, and returns the Outfit's path.
+func writeOMLXOutfit(t *testing.T, outfitBody string) string {
+	t.Helper()
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "preset.ini"), omlxPreset)
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, outfitBody)
+	return outfitPath
 }
 
 func TestCmdServe_PresetDryRun(t *testing.T) {
@@ -269,5 +307,185 @@ func TestCmdServe_RelativePresetResolvesToOutfitDir(t *testing.T) {
 	})
 	if !strings.Contains(out, "--hf-repo unsloth/Qwen:Q4_K_M") {
 		t.Errorf("preset not resolved relative to the Outfit dir:\n%s", out)
+	}
+}
+
+// TestCmdServe_OMLXDryRun pins the whole oMLX shape: the `serve` subcommand, and
+// a bind address taken from BASEURL.
+func TestCmdServe_OMLXDryRun(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER omlx\nBASEURL http://127.0.0.1:9100/v1\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+
+	for _, want := range []string{"serve", "--host 127.0.0.1", "--port 9100"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("command missing %q:\n%s", want, out)
+		}
+	}
+	// llama.cpp's vocabulary must not leak into another engine's command.
+	for _, unwanted := range []string{"llama-server", "--hf-repo", "--ctx-size"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("command should not contain %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+// TestCmdServe_OMLXNeedsNoModel checks that oMLX starts with neither a PRESET
+// nor a MODEL: it serves a whole model directory and picks per request, so
+// llama.cpp's "needs a PRESET or a MODEL" rule must not apply to it.
+func TestCmdServe_OMLXNeedsNoModel(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER omlx\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "serve") {
+		t.Errorf("expected a serve command:\n%s", out)
+	}
+	// With no BASEURL, oMLX's own defaults stand.
+	if strings.Contains(out, "--host") || strings.Contains(out, "--port") {
+		t.Errorf("no BASEURL should mean no bind flags:\n%s", out)
+	}
+}
+
+// TestCmdServe_OMLXPresetKeysAreNotAliased is the guard on the dialect split: an
+// oMLX preset is read in oMLX's vocabulary, so a key llama.cpp would rewrite is
+// left exactly as written.
+func TestCmdServe_OMLXPresetKeysAreNotAliased(t *testing.T) {
+	outfitPath := writeOMLXOutfit(t, "PROVIDER omlx\nALIAS qwen\nPRESET preset.ini\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+
+	for _, want := range []string{"--model-dir /Users/me/models", "--memory-guard safe", "-m should-stay-literal"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("command missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--model should-stay-literal") {
+		t.Errorf("llama.cpp aliasing leaked into the oMLX dialect:\n%s", out)
+	}
+}
+
+// TestCmdServe_OMLXOutfitOverridesPreset checks the Outfit still wins over its
+// preset for the settings it states, as it does for llama.cpp.
+func TestCmdServe_OMLXOutfitOverridesPreset(t *testing.T) {
+	outfitPath := writeOMLXOutfit(t, "PROVIDER omlx\nALIAS qwen\nPRESET preset.ini\nBASEURL http://0.0.0.0:9999/v1\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "--host 0.0.0.0") || !strings.Contains(out, "--port 9999") {
+		t.Errorf("Outfit should override the preset's bind address:\n%s", out)
+	}
+	if strings.Contains(out, "--port 8000") {
+		t.Errorf("preset port should have been overridden:\n%s", out)
+	}
+}
+
+// TestCmdServe_OMLXNeverPassesAPIKey is a security guard: serve prints the
+// command it runs, and oMLX takes its key on the command line, so a resolved
+// secret must never reach either.
+func TestCmdServe_OMLXNeverPassesAPIKey(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "sk-must-not-appear")
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER omlx\nBASEURL http://127.0.0.1:9100/v1\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+
+	if strings.Contains(out, "sk-must-not-appear") || strings.Contains(out, "--api-key") {
+		t.Errorf("serve must not pass or print an API key:\n%s", out)
+	}
+}
+
+// TestCmdServe_OMLXRuns checks the stubbed binary is actually executed with the
+// subcommand first.
+func TestCmdServe_OMLXRuns(t *testing.T) {
+	argsFile := filepath.Join(t.TempDir(), "args")
+	stubOMLX(t, argsFile)
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER omlx\nBASEURL http://127.0.0.1:9100/v1\n")
+
+	captureStdout(t, func() {
+		if err := cmdServe([]string{outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("reading recorded args: %v", err)
+	}
+	args := strings.Fields(string(got))
+	if len(args) == 0 || args[0] != "serve" {
+		t.Errorf("expected the serve subcommand first, got %v", args)
+	}
+	if !strings.Contains(string(got), "9100") {
+		t.Errorf("recorded args missing the port:\n%s", got)
+	}
+}
+
+// TestCmdServe_OMLXNotFound checks the install hint names oMLX rather than
+// llama.cpp.
+func TestCmdServe_OMLXNotFound(t *testing.T) {
+	orig := omlxBinary
+	omlxBinary = filepath.Join(t.TempDir(), "definitely-not-installed")
+	t.Cleanup(func() { omlxBinary = orig })
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER omlx\n")
+
+	var err error
+	captureStdout(t, func() { err = cmdServe([]string{outfitPath}) })
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected a not-found error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "oMLX") {
+		t.Errorf("hint should name oMLX, got %v", err)
+	}
+	if strings.Contains(err.Error(), "llama.cpp") {
+		t.Errorf("hint should not name llama.cpp, got %v", err)
+	}
+}
+
+// TestCmdServe_UnsupportedProvider pins the behaviour change: serve used to run
+// llama-server whatever the PROVIDER said, which quietly served the wrong engine.
+func TestCmdServe_UnsupportedProvider(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER ollama\nMODEL llama3.2\n")
+
+	var err error
+	captureStdout(t, func() { err = cmdServe([]string{"--dry-run", outfitPath}) })
+	if err == nil {
+		t.Fatal("expected an error for a provider that is not a local engine")
+	}
+	for _, want := range []string{"ollama", "llamacpp", "omlx"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got %v", want, err)
+		}
 	}
 }

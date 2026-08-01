@@ -47,8 +47,8 @@ model refs and quirks, and none of it is written down where you need it.
 it dresses the agent for you:
 
 - **One command, any model.** Pick from a built-in catalogue — OpenRouter,
-  Bedrock, Ollama, llama.cpp, or any OpenAI-compatible endpoint. No URLs or model
-  ids to look up.
+  Bedrock, Ollama, llama.cpp, vLLM, oMLX, or any OpenAI-compatible endpoint. No
+  URLs or model ids to look up.
 - **Your config survives.** Settings are merged *into* what you already have.
   Other providers, your theme, even your comments stay exactly where you left them.
 - **Keys stay where they belong.** Secrets are read from a local `.env` and never
@@ -262,9 +262,10 @@ the bash and zsh completions for you.
 
 ## Serving a local model
 
-Running a model with llama.cpp? `outfit serve` reads an `Outfit` and launches
-`llama-server` for it — so the same file that points opencode at a model can
-start it too. The simple case needs no preset:
+Running a model locally? `outfit serve` reads an `Outfit` and launches the
+inference server its `PROVIDER` names — `llamacpp` runs `llama-server`, `omlx`
+runs [oMLX](https://omlx.ai) on Apple Silicon — so the same file that points
+opencode at a model can start it too. The simple case needs no preset:
 
 ```dockerfile
 # Outfit
@@ -320,7 +321,8 @@ minutes while the instance boots and loads the model; `--timeout` (default
 
 Each provider declares which environment variable holds its key (`outfit
 list` shows them). Values are looked up in a `.env` beside the `Outfit` first, then
-your shell environment. Local providers like Ollama and llama.cpp need no key;
+your shell environment. Local providers like Ollama, llama.cpp and oMLX need no
+key;
 Bedrock authenticates through your AWS credentials.
 
 Base URLs default to the usual local ports. Override the endpoint for **any**
@@ -334,7 +336,7 @@ OUTFIT_BASE_URL=https://gateway/v1 outfit add -p openai-compatible -m my-model
 
 The flag wins over the env var, and either wins over the catalogue's defaults
 and the per-provider variables (`OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`,
-`OPENAI_BASE_URL`).
+`OMLX_BASE_URL`, `VLLM_BASE_URL`, `OPENAI_BASE_URL`).
 
 ## Guides
 
@@ -343,6 +345,8 @@ with a ready-to-apply `Outfit`:
 
 - [Qwen3.6-35B-A3B on llama.cpp](examples/llamacpp/qwen3.6/README.md)
 - [Gemma-4-12B-IT on llama.cpp](examples/llamacpp/gemma4/README.md)
+- [Qwen3.6-35B-A3B on oMLX (Apple Silicon)](examples/omlx/qwen3.6/README.md)
+- [Gemma-4-E2B on oMLX (Apple Silicon)](examples/omlx/gemma-4-e2b/README.md)
 
 ## Adding providers and models
 

@@ -1,16 +1,21 @@
-// Package preset reads llama.cpp INI preset files and turns one model section
-// into a concrete `llama-server` command.
+// Package preset reads INI preset files and turns one section into a concrete
+// inference-server command.
 //
-// llama.cpp presets (https://github.com/ggml-org/llama.cpp/blob/master/docs/preset.md)
-// are INI files where each `[section]` is a model and every key is a
-// `llama-server` argument with its leading dashes stripped — `ctx-size = 4096`
-// is `--ctx-size 4096`. A leading `[*]` (or `[global]`) section holds defaults
+// The format is llama.cpp's (https://github.com/ggml-org/llama.cpp/blob/master/docs/preset.md):
+// INI files where each `[section]` is a model and every key is a server
+// argument with its leading dashes stripped — `ctx-size = 4096` is
+// `--ctx-size 4096`. A leading `[*]` (or `[global]`) section holds defaults
 // shared by every model; a per-model section overrides them.
 //
-// Presets are designed for the server's router (multi-model) mode, loaded with
-// `--models-preset`. There is no equivalent for plain single-model serving, so
-// this package flattens a chosen section back into the explicit flags you would
-// have typed by hand.
+// llama.cpp presets are designed for the server's router (multi-model) mode,
+// loaded with `--models-preset`. There is no equivalent for plain single-model
+// serving, so this package flattens a chosen section back into the explicit
+// flags you would have typed by hand.
+//
+// Parsing is engine-neutral; only the *spelling* of flags differs between
+// engines, which is what a Dialect carries. The package-level Flags,
+// CanonicalKey, Preset.Args and Preset.Command render in the LlamaCpp dialect,
+// so callers that predate dialects keep their behaviour.
 package preset
 
 import (
@@ -152,20 +157,46 @@ func (p Preset) Select(model string) (Section, error) {
 	case len(p.Sections) == 1:
 		return p.Sections[0], nil
 	default:
-		return Section{}, fmt.Errorf("preset defines %d models (%s); set MODEL in the Outfit to choose one", len(p.Sections), strings.Join(p.SectionNames(), ", "))
+		return Section{}, fmt.Errorf("preset defines %d models (%s); set ALIAS in the Outfit to choose one", len(p.Sections), strings.Join(p.SectionNames(), ", "))
 	}
 }
 
-// Flags merges ordered layers of params into `llama-server` flag tokens. Later
-// layers override earlier ones by canonical flag name, in place, so the first
-// layer fixes the order: pass globals, then the section, then any overrides. It
-// does not include the binary name; see Command.
-func Flags(layers ...[]Param) []string {
+// Dialect describes how one inference engine spells its flags: the short
+// aliases it accepts, and the flags it takes bare with no value. The zero
+// Dialect passes every key through unchanged, which is what an engine with only
+// long-form flags wants.
+//
+// A dialect is never guessed from the preset's contents — it comes from the
+// engine the Outfit's PROVIDER names — because the tables are not
+// interchangeable: llama.cpp's would rewrite another engine's `m` to `--model`
+// and `c` to `--ctx-size`.
+type Dialect struct {
+	// Aliases maps a short flag alias, as it appears in a preset key (without
+	// the leading dash), to its canonical long-form name.
+	Aliases map[string]string
+	// Boolean lists canonical flag names the engine accepts with no value.
+	Boolean map[string]bool
+}
+
+// LlamaCpp is the dialect `llama-server` speaks, and the one the package-level
+// rendering helpers use.
+var LlamaCpp = Dialect{Aliases: canonical, Boolean: boolean}
+
+// OMLX is the dialect `omlx-cli serve` speaks. It spells every flag in long
+// form (`--model-dir`, `--memory-guard`, `--paged-ssd-cache-dir`), so no
+// aliasing is applied and keys pass through as written.
+var OMLX = Dialect{}
+
+// Flags merges ordered layers of params into flag tokens. Later layers override
+// earlier ones by canonical flag name, in place, so the first layer fixes the
+// order: pass globals, then the section, then any overrides. It does not
+// include the binary name; see Command.
+func (d Dialect) Flags(layers ...[]Param) []string {
 	var ordered []Param
 	at := map[string]int{} // canonical flag name -> index in ordered
 	for _, layer := range layers {
 		for _, kv := range layer {
-			ck := canonicalName(kv.Key)
+			ck := d.CanonicalKey(kv.Key)
 			if i, ok := at[ck]; ok {
 				ordered[i] = kv
 				continue
@@ -177,9 +208,15 @@ func Flags(layers ...[]Param) []string {
 
 	var args []string
 	for _, kv := range ordered {
-		args = append(args, flagFor(kv.Key, kv.Value)...)
+		args = append(args, d.flagFor(kv.Key, kv.Value)...)
 	}
 	return args
+}
+
+// Flags merges ordered layers of params into `llama-server` flag tokens, in the
+// LlamaCpp dialect.
+func Flags(layers ...[]Param) []string {
+	return LlamaCpp.Flags(layers...)
 }
 
 // Args flattens the global defaults and a section into `llama-server` flags,
@@ -188,11 +225,20 @@ func (p Preset) Args(sec Section) []string {
 	return Flags(p.Global, sec.Params)
 }
 
-// Command builds the full argv (binary first) for serving a section. Any
-// override layers (e.g. values an Outfit specifies) win over the preset.
+// Command builds the full argv (binary first) for serving a section in the
+// LlamaCpp dialect. Any override layers (e.g. values an Outfit specifies) win
+// over the preset.
 func (p Preset) Command(binary string, sec Section, overrides ...[]Param) []string {
+	return p.CommandIn(LlamaCpp, binary, nil, sec, overrides...)
+}
+
+// CommandIn builds the full argv for serving a section with a given engine: the
+// binary, then any subcommand the engine needs (`omlx-cli serve` takes one,
+// `llama-server` does not), then the flags rendered in that engine's dialect.
+func (p Preset) CommandIn(d Dialect, binary string, subcommand []string, sec Section, overrides ...[]Param) []string {
 	layers := append([][]Param{p.Global, sec.Params}, overrides...)
-	return append([]string{binary}, Flags(layers...)...)
+	argv := append([]string{binary}, subcommand...)
+	return append(argv, d.Flags(layers...)...)
 }
 
 // canonical maps llama.cpp short flag aliases — as they appear in preset keys,
@@ -225,35 +271,34 @@ var boolean = map[string]bool{
 	"cpu-moe": true, "color": true,
 }
 
-// canonicalName lower-cases a preset key and resolves any short alias to its
-// canonical long-form flag name, so the same flag written different ways (c,
-// ctx-size, env-var forms) collapses to one when merging layers.
-func canonicalName(key string) string {
+// CanonicalKey resolves a preset key to the canonical long-form flag name that
+// Flags would emit, so the same setting written different ways (`ngl` and
+// `n-gpu-layers`, `c` and `ctx-size`) compares equal. Callers that need to
+// match specific flags rather than render them should compare canonical names.
+// A dialect with no aliases only lower-cases the key.
+func (d Dialect) CanonicalKey(key string) string {
 	name := strings.ToLower(strings.TrimSpace(key))
-	if c, ok := canonical[name]; ok {
+	if c, ok := d.Aliases[name]; ok {
 		name = c
 	}
 	return name
 }
 
-// CanonicalKey resolves a preset key to the canonical long-form flag name that
-// Flags would emit, so the same setting written different ways (`ngl` and
-// `n-gpu-layers`, `c` and `ctx-size`) compares equal. Callers that need to
-// match specific flags rather than render them should compare canonical names.
+// CanonicalKey resolves a preset key in the LlamaCpp dialect.
 func CanonicalKey(key string) string {
-	return canonicalName(key)
+	return LlamaCpp.CanonicalKey(key)
 }
 
-// flagFor turns one preset key/value into its `llama-server` flag tokens.
-func flagFor(key, value string) []string {
-	name := canonicalName(key)
+// flagFor turns one preset key/value into its flag tokens.
+func (d Dialect) flagFor(key, value string) []string {
+	name := d.CanonicalKey(key)
 	flag := "--" + name
 	if len(name) == 1 { // an unknown single-character key is a short flag
 		flag = "-" + name
 	}
 
 	value = strings.TrimSpace(value)
-	if boolean[name] {
+	if d.Boolean[name] {
 		if isFalsy(value) {
 			return nil
 		}

@@ -192,7 +192,7 @@ func TestFlagFor(t *testing.T) {
 		{"unknown-long", "", []string{"--unknown-long"}}, // valueless passthrough
 	}
 	for _, tc := range cases {
-		got := flagFor(tc.key, tc.value)
+		got := LlamaCpp.flagFor(tc.key, tc.value)
 		if strings.Join(got, " ") != strings.Join(tc.want, " ") {
 			t.Errorf("flagFor(%q,%q) = %v, want %v", tc.key, tc.value, got, tc.want)
 		}
@@ -217,5 +217,56 @@ func TestCommand(t *testing.T) {
 	}
 	if strings.Join(argv[1:], " ") != "--hf-repo a/b" {
 		t.Errorf("Command args = %v", argv[1:])
+	}
+}
+
+// TestDialectOMLXPassesKeysThrough is the point of having dialects at all: oMLX
+// spells every flag in long form, so llama.cpp's alias table must not touch its
+// keys. `m` and `c` are the dangerous ones — llama.cpp would silently rewrite
+// them to --model and --ctx-size, neither of which oMLX accepts.
+func TestDialectOMLXPassesKeysThrough(t *testing.T) {
+	params := []Param{
+		{Key: "model-dir", Value: "/models"},
+		{Key: "memory-guard", Value: "safe"},
+		{Key: "c", Value: "literal"},
+	}
+	got := strings.Join(OMLX.Flags(params), " ")
+	want := "--model-dir /models --memory-guard safe -c literal"
+	if got != want {
+		t.Errorf("OMLX.Flags =\n  %s\nwant\n  %s", got, want)
+	}
+}
+
+// TestDialectOMLXHasNoBareBooleans checks the boolean table is llama.cpp's
+// alone: a key oMLX does not treat as a bare flag keeps its value.
+func TestDialectOMLXHasNoBareBooleans(t *testing.T) {
+	got := strings.Join(OMLX.Flags([]Param{{Key: "jinja", Value: "1"}}), " ")
+	if got != "--jinja 1" {
+		t.Errorf("OMLX.Flags = %q, want %q", got, "--jinja 1")
+	}
+}
+
+// TestPackageFlagsStillLlamaCpp guards the callers that predate dialects: the
+// package-level helpers, and remote.go's CanonicalKey, must keep rendering
+// llama.cpp.
+func TestPackageFlagsStillLlamaCpp(t *testing.T) {
+	got := strings.Join(Flags([]Param{{Key: "hf", Value: "org/m"}, {Key: "mmap", Value: "1"}}), " ")
+	if got != "--hf-repo org/m --mmap" {
+		t.Errorf("Flags = %q, want %q", got, "--hf-repo org/m --mmap")
+	}
+	if CanonicalKey("ngl") != "n-gpu-layers" {
+		t.Errorf("CanonicalKey(ngl) = %q, want n-gpu-layers", CanonicalKey("ngl"))
+	}
+}
+
+// TestCommandInAddsSubcommand checks an engine that needs a subcommand gets it
+// between the binary and the flags.
+func TestCommandInAddsSubcommand(t *testing.T) {
+	p, _ := Parse([]byte("[m]\nmodel-dir = /models\n"))
+	sec, _ := p.Select("m")
+	argv := p.CommandIn(OMLX, "omlx-cli", []string{"serve"}, sec)
+	want := "omlx-cli serve --model-dir /models"
+	if strings.Join(argv, " ") != want {
+		t.Errorf("CommandIn = %v, want %s", argv, want)
 	}
 }

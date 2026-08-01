@@ -107,6 +107,23 @@ providers:
     pi:
       api: openai-completions
 
+  omlx:
+    description: oMLX server on Apple Silicon (OpenAI-compatible API)
+    name: oMLX
+    npm: "@ai-sdk/openai-compatible"
+    # Like llama.cpp, a local oMLX server usually needs no key and none is
+    # injected when the var is unset; oMLX can be started with --api-key, so a
+    # key is picked up when there is one (e.g. a Mac on the LAN named by
+    # OMLX_BASE_URL).
+    apiKeyEnv: OPENAI_API_KEY
+    apiKeyOptional: true
+    options:
+      baseURL: http://localhost:8000/v1
+    optionsFromEnv:
+      baseURL: OMLX_BASE_URL
+    pi:
+      api: openai-completions
+
   vllm:
     description: vLLM server (OpenAI-compatible API)
     name: vLLM

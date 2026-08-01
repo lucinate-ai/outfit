@@ -19,7 +19,7 @@
 //	outfit unapply [path]  # remove what an Outfit file selects
 //	outfit alias   [path] [-n <name>]  # name an Outfit; -l lists them
 //	outfit unalias <name>  # drop a registered name
-//	outfit serve  [path]   # run llama-server for the Outfit (PRESET or MODEL)
+//	outfit serve  [path]   # run the PROVIDER's server (llama.cpp or oMLX)
 //	outfit export [-p name] # print the current config as an Outfit
 //	outfit init-providers [path] # write the embedded providers.yaml out
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
@@ -50,7 +50,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,7 +63,6 @@ import (
 	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
-	"github.com/lucinate-ai/outfit/internal/preset"
 )
 
 // version is the binary's version. It defaults to "dev" and is overridden at
@@ -141,7 +139,7 @@ Usage:
   outfit unapply [path]                    (remove what an Outfit selects)
   outfit alias  [path] [-n <name>] [-l]    (name an Outfit; -l lists them)
   outfit unalias <name>                    (drop a registered name)
-  outfit serve  [path] [--dry-run]         (run llama-server from the PRESET)
+  outfit serve  [path] [--dry-run]         (run the PROVIDER's inference server)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
@@ -156,7 +154,8 @@ Flags:
   -p, --provider       provider name (see `+"`outfit list`"+`)
   -m, --model          model id to set as default / to add or remove
   -a, --alias          friendly name for the model (the harness key); for
-                       llama.cpp the server's reported model name under serve
+                       llama.cpp the server's reported model name under serve,
+                       and the preset section serve selects
   -c, --context        context window size for the added model(s); accepts
                        human suffixes (128k, 1m) or an absolute count (200000)
   -o, --output         max output tokens for the added model(s); same format as
@@ -187,10 +186,12 @@ alias: registers an Outfit under a short name, which then stands in wherever an
        name already registered, and --list/-l shows them all. A path on disk
        always wins over a name, so registering one changes nothing that works.
 unalias: drops a registered name. The Outfit file itself is left alone.
-serve: runs llama-server for the Outfit. With a PRESET (a llama.cpp .ini) it
-       turns the matching section into the command; otherwise it derives one
-       from MODEL/ALIAS/CONTEXT/BASEURL. Prints the command before running it;
-       --dry-run/-n prints without launching the server.
+serve: runs the inference server the Outfit's PROVIDER names — llamacpp
+       (llama-server) or omlx (Apple Silicon). With a PRESET it turns the
+       matching section into the command, reading it in that engine's flag
+       vocabulary; otherwise it derives one from the Outfit's own instructions.
+       Prints the command before running it; --dry-run/-n prints without
+       launching the server.
 export: prints the active harness's config as an Outfit (outfit export > Outfit).
 init-providers: writes the binary's built-in providers.yaml to the working
        directory (or [path]) so you can customise the catalogue and point
@@ -630,162 +631,6 @@ func writeAliases(b *strings.Builder, header bool) error {
 		b.WriteString(line + "\n")
 	}
 	return nil
-}
-
-// llamaServerBinary is the llama.cpp server executable that `serve` launches.
-// It is a package var so tests can point it at a stub instead of a real build.
-var llamaServerBinary = "llama-server"
-
-// cmdServe reads an Outfit and runs llama-server for it. With a PRESET it turns
-// the matching preset section into the command; without one it derives the
-// command from the Outfit's own MODEL/ALIAS/CONTEXT/BASEURL. Either way it
-// prints the command before running it. The Outfit path defaults to ./Outfit.
-func cmdServe(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	var dryRun bool
-	fs.BoolVar(&dryRun, "dry-run", false, "print the llama-server command without running it")
-	fs.BoolVar(&dryRun, "n", false, "print the command without running it (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	var path string
-	if rest := fs.Args(); len(rest) > 0 {
-		path = rest[0]
-	}
-	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
-	if err != nil {
-		return err
-	}
-
-	var argv []string
-	if sel.Preset != "" {
-		presetPath := resolvePresetPath(sel.Preset, outfitPath)
-		data, err := os.ReadFile(presetPath)
-		if err != nil {
-			return fmt.Errorf("reading preset %s: %w", presetPath, err)
-		}
-		pre, err := preset.Parse(data)
-		if err != nil {
-			return fmt.Errorf("%s: %w", presetPath, err)
-		}
-		// The preset's sections are named by the friendly ALIAS, not the
-		// provider-native MODEL, so that is what selects one.
-		sec, err := pre.Select(sel.Alias)
-		if err != nil {
-			return fmt.Errorf("%s: %w", presetPath, err)
-		}
-		// Anything the Outfit states (CONTEXT, BASEURL, ALIAS, MODEL) overrides
-		// the preset's own values.
-		overrides, err := outfitServeParams(sel)
-		if err != nil {
-			return err
-		}
-		argv = pre.Command(llamaServerBinary, sec, overrides)
-		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
-	} else {
-		if sel.Model == "" {
-			return fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
-		}
-		params, err := outfitServeParams(sel)
-		if err != nil {
-			return err
-		}
-		argv = append([]string{llamaServerBinary}, preset.Flags(params)...)
-		fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
-	}
-
-	fmt.Printf("%s\n\n", preset.FormatCommand(argv))
-	if dryRun {
-		return nil
-	}
-
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%s not found — install llama.cpp (e.g. brew install llama.cpp) or check the path", argv[0])
-		}
-		return err
-	}
-	return nil
-}
-
-// resolvePresetPath resolves an Outfit's PRESET value: a relative one is taken
-// against the Outfit's own directory, so an Outfit and its preset travel
-// together (the same rule REMOTE uses).
-func resolvePresetPath(presetValue, outfitPath string) string {
-	if filepath.IsAbs(presetValue) {
-		return presetValue
-	}
-	return filepath.Join(filepath.Dir(outfitPath), presetValue)
-}
-
-// outfitServeParams turns the llama-server settings an Outfit states into preset
-// params: the provider-native MODEL supplies the model source (hf for a Hugging
-// Face repo, model for a .gguf path); ALIAS, CONTEXT, and BASEURL fill in the
-// rest. They seed a preset-less command and, with a preset, override its values.
-func outfitServeParams(sel outfit.Selection) ([]preset.Param, error) {
-	var params []preset.Param
-	if sel.Model != "" {
-		if isModelPath(sel.Model) {
-			params = append(params, preset.Param{Key: "model", Value: sel.Model})
-		} else {
-			params = append(params, preset.Param{Key: "hf", Value: sel.Model})
-		}
-	}
-	if sel.Alias != "" {
-		params = append(params, preset.Param{Key: "alias", Value: sel.Alias})
-	}
-	if sel.Context != "" {
-		n, err := contextsize.Parse(sel.Context)
-		if err != nil {
-			return nil, err
-		}
-		params = append(params, preset.Param{Key: "ctx-size", Value: strconv.Itoa(n)})
-	}
-	if sel.BaseURL != "" {
-		host, port, err := hostPortFromURL(sel.BaseURL)
-		if err != nil {
-			return nil, err
-		}
-		if host != "" {
-			params = append(params, preset.Param{Key: "host", Value: host})
-		}
-		if port != "" {
-			params = append(params, preset.Param{Key: "port", Value: port})
-		}
-	}
-	return params, nil
-}
-
-// isModelPath reports whether a MODEL value is a local file rather than a
-// Hugging Face repo: an absolute or explicitly-relative path, a home-relative
-// path, or anything ending in .gguf. Everything else is treated as org/model.
-func isModelPath(model string) bool {
-	if strings.HasSuffix(strings.ToLower(model), ".gguf") {
-		return true
-	}
-	return strings.HasPrefix(model, "/") ||
-		strings.HasPrefix(model, "./") ||
-		strings.HasPrefix(model, "../") ||
-		strings.HasPrefix(model, "~")
-}
-
-// hostPortFromURL extracts the host and port from a BASEURL so serve can bind
-// llama-server to the same endpoint the harness will call. A bare host:port
-// with no scheme is accepted too.
-func hostPortFromURL(raw string) (host, port string, err error) {
-	if !strings.Contains(raw, "://") {
-		raw = "http://" + raw
-	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", "", fmt.Errorf("invalid BASEURL %q: %w", raw, err)
-	}
-	return u.Hostname(), u.Port(), nil
 }
 
 // cmdExport reconstructs an Outfit from the active harness's config and prints
