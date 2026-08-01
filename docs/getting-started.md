@@ -19,6 +19,13 @@ outfit list
 That's the catalogue: every provider, the API key it needs (if any), and which
 harnesses support it.
 
+Need a model id to go with a provider? Add `--models` and `outfit` asks the
+provider's own endpoint what it currently serves:
+
+```sh
+outfit list --models openrouter
+```
+
 ## 3. Dress your agent
 
 Pick a provider and model. For a hosted one, drop the key in a `.env` or

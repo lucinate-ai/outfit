@@ -114,7 +114,9 @@ Rules:
 - **Comments** start with `#`, either on their own line or at the end of a line.
   Blank lines are ignored.
 
-To see the available providers, run `outfit list`.
+To see the available providers, run `outfit list`. To find a `MODEL` id for one,
+run `outfit list --models <provider>`, which asks the provider's own endpoint
+what it currently serves.
 
 ## Examples
 

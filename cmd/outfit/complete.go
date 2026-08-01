@@ -20,7 +20,9 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
 	"github.com/lucinate-ai/outfit/internal/config"
+	"github.com/lucinate-ai/outfit/internal/discovery"
 	"github.com/lucinate-ai/outfit/internal/harness"
+	"github.com/lucinate-ai/outfit/internal/opencode"
 )
 
 //go:embed completion.bash
@@ -61,6 +63,7 @@ const (
 	kindAliasOnly                      // registered aliases; a path would be meaningless
 	kindHarness
 	kindProvider
+	kindModel
 	kindShell
 )
 
@@ -89,11 +92,11 @@ var selectionFlags = []string{
 }
 
 // selectionValues maps those of them that take a value. The model id has no
-// static source to complete against — the catalogue no longer enumerates models
-// — so --model/-m consumes its value without offering candidates.
+// static source in the catalogue; --model/-m completes from live per-provider
+// discovery, scoped to the --provider already on the line.
 var selectionValues = map[string]candidateKind{
 	"--provider": kindProvider, "-p": kindProvider,
-	"--model": kindNone, "-m": kindNone,
+	"--model": kindModel, "-m": kindModel,
 	"--alias": kindNone, "-a": kindNone,
 	"--context": kindNone, "-c": kindNone,
 	"--output": kindNone, "-o": kindNone,
@@ -307,6 +310,19 @@ func candidatesFor(kind candidateKind, words []string) ([]string, string) {
 			return nil, directiveNoFile
 		}
 		return cat.SortedProviderNames(), directiveNoFile
+	case kindModel:
+		p := providerOn(words)
+		if p == nil {
+			return nil, directiveNoFile
+		}
+		// Best-effort: source models live from the provider's endpoint. Any
+		// failure (offline, timeout, no key) yields no candidates, keeping
+		// completion quiet.
+		models, err := discovery.Models(p, "", opencode.EnvResolver(""))
+		if err != nil {
+			return nil, directiveNoFile
+		}
+		return models, directiveNoFile
 	case kindShell:
 		return completionShells, directiveNoFile
 	default:
@@ -328,6 +344,20 @@ func aliasNames() []string {
 // already on the command line.
 func loadCatalogFor(words []string) (*catalog.Catalog, error) {
 	return catalog.LoadFrom(catalog.ResolveCatalogPath(flagValue(words, "--providers")))
+}
+
+// providerOn returns the provider named by --provider/-p on the command line so
+// far, or nil when there is none (or the catalogue will not load).
+func providerOn(words []string) *catalog.Provider {
+	name := flagValue(words, "--provider", "-p")
+	if name == "" {
+		return nil
+	}
+	cat, err := loadCatalogFor(words)
+	if err != nil {
+		return nil
+	}
+	return cat.Providers[name]
 }
 
 // flagValue finds the value already given to one of names, in either the
