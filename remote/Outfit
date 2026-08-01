@@ -25,4 +25,4 @@ PROVIDER llamacpp
 ALIAS    qwen3.6-27b
 CONTEXT  131072
 PRESET   ./preset.ini
-REMOTE   remote.json
+REMOTE   qwen3.6-27b
