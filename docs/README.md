@@ -72,5 +72,6 @@ shell environment — so a project keeps its own key next to the file that needs
 it, the same way `PRESET` and `REMOTE` travel with an Outfit. They are **never written into the agent's config** — outfit writes
 a reference the agent resolves when it runs, and `outfit harness` passes the
 keys it can resolve to the agent it launches. If you start the agent yourself,
-set the variable in your own environment. Local providers (Ollama, llama.cpp and
-oMLX on localhost) need no key; Bedrock uses your AWS credentials.
+set the variable in your own environment. Local providers on localhost (Ollama,
+llama.cpp) need no key; Bedrock uses your AWS credentials. oMLX needs one only if
+you enabled its API-key auth — set `OPENAI_API_KEY` before applying if you did.

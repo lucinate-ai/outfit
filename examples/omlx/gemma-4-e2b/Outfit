@@ -1,5 +1,5 @@
-# Qwen3.6-35B-A3B served locally by oMLX on Apple Silicon (the model this
-# directory's README walks through downloading).
+# Gemma-4-E2B (instruction-tuned) served locally by oMLX on Apple Silicon — a
+# small model that fits comfortably in memory.
 # oMLX loads a whole model directory and picks per request, so MODEL names what
 # opencode asks for — it is not a launch flag.
 PROVIDER omlx
@@ -7,7 +7,7 @@ PROVIDER omlx
 # alias. If you downloaded something else, change this: list what yours exposes
 # with `curl -H "Authorization: Bearer $OPENAI_API_KEY" localhost:8000/v1/models`.
 # A name oMLX does not have is rejected with "model not found".
-MODEL    Qwen3.6-35B-A3B-4bit
+MODEL    gemma-4-E2B-it-MLX-6bit
 CONTEXT  32768                  # opencode's context window
 PRESET   ./preset.ini           # `outfit serve` launches omlx-cli from this
 # BASEURL http://127.0.0.1:8000/v1   # uncomment for a non-default host/port

@@ -121,6 +121,12 @@ its key on the command line, so passing one would put the secret on your screen
 and in the process table. If you want auth on the server, configure it in oMLX;
 `outfit add`/`apply` still picks up `OPENAI_API_KEY` for the agent's own config.
 
+Note that oMLX can require a key even on localhost (it is an admin-panel
+setting). Because the `omlx` provider is `apiKeyOptional`, `outfit` only writes
+the key reference when `OPENAI_API_KEY` is set **at apply time** — so if your
+oMLX needs a key, set it before `add`/`apply`, not just before launching the
+agent.
+
 ### Finding the binary
 
 oMLX ships as a macOS app, so `serve` looks for `omlx-cli` on your `PATH` first

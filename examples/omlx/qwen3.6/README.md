@@ -114,9 +114,19 @@ PRESET   ./preset.ini
 ```
 
 `MODEL` matters more here than it does for a single-model llama.cpp server:
-oMLX serves everything in its model directory, so the name is what actually
-selects the model per request. It must match the directory name (or the alias
-you set in the admin panel).
+oMLX serves everything in its model directory and dispatches on the requested
+name, so it must match a model oMLX actually has — its directory name, or the
+alias you set in the admin panel. This Outfit names the model downloaded above;
+**if you downloaded something else, change `MODEL` to match.** List what yours
+exposes with:
+
+```sh
+curl -H "Authorization: Bearer $OPENAI_API_KEY" http://localhost:8000/v1/models
+```
+
+A name oMLX does not have comes back as `model not found`. And unlike the
+llama.cpp examples — where `outfit serve` can fetch the weights from Hugging
+Face — oMLX only serves what you have already downloaded.
 
 `CONTEXT` sets opencode's context window. Unlike llama.cpp there is no
 `--ctx-size` to keep it in step with — oMLX sizes its cache dynamically — so
@@ -133,13 +143,28 @@ That sets both what opencode calls and what `serve` binds to.
 
 ## A note on API keys
 
-A local oMLX server needs no key, and `outfit` writes none: the `omlx` provider
-is marked `apiKeyOptional`, so a localhost endpoint gets no `apiKey` at all.
+By default `outfit` writes no key for a localhost oMLX: the `omlx` provider is
+marked `apiKeyOptional`, so a local endpoint with no `OPENAI_API_KEY` set gets no
+`apiKey` field at all.
 
-Serving to another machine on your network? Start oMLX with `--api-key`, export
-the same value as `OPENAI_API_KEY`, and point `OMLX_BASE_URL` at the Mac —
-`outfit` then writes an environment *reference* into the agent's config, never
-the secret itself.
+**But oMLX can require a key even on localhost** — it is a per-install setting in
+the admin panel, and some builds turn it on by default. If yours does, requests
+without a key come back as `API key required`. To use it, set `OPENAI_API_KEY`
+**before** you apply the Outfit:
+
+```sh
+OPENAI_API_KEY=your-omlx-key outfit apply     # writes an {env:OPENAI_API_KEY} reference
+OPENAI_API_KEY=your-omlx-key opencode         # or `outfit harness`, which forwards it
+```
+
+The *before* matters: with the key set at apply time, `outfit` writes an
+`{env:OPENAI_API_KEY}` reference into the config (never the secret). With it
+unset, `outfit` omits the `apiKey` field entirely — and exporting the key later
+does nothing, because there is no reference in the config to resolve. If you hit
+`API key required` after the fact, set the variable and re-run `apply`.
+
+Reaching an oMLX on another machine works the same way: start it with
+`--api-key`, export `OPENAI_API_KEY`, and point `OMLX_BASE_URL` at the Mac.
 
 `outfit serve` never passes `--api-key`: it prints the command it runs, so a key
 there would land on your screen and in the process table. Configure auth in oMLX
