@@ -55,13 +55,16 @@ PRESET   ./preset.ini
 REMOTE   ./remote.json
 ```
 
-[`outfit remote`](commands/remote.md) then reads the named file — resolved
-relative to the Outfit, like `PRESET` — so a project can carry its own endpoint
-instead of relying on the per-user
-`${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json`. With no path argument the
-commands consult `./Outfit` when it exists and fall back to the per-user file;
-an explicit path (`outfit remote status path/to/Outfit`) requires the Outfit
-to carry a `REMOTE` instruction.
+`REMOTE` takes either a path or a bare name. A path (`./remote.json`, or an
+absolute one) is resolved relative to the Outfit, like `PRESET`. A bare name
+(`REMOTE qwen3.6-27b-prod`) selects a named environment from the per-user
+registry at `${XDG_CONFIG_HOME:-~/.config}/outfit/remotes/<name>/remote.json`,
+so deployment state stays per-user and per-instance while only the name lives in
+the committed Outfit. [`outfit remote`](commands/remote.md) reads whichever it
+resolves to. With no path argument the commands consult `./Outfit` when it
+exists and otherwise fall back to the `default` environment; an explicit path
+(`outfit remote status path/to/Outfit`) requires the Outfit to carry a `REMOTE`
+instruction.
 
 Note the missing `BASEURL`: the endpoint's address belongs to the deployment,
 which records it in the named file as `base_url`, and

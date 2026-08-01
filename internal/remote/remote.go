@@ -44,15 +44,12 @@ type Config struct {
 	BaseURL string `json:"base_url"`
 }
 
-// ConfigPath returns the path of the remote config file, alongside outfit's
-// own config in the same directory.
+// ConfigPath returns the path of the legacy per-user remote config file,
+// alongside outfit's own config in the same directory. The environments
+// registry (see environments.go) supersedes it; it is still read as the
+// fallback for the default environment.
 func ConfigPath() string {
-	dir := os.Getenv("XDG_CONFIG_HOME")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".config")
-	}
-	return filepath.Join(dir, "outfit", "remote.json")
+	return filepath.Join(configHome(), "remote.json")
 }
 
 // LoadConfig reads the per-user config file and applies environment overrides

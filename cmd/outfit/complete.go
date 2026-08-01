@@ -173,7 +173,7 @@ var commands = map[string]command{
 		values: map[string]candidateKind{"--timeout": kindNone},
 		// `outfit remote <sub> [outfit]`: the subcommand, then optionally the
 		// Outfit naming the endpoint.
-		subcommands: []string{"start", "stop", "status", "deploy"},
+		subcommands: []string{"start", "stop", "status", "deploy", "ls"},
 		positional:  kindAlias, positionals: 2,
 	},
 	"completion": {positional: kindShell, positionals: 1},

@@ -53,11 +53,31 @@ the deployment that owns it. A `BASEURL` in the Outfit wins if you set one.
 Either name it from the Outfit, so a project carries its own endpoint:
 
 ```dockerfile
-REMOTE ./remote.json    # resolved next to the Outfit, like PRESET
+REMOTE ./remote.json         # a path: resolved next to the Outfit, like PRESET
+REMOTE qwen3.6-27b-prod      # a bare name: an environment in the registry
 ```
 
-…or save it once as `~/.config/outfit/remote.json`, which is used whenever no
-Outfit names one — so `outfit remote` works from anywhere.
+A bare name (no slash, no `.json`) selects a **named environment** from the
+per-user registry at `~/.config/outfit/remotes/<name>/remote.json`. This keeps
+deployment state per-user and per-instance: two projects name two environments
+without clobbering, and only the name — not the URLs — lives in the committed
+Outfit. `outfit remote bootstrap` registers an environment for you; you can also
+create one by hand.
+
+With no Outfit naming a `REMOTE`, `outfit remote` uses the `default`
+environment (`~/.config/outfit/remotes/default/remote.json`) — so it works from
+anywhere. An existing `~/.config/outfit/remote.json` from before the registry is
+still read as the default; move it to `remotes/default/remote.json` when
+convenient.
+
+## Listing environments
+
+```sh
+outfit remote ls
+```
+
+lists each registered environment with its base URL and region, marking any
+whose `remote.json` is missing or unreadable. It contacts no endpoint.
 
 Requests are signed with **your** AWS credentials (the usual profile, SSO
 session, or environment variables), and the endpoint's URLs require it. Outfit

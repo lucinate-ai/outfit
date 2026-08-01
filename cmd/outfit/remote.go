@@ -27,7 +27,7 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <start|stop|status|deploy> [path]")
+		return fmt.Errorf("usage: outfit remote <start|stop|status|deploy|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -39,9 +39,11 @@ func cmdRemote(args []string) error {
 		return cmdRemoteStatus(rest)
 	case "deploy":
 		return cmdRemoteDeploy(rest)
+	case "ls":
+		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected start, stop, status or deploy)", sub)
+			"unknown remote subcommand %q (expected start, stop, status, deploy or ls)", sub)
 	}
 }
 
@@ -62,7 +64,7 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		if sel.Remote == "" {
 			return remote.Config{}, fmt.Errorf("%s has no REMOTE instruction", outfitPath)
 		}
-		return remote.LoadConfigFile(remoteConfigPath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
+		return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 	}
 	if defaultOutfitExists() {
 		sel, outfitPath, err := readOutfit("remote", "")
@@ -70,10 +72,22 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 			return remote.Config{}, err
 		}
 		if sel.Remote != "" {
-			return remote.LoadConfigFile(remoteConfigPath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
+			return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 		}
 	}
-	return remote.LoadConfig(os.Getenv)
+	return remote.LoadDefault(os.Getenv)
+}
+
+// resolveRemotePath turns an Outfit's REMOTE value into the config file to read.
+// A bare name selects an environment from the per-user registry; a path is
+// resolved as a file, relative to the Outfit's directory when not absolute —
+// the same rule PRESET uses. Both the control commands and apply's base-URL
+// lookup go through here, so the two never diverge.
+func resolveRemotePath(remoteValue, outfitDir string) string {
+	if remote.IsEnvName(remoteValue) {
+		return remote.EnvConfigPath(remoteValue)
+	}
+	return remoteConfigPath(remoteValue, outfitDir)
 }
 
 // defaultOutfitExists reports whether the working directory holds a file
@@ -102,14 +116,14 @@ func remoteConfigPath(remoteValue, outfitDir string) string {
 }
 
 // remoteBaseURL returns the endpoint address recorded in the remote config an
-// Outfit's REMOTE names, resolved relative to outfitDir like every other path
-// an Outfit refers to. The deployment generates that file, so the address lives
+// Outfit's REMOTE names — a registry environment or a file, per
+// resolveRemotePath. The deployment generates that config, so the address lives
 // there rather than in the hand-written Outfit — but only as a fallback: an
 // Outfit that states its own BASEURL never asks. A config that is absent, or
 // that predates base_url, yields "" rather than an error, since an Outfit may
 // name a remote config before the deployment that writes it exists.
 func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
-	path := remoteConfigPath(remoteValue, outfitDir)
+	path := resolveRemotePath(remoteValue, outfitDir)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -209,6 +223,37 @@ func cmdRemoteStart(args []string) error {
 	// stdout carries only the result, so `eval "$(outfit remote start)"` works.
 	fmt.Printf("export OPENAI_BASE_URL=%s\n", resp.BaseURL)
 	fmt.Printf("export OPENAI_API_KEY=%s\n", resp.APIKey)
+	return nil
+}
+
+// cmdRemoteList prints the registered remote environments, each with its base
+// URL and region, marking any whose remote.json is missing or unreadable. It
+// contacts no endpoint. Environments are registered under
+// ~/.config/outfit/remotes/<name>/ (by `outfit remote bootstrap`, or by hand).
+func cmdRemoteList(args []string) error {
+	fs := flag.NewFlagSet("remote ls", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	envs, err := remote.ListEnvironments()
+	if err != nil {
+		return err
+	}
+	if len(envs) == 0 {
+		fmt.Println("No remote environments registered. Register one with `outfit remote bootstrap`.")
+		return nil
+	}
+	for _, e := range envs {
+		if !e.OK {
+			fmt.Printf("%s\t(missing or unreadable remote.json)\n", e.Name)
+			continue
+		}
+		base := e.BaseURL
+		if base == "" {
+			base = "(no base URL)"
+		}
+		fmt.Printf("%s\t%s\t%s\n", e.Name, base, e.Region)
+	}
 	return nil
 }
 
