@@ -39,4 +39,4 @@
 - [x] 6.2 `outfit serve --dry-run` on the oMLX example, on a bare `PROVIDER omlx`, and on a non-engine provider (which must now error).
 - [x] 6.3 Regression: `outfit serve --dry-run examples/llamacpp/qwen3.6/Outfit` produces the same command as before the change.
 - [x] 6.4 `outfit add -p omlx` under both harnesses: keyless on localhost, `{env:…}`/`$VAR` when remote or keyed.
-- [ ] 6.5 `openspec validate add-omlx-provider` — the CLI is not installed in this environment; artifacts were hand-written to the archived change's shape.
+- [x] 6.5 `openspec validate add-omlx-provider` — passes (also `--strict`).
