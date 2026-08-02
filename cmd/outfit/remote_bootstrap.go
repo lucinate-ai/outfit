@@ -340,7 +340,6 @@ func renderBootstrapPlan(account, region string, runners []string, ref, cdkDir s
 	fmt.Fprintln(w, "  • EC2 Image Builder pipelines and the baked AMIs")
 	fmt.Fprintln(w, "  • the lifecycle Lambdas (start/stop/monitor/deploy) and their IAM")
 	fmt.Fprintln(w, "  • the shared S3 weights bucket, IAM roles, and VPC")
-	fmt.Fprintln(w, "No Elastic IP or instance is created here — those come from `outfit remote deploy`.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Cost: an ongoing at-rest cost (bucket, AMIs) plus a per-hour GPU cost only while")
 	fmt.Fprintln(w, "an environment is running. See remote/docs/costs.md for the breakdown.")
