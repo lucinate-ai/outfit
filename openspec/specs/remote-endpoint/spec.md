@@ -148,6 +148,12 @@ serve locally and deploy unchanged. The request SHALL describe only what to
 serve, never where the weights are stored. A `--dry-run` SHALL print the
 derived deployment without sending it.
 
+Deploy SHALL target a named environment: in addition to deriving what to serve,
+it SHALL create and register that environment on the shared layer (its Elastic
+IP, instance configuration, per-environment API key and ingress, and SSM state),
+as defined by the Environment Deployment specification. Deploying SHALL NOT start
+the instance.
+
 #### Scenario: A preset drives both serving and deploying
 
 - **WHEN** an Outfit with a preset is deployed
@@ -172,9 +178,16 @@ derived deployment without sending it.
 - **THEN** the command fails saying to name a repository instead, because the
   endpoint fetches its own weights
 
+#### Scenario: Deploying creates and registers the environment
+
+- **WHEN** a deployment succeeds against a bootstrapped account
+- **THEN** the named environment is created and registered in the registry, and
+  the report says whether the weights still have to be fetched before it can
+  serve
+
 #### Scenario: Deploying is not starting
 
 - **WHEN** a deployment succeeds
-- **THEN** the endpoint is configured but not started, and the report says
+- **THEN** the environment is configured but not started, and the report says
   whether the weights still have to be fetched before it can serve
 
