@@ -38,4 +38,4 @@
 ## 6. Verification
 
 - [x] 6.1 `go test ./... -cover` (keep ≥ 80%), `gofmt`; `pnpm test` for the CDK/Lambda changes in `remote/`.
-- [ ] 6.2 End-to-end on a throwaway account: `outfit remote bootstrap` → `outfit remote deploy <env>` → `outfit remote ls` shows it → `outfit remote start` boots that environment's instance at its EIP.
+- [x] 6.2 End-to-end on a throwaway account: `outfit remote bootstrap` → `outfit remote deploy <env>` → `outfit remote ls` shows it → `outfit remote start` boots that environment's instance at its EIP.
