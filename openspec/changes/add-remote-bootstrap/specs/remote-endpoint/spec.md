@@ -10,9 +10,9 @@ shell exports; `stop` SHALL stop it immediately rather than waiting for its idle
 timer; `status` SHALL report instance state and endpoint health without side
 effects; `deploy` SHALL set what the endpoint serves. `ls` SHALL list the
 registered remote environments (see the Remote Environments specification).
-`bootstrap` SHALL stand up the endpoint's AWS infrastructure by obtaining and
-driving the CDK project, and takes its own flags rather than an Outfit path (see
-the Endpoint Provisioning specification). An unrecognised subcommand SHALL fail
+`bootstrap` SHALL stand up the shared, account-level AWS infrastructure (once
+per account) by obtaining and driving the CDK project, and takes its own flags
+rather than an Outfit path (see the Endpoint Provisioning specification). An unrecognised subcommand SHALL fail
 naming the accepted ones.
 
 #### Scenario: Starting the endpoint

@@ -1,68 +1,57 @@
 ## ADDED Requirements
 
-### Requirement: Bootstrap provisions the endpoint infrastructure
+### Requirement: Bootstrap deploys the shared account infrastructure
 
-The system SHALL provide `outfit remote bootstrap`, which stands up the remote
-endpoint's AWS infrastructure by obtaining the CDK project shipped in `remote/`
-and driving its deploy sequence to completion — `pnpm install`, a one-time
-`cdk bootstrap`, the image-pipeline deploy, the AMI bake, the runtime-stack
-deploy that generates `remote.json`, and the initial `outfit remote deploy`. The
-endpoint `Outfit` is committed in the sources and hand-written — nothing
-generates it. Bootstrap SHALL NOT reimplement the infrastructure; it SHALL
-orchestrate the existing CDK project. On success it SHALL register the deployment
-as a named environment so the other `remote` subcommands can drive it.
+The system SHALL provide `outfit remote bootstrap`, which deploys the shared,
+account-level infrastructure that every remote environment reuses — the EC2
+Image Builder pipelines and baked AMIs, the environment-aware lifecycle Lambdas
+and their IAM, and the shared S3 weights bucket, IAM roles and VPC — by obtaining
+the CDK project shipped in `remote/` and driving its deploy of the shared stack.
+Bootstrap SHALL NOT create any Elastic IP or EC2 instance, and SHALL NOT register
+an environment; those belong to `outfit remote deploy`. Bootstrap SHALL NOT
+reimplement the infrastructure; it SHALL orchestrate the existing CDK project.
 
-#### Scenario: A successful bootstrap yields a usable endpoint config
+#### Scenario: A successful bootstrap yields the shared layer
 
-- **WHEN** `outfit remote bootstrap` completes its deploy sequence
-- **THEN** the generated `remote.json` (control URLs, region, and base URL) is
-  registered as the target environment, ready for `outfit remote deploy` and
-  `outfit remote start`
+- **WHEN** `outfit remote bootstrap` completes
+- **THEN** the shared stack is deployed — Image Builder, the lifecycle Lambdas,
+  and the shared bucket/roles/VPC — with no Elastic IP or instance created
 
 #### Scenario: Orchestration stops on a failed step
 
 - **WHEN** any step in the sequence fails
 - **THEN** bootstrap stops and reports which step failed rather than continuing
-  to the next step
 
-### Requirement: Registering the deployment as an environment
+### Requirement: Shared infrastructure is discoverable
 
-Bootstrap SHALL write the generated `remote.json` into the per-user environment
-registry defined by the Remote Environments specification —
-`~/.config/outfit/remotes/<env>/remote.json` — rather than into a single shared
-file, so provisioning a second instance never clobbers the first. The
-environment name SHALL come from a `--env` flag, defaulting to `default`. The
-consent plan SHALL name the environment and the exact path it will write.
+The shared stack SHALL publish, as CloudFormation stack outputs under a
+well-known stack name, the values a later `outfit remote deploy` needs to create
+and drive environments: the lifecycle Lambda URLs, the weights bucket, the shared
+roles, and the region. Discovery SHALL be from those outputs rather than a file
+bootstrap writes, so it reflects what is actually deployed and works from any
+machine with account access.
 
-#### Scenario: The deployment is registered under its environment name
+#### Scenario: Deploy can discover the shared layer
 
-- **WHEN** `outfit remote bootstrap --env qwen3.6-27b-prod` succeeds
-- **THEN** the generated `remote.json` is written to
-  `~/.config/outfit/remotes/qwen3.6-27b-prod/remote.json`, and an Outfit stating
-  `REMOTE qwen3.6-27b-prod` resolves to it
-
-#### Scenario: A second instance does not clobber the first
-
-- **WHEN** bootstrap is run for a second environment name
-- **THEN** it writes a separate `remotes/<env>/` directory, leaving the first
-  environment's `remote.json` intact
+- **WHEN** the shared stack is deployed and `outfit remote deploy` runs later
+- **THEN** it reads the Lambda URLs, bucket, roles and region from the stack's
+  outputs, without a local file having to carry them
 
 ### Requirement: Explicit consent before creating AWS resources
 
-Before running any action that creates or modifies AWS resources, bootstrap
-SHALL present a plan naming the target AWS account and region, the resources it
-will create, the rough cost of running and idle operation, and the exact
-commands it will run, then SHALL require explicit confirmation to proceed. A
-`--dry-run` flag SHALL print this plan and make no changes. A `--yes` flag SHALL
-satisfy the confirmation without an interactive prompt, for non-interactive use.
-Absent `--yes` and `--dry-run`, bootstrap SHALL prompt and SHALL treat any
-answer other than an explicit yes as a decline that makes no changes.
+Before running any action that creates or modifies AWS resources, bootstrap SHALL
+present a plan naming the target AWS account and region, the shared resources it
+will create, a qualitative cost caveat, and the exact commands it will run, then
+SHALL require explicit confirmation. A `--dry-run` flag SHALL print this plan and
+make no changes. A `--yes` flag SHALL satisfy the confirmation non-interactively.
+Absent `--yes` and `--dry-run`, bootstrap SHALL prompt and SHALL treat any answer
+other than an explicit yes as a decline that makes no changes.
 
 #### Scenario: The plan is shown before anything is deployed
 
 - **WHEN** the user runs `outfit remote bootstrap`
-- **THEN** the account, region, resources, cost, and commands are printed before
-  any AWS-mutating command runs
+- **THEN** the account, region, shared resources, cost caveat, and commands are
+  printed before any AWS-mutating command runs
 
 #### Scenario: Dry run changes nothing
 
@@ -74,67 +63,49 @@ answer other than an explicit yes as a decline that makes no changes.
 - **WHEN** the plan is shown and the user does not confirm
 - **THEN** bootstrap exits without creating any resources
 
-#### Scenario: Non-interactive consent
-
-- **WHEN** the user runs `outfit remote bootstrap --yes`
-- **THEN** bootstrap proceeds without an interactive prompt, having still printed
-  the plan
-
 ### Requirement: Version-matched CDK sources
 
 Bootstrap SHALL obtain the CDK project by downloading the `remote/` tree from the
 project repository at a reference matching the running binary's version, so the
-provisioned infrastructure matches the CLI driving it. A `--ref` flag SHALL
-override the reference, and a `--dir` flag SHALL override where the sources are
-placed (defaulting under the user config directory). For a development build with
-no release version, bootstrap SHALL fall back to a documented default reference
-rather than guessing. The CDK sources SHALL NOT be embedded in the binary, since
-a `pnpm install` is required at runtime regardless.
+infrastructure matches the CLI driving it. A `--ref` flag SHALL override the
+reference, and a `--dir` flag SHALL override where the sources are placed
+(defaulting under the user config directory). For a development build with no
+release version, bootstrap SHALL fall back to a documented default reference. The
+CDK sources SHALL NOT be embedded in the binary, since a `pnpm install` is
+required at runtime regardless.
 
-The default source location SHALL be keyed by the resolved reference, so a
-re-run at the same version reuses its sources while a different binary version
-downloads fresh rather than reusing a mismatched cache. On a successful
-bootstrap using the default location, sources from other references SHALL be
-pruned so stale-version copies do not accumulate. An explicit `--dir` SHALL be
-treated as the user's own location: neither keyed by reference nor pruned.
+The default source location SHALL be keyed by the resolved reference, so a re-run
+at the same version reuses its sources while a different binary version downloads
+fresh. On a successful bootstrap using the default location, sources from other
+references SHALL be pruned. An explicit `--dir` SHALL be treated as the user's own
+location: neither keyed by reference nor pruned.
 
 #### Scenario: Sources match the binary version
 
 - **WHEN** a released `outfit` runs bootstrap with no `--ref`
 - **THEN** it downloads the `remote/` sources at the tag matching its version
 
+#### Scenario: Development build falls back
+
+- **WHEN** a `dev` build runs bootstrap with no `--ref`
+- **THEN** it uses the documented fallback reference rather than guessing
+
 #### Scenario: A new version does not reuse stale sources
 
 - **WHEN** bootstrap runs from a binary whose resolved reference differs from a
   previously downloaded one in the default location
-- **THEN** it downloads sources for the new reference rather than reusing the old
-  ones, and on success the superseded reference's sources are pruned
-
-#### Scenario: An explicit directory is left alone
-
-- **WHEN** the user passes `--dir`
-- **THEN** bootstrap uses that path as given, without reference-keying or pruning
-  it
-
-#### Scenario: Development build falls back
-
-- **WHEN** a `dev` build runs bootstrap with no `--ref`
-- **THEN** it uses the documented fallback reference rather than failing or
-  guessing a version
-
-#### Scenario: Reference override
-
-- **WHEN** the user passes `--ref <ref>`
-- **THEN** bootstrap downloads the sources at that reference
+- **THEN** it downloads sources for the new reference, and on success the
+  superseded reference's sources are pruned
 
 ### Requirement: Preflight checks before deploying
 
 Bootstrap SHALL verify its prerequisites before presenting the plan and fail
 early with actionable guidance when one is missing: a suitable Node runtime and
 `pnpm` on the path, and resolvable AWS credentials. It SHALL report the resolved
-AWS account and region so they appear in the consent plan. It SHALL surface the
-GPU vCPU quota as a warning when it cannot be confirmed, without attempting to
-raise it, since a later `start` depends on it.
+AWS account and region for the plan, and SHALL note when the account is already
+bootstrapped (the shared stack exists, via CloudFormation `DescribeStacks`). It
+SHALL surface the GPU vCPU quota as a warning when it cannot be confirmed, without
+attempting to raise it.
 
 #### Scenario: Missing tooling fails early
 
@@ -146,51 +117,54 @@ raise it, since a later `start` depends on it.
 - **WHEN** AWS credentials cannot be resolved
 - **THEN** bootstrap fails before deploying, explaining how to provide them
 
-#### Scenario: Quota is a warning, not a blocker
+#### Scenario: Already bootstrapped is noted, not fatal
 
-- **WHEN** the GPU vCPU quota cannot be confirmed sufficient
-- **THEN** bootstrap warns that a later `start` may fail until the quota is
-  raised, and continues
+- **WHEN** the shared stack already exists in the account and region
+- **THEN** bootstrap notes it will update the shared infrastructure, and
+  continues (the deploy is idempotent)
 
-### Requirement: Required settings are collected
+### Requirement: Shared settings are collected
 
-Bootstrap SHALL collect the two settings the CDK has no default for — the
-allowed CIDR (the caller's public address as a `/32`) and the runner
-(`llamacpp` by default, or `vllm`) — and SHALL write them where the CDK reads
-them so the deploy picks them up. The allowed CIDR SHALL be provided by a flag or
-detected from the caller's public address; the runner SHALL be selectable by a
-flag.
+Bootstrap SHALL collect the shared settings the CDK has no default for and write
+them where the CDK reads them: which runner AMIs to bake (`--runners`, defaulting
+to both `llamacpp` and `vllm`) so any environment can pick its engine at deploy
+time, and an optional Hugging Face token for the shared secret used when seeding
+gated weights. The engine is a per-environment choice made at `deploy`, so a
+single runner is not a bootstrap setting; the allowed ingress CIDR is also
+per-environment and belongs to `deploy`, not here.
 
-#### Scenario: Runner defaults to llamacpp
+#### Scenario: Both runner AMIs are baked by default
 
-- **WHEN** the user runs bootstrap without selecting a runner
-- **THEN** the deploy is configured for the `llamacpp` runner
+- **WHEN** the user runs bootstrap without selecting runners
+- **THEN** AMIs for both `llamacpp` and `vllm` are baked
 
-#### Scenario: Allowed CIDR is recorded for the deploy
+#### Scenario: The allowed CIDR is not a bootstrap setting
 
-- **WHEN** bootstrap resolves the allowed CIDR
-- **THEN** it is written where the CDK reads it before the deploy runs
+- **WHEN** the user runs bootstrap
+- **THEN** no ingress CIDR is requested or written, since it is scoped per
+  environment at `outfit remote deploy`
 
-### Requirement: Resumable orchestration with an asynchronous bake
+### Requirement: Idempotent bootstrap with an asynchronous bake
 
-Bootstrap SHALL be safe to re-run: it SHALL skip steps already satisfied, not
-repeating `pnpm install` when dependencies are present nor `cdk bootstrap` when
-the account and region are already bootstrapped, and SHALL not redeploy a stack
-that is unchanged. Because the AMI bake is slow, by default bootstrap SHALL start
-the bake and hand off, telling the user how to wait for it and how to resume,
-rather than blocking. A `--wait` flag SHALL block until the bake completes.
+Bootstrap SHALL be safe to re-run: it SHALL skip `pnpm install` when dependencies
+are present and `cdk bootstrap` when the account and region are already
+bootstrapped, and SHALL not redeploy a shared stack that is unchanged. Because it
+touches only shared infrastructure and never a live instance, re-running SHALL NOT
+require any override. Because the AMI bake is slow, by default bootstrap SHALL
+start the bake and hand off, telling the user how to wait, rather than blocking. A
+`--wait` flag SHALL block until the bake completes.
 
 #### Scenario: Re-running skips satisfied steps
 
-- **WHEN** bootstrap is re-run after a partial completion
-- **THEN** it skips installation and CDK bootstrap that are already done rather
-  than repeating them
+- **WHEN** bootstrap is re-run
+- **THEN** it skips installation and CDK bootstrap that are already done and
+  no-ops the unchanged shared stack, without requiring an override
 
 #### Scenario: The slow bake does not block by default
 
 - **WHEN** bootstrap reaches the AMI bake without `--wait`
-- **THEN** it starts the bake and reports how to wait for it and resume, rather
-  than blocking for the full bake duration
+- **THEN** it starts the bake and reports how to wait for it, rather than
+  blocking for the full bake duration
 
 #### Scenario: Waiting on request
 
