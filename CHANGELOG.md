@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.11.0] - 2026-08-02
+### Added
+- feat: add qwen3.6 27B example
+- feat: take the remote endpoint's base URL from remote.json
+- feat: two-layer remote provisioning with per-env endpoints
+
 ## [1.10.0] - 2026-08-01
 ### Added
 - feat: add GCP Vertex AI providers
