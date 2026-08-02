@@ -1,11 +1,22 @@
 import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import { errorName, readDeployConfig, requireEnv, writeDeployConfig } from '../shared/aws';
 import { parseDeployConfig } from '../shared/deploy-config';
+import {
+  baseUrlFor,
+  deployConfigParam,
+  ensureEnvApiKey,
+  ensureEnvEip,
+  ensureEnvSecurityGroup,
+  ensureIdleState,
+  environmentFrom,
+  findEnvSecurityGroup,
+} from '../shared/environments';
 import { jsonResponse } from '../shared/http';
 import { launchSeedInstance, weightsPresent, type SeedEnv } from '../shared/seed';
 
-const DEPLOY_CONFIG_PARAM = requireEnv('DEPLOY_CONFIG_PARAM');
 const WEIGHTS_BUCKET = requireEnv('WEIGHTS_BUCKET');
+const VPC_ID = requireEnv('VPC_ID');
+const PORT = Number(requireEnv('VLLM_PORT'));
 
 const SEED_ENV: SeedEnv = {
   region: requireEnv('AWS_REGION'),
@@ -20,23 +31,38 @@ const SEED_ENV: SeedEnv = {
   amiRunnerTagKey: requireEnv('AMI_RUNNER_TAG_KEY'),
 };
 
+// Matches the Go client's validation: an IPv4 CIDR like 203.0.113.7/32.
+const CIDR = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/;
+
 /**
- * The control plane `outfit remote deploy` calls (SigV4 Function URL, like
- * start/stop). POST a DeployConfig — derived from an Outfit file — and it is
- * validated, the weights are seeded if they are not in S3 yet, and the config
- * is written to the deploy-config SSM parameter that the next wake reads. GET
- * returns the current config. This keeps outfit thin (Lambda invoke only) with
- * all validation, layout decisions and AWS mutation server-side.
+ * The control plane `outfit remote deploy` calls (SigV4 Function URL). POST
+ * `{environment, allowedCidr, ...deployConfig}` and the environment is created
+ * on the shared layer if it does not exist — its Elastic IP, security group
+ * (ingress = its own allowed CIDR), API-key secret and SSM state — the weights
+ * are seeded if missing, and the config is written to the environment's
+ * deploy-config parameter. GET `?env=<name>` returns the current config. This
+ * keeps outfit thin (Lambda invoke only) with all validation, layout decisions
+ * and AWS mutation server-side.
  */
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   const method = event.requestContext?.http?.method ?? 'POST';
 
   if (method === 'GET') {
+    let env: string;
     try {
-      return jsonResponse(200, await readDeployConfig(DEPLOY_CONFIG_PARAM));
+      env = environmentFrom(event.queryStringParameters);
     } catch (err) {
-      // Unset/invalid — nothing has been deployed yet.
-      return jsonResponse(404, { state: 'unconfigured', message: (err as Error).message });
+      return jsonResponse(400, { error: (err as Error).message });
+    }
+    try {
+      return jsonResponse(200, await readDeployConfig(deployConfigParam(env)));
+    } catch (err) {
+      // Unset/invalid — nothing has been deployed to this environment yet.
+      return jsonResponse(404, {
+        state: 'unconfigured',
+        environment: env,
+        message: (err as Error).message,
+      });
     }
   }
 
@@ -45,16 +71,29 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
       ? Buffer.from(event.body, 'base64').toString('utf8')
       : (event.body ?? '');
 
+  let parsedBody: Record<string, unknown>;
+  try {
+    parsedBody = JSON.parse(body || '{}') as Record<string, unknown>;
+  } catch (err) {
+    return jsonResponse(400, { error: `request is not valid JSON: ${(err as Error).message}` });
+  }
+
+  let env: string;
   let config;
   try {
+    env = environmentFrom(event.queryStringParameters, parsedBody.environment);
     config = parseDeployConfig(body);
   } catch (err) {
     return jsonResponse(400, { error: (err as Error).message });
   }
+  const allowedCidr = typeof parsedBody.allowedCidr === 'string' ? parsedBody.allowedCidr : '';
+  if (allowedCidr && !CIDR.test(allowedCidr)) {
+    return jsonResponse(400, { error: `allowedCidr must be an IPv4 CIDR, got ${allowedCidr}` });
+  }
 
-  // Seed before writing the config: if the weights are missing and the seed
-  // cannot even be launched, the current (working) config is left alone rather
-  // than replaced by one that would fail at wake.
+  // Seed before anything else: if the weights are missing and the seed cannot
+  // even be launched, the environment (and any current working config) is left
+  // alone rather than half-created.
   let seeding = false;
   let seedInstanceId: string | undefined;
   try {
@@ -69,10 +108,34 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     });
   }
 
-  await writeDeployConfig(DEPLOY_CONFIG_PARAM, config);
+  // Create (or update) the environment's own resources. The CIDR is required
+  // the first time — a security group that admits nobody is useless — and
+  // optional afterwards, when an absent value means "leave ingress alone".
+  let baseUrl: string;
+  try {
+    const eip = await ensureEnvEip(env);
+    baseUrl = baseUrlFor(eip.publicIp, PORT);
+    if (allowedCidr) {
+      await ensureEnvSecurityGroup(env, VPC_ID, PORT, allowedCidr);
+    } else if (!(await findEnvSecurityGroup(env))) {
+      return jsonResponse(400, {
+        error: `environment ${JSON.stringify(env)} has no security group yet — provide allowedCidr`,
+      });
+    }
+    await ensureEnvApiKey(env);
+    await ensureIdleState(env);
+  } catch (err) {
+    console.log(JSON.stringify({ action: 'deploy', environment: env, error: errorName(err) }));
+    return jsonResponse(502, {
+      error: `creating environment ${JSON.stringify(env)}: ${(err as Error).message}`,
+    });
+  }
+
+  await writeDeployConfig(deployConfigParam(env), config);
   console.log(
     JSON.stringify({
       action: 'deploy',
+      environment: env,
       runner: config.runner,
       modelId: config.modelId,
       quant: config.quant,
@@ -83,6 +146,8 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
   );
   return jsonResponse(200, {
     deployed: true,
+    environment: env,
+    base_url: baseUrl,
     runner: config.runner,
     modelId: config.modelId,
     contextSize: config.contextSize,

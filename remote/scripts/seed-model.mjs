@@ -21,7 +21,9 @@ import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 const AMI_ROLE_TAG_KEY = 'cloud-vm-llm:role';
 const AMI_ROLE_TAG_VALUE = 'runtime-ami';
 const AMI_RUNNER_TAG_KEY = 'cloud-vm-llm:runner';
-const DEPLOY_CONFIG_PARAM = '/cloud-vm-llm/deploy-config';
+// Deploy-config is per environment; name one as the first argument.
+const ENVIRONMENT = process.argv[2] ?? 'default';
+const DEPLOY_CONFIG_PARAM = `/cloud-vm-llm/${ENVIRONMENT}/deploy-config`;
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 

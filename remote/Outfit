@@ -1,10 +1,11 @@
-# Remote Qwen endpoint deployed by this directory.
+# Remote Qwen endpoint, run as an environment on the shared layer.
 #
-# This file is hand-maintained — nothing generates or rewrites it. `pnpm
-# deploy` writes only `remote.json`, which carries the deployment state: the
-# Lambda URLs `outfit remote` drives and the endpoint's base URL. From this
-# directory:
-#   outfit remote deploy  # tell the endpoint what to serve (this file + preset)
+# This file is hand-maintained — nothing generates or rewrites it. The shared
+# infrastructure is deployed once per account with `outfit remote bootstrap`;
+# then, from this directory:
+#   outfit remote deploy  # create the environment REMOTE names + set what it
+#                         # serves (this file + preset); registers its
+#                         # remote.json under ~/.config/outfit/remotes/
 #   outfit remote start   # boot the instance; prints the OPENAI_API_KEY export
 #   outfit apply          # point your coding agent at the endpoint
 #   outfit remote stop    # stop now instead of waiting for the idle timer
@@ -18,9 +19,12 @@
 # ALIAS is both the name your coding agent asks for and the name the server is
 # started under (llama-server's --alias), so the two cannot drift apart.
 #
-# There is deliberately no BASEURL: the endpoint's address belongs to the
-# deployment, so `outfit apply` takes it from remote.json's base_url. Add a
-# BASEURL here only to override that.
+# REMOTE names the environment: its EIP, API key and config are its own, so
+# several Outfits can run several instances side by side in one account.
+#
+# There is deliberately no BASEURL: the environment's address belongs to the
+# deployment, so `outfit apply` takes it from the environment's remote.json.
+# Add a BASEURL here only to override that.
 PROVIDER llamacpp
 ALIAS    qwen3.6-27b
 CONTEXT  131072

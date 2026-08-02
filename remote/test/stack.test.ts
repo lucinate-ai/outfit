@@ -7,19 +7,25 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../lib/config';
 import { ImageStack } from '../lib/image-stack';
 import { LlmStack } from '../lib/llm-stack';
-import { parseDeployConfig, UNCONFIGURED_DEPLOY_CONFIG } from '../lambda/shared/deploy-config';
+import {
+  apiKeySecretName,
+  baseUrlFor,
+  deployConfigParam,
+  environmentFrom,
+  idleStateParam,
+  isValidEnvironmentName,
+} from '../lambda/shared/environments';
 
-const CONTEXT = { allowedCidr: '203.0.113.7/32', runner: 'vllm' };
 // Keep tests hermetic: never read the developer's real .env at the repo root.
 const NO_DOTENV = path.join(os.tmpdir(), 'cloud-vm-llm-no-such-env');
 
-function runtimeTemplate(context: Record<string, unknown> = CONTEXT): Template {
+function sharedTemplate(context: Record<string, unknown> = {}): Template {
   const app = new cdk.App({ context });
   const config = loadConfig(app, NO_DOTENV);
   return Template.fromStack(new LlmStack(app, 'test-runtime', { config, env: { region: config.region } }));
 }
 
-function imageTemplate(context: Record<string, unknown> = CONTEXT): Template {
+function imageTemplate(context: Record<string, unknown> = {}): Template {
   const app = new cdk.App({ context });
   const config = loadConfig(app, NO_DOTENV);
   return Template.fromStack(new ImageStack(app, 'test-image', { config, env: { region: config.region } }));
@@ -33,35 +39,21 @@ function tempDotEnv(content: string): string {
 }
 
 describe('config', () => {
-  it('requires allowedCidr', () => {
-    expect(() => loadConfig(new cdk.App(), NO_DOTENV)).toThrow(/allowedCidr/);
+  it('needs no per-environment settings (shared layer only)', () => {
+    // allowedCidr, runner, model settings all moved to `outfit remote deploy`.
+    expect(() => loadConfig(new cdk.App(), NO_DOTENV)).not.toThrow();
   });
 
-  it('rejects a non-CIDR allowedCidr', () => {
-    const app = new cdk.App({ context: { allowedCidr: 'not-a-cidr', runner: 'vllm' } });
-    expect(() => loadConfig(app, NO_DOTENV)).toThrow(/IPv4 CIDR/);
-  });
-
-  it('requires a runner to be chosen (no default)', () => {
-    const app = new cdk.App({ context: { allowedCidr: '203.0.113.7/32' } });
-    expect(() => loadConfig(app, NO_DOTENV)).toThrow(/runner/);
-    const bad = new cdk.App({ context: { allowedCidr: '203.0.113.7/32', runner: 'tgi' } });
-    expect(() => loadConfig(bad, NO_DOTENV)).toThrow(/runner/);
-  });
-
-  it('reads ALLOWED_CIDR and HF_TOKEN from a .env file', () => {
-    const dotEnv = tempDotEnv('# comment\nALLOWED_CIDR=203.0.113.9/32\nHF_TOKEN=hf_test\n');
-    const config = loadConfig(new cdk.App({ context: { runner: 'vllm' } }), dotEnv);
-    expect(config.allowedCidr).toBe('203.0.113.9/32');
+  it('reads HF_TOKEN from a .env file', () => {
+    const dotEnv = tempDotEnv('# comment\nHF_TOKEN=hf_test\n');
+    const config = loadConfig(new cdk.App(), dotEnv);
     expect(config.hfToken).toBe('hf_test');
   });
 
   it('applies defaults', () => {
-    const config = loadConfig(new cdk.App({ context: CONTEXT }), NO_DOTENV);
-    expect(config.runner).toBe('vllm');
+    const config = loadConfig(new cdk.App(), NO_DOTENV);
     expect(config.region).toBe('us-east-1');
     expect(config.availabilityZones).toEqual(['us-east-1b', 'us-east-1c', 'us-east-1d', 'us-east-1e']);
-    expect(config.modelId).toBe('Qwen/Qwen3.6-27B-FP8');
     expect(config.instanceType).toBe('g6e.xlarge');
     expect(config.builderInstanceType).toBe('m5.xlarge');
     expect(config.imageVolumeGb).toBe(80);
@@ -71,20 +63,53 @@ describe('config', () => {
   });
 
   it('parses a comma-separated availabilityZones override', () => {
-    const app = new cdk.App({ context: { ...CONTEXT, availabilityZones: 'us-east-1b, us-east-1c' } });
+    const app = new cdk.App({ context: { availabilityZones: 'us-east-1b, us-east-1c' } });
     expect(loadConfig(app, NO_DOTENV).availabilityZones).toEqual(['us-east-1b', 'us-east-1c']);
   });
 });
 
-describe('LlmStack (runtime)', () => {
+describe('environments (pure helpers)', () => {
+  it('validates environment names', () => {
+    expect(isValidEnvironmentName('default')).toBe(true);
+    expect(isValidEnvironmentName('qwen3.6-27b-prod')).toBe(true);
+    expect(isValidEnvironmentName('')).toBe(false);
+    expect(isValidEnvironmentName('has space')).toBe(false);
+    expect(isValidEnvironmentName('a/b')).toBe(false);
+    expect(isValidEnvironmentName('-leading')).toBe(false);
+  });
+
+  it('resolves the environment from query, body, then default', () => {
+    expect(environmentFrom({ env: 'prod' })).toBe('prod');
+    expect(environmentFrom(undefined, 'staging')).toBe('staging');
+    expect(environmentFrom({ env: 'prod' }, 'staging')).toBe('prod'); // query wins
+    expect(environmentFrom(undefined)).toBe('default');
+    expect(() => environmentFrom({ env: 'a/b' })).toThrow(/invalid environment/);
+  });
+
+  it('derives per-environment resource names', () => {
+    expect(deployConfigParam('prod')).toBe('/cloud-vm-llm/prod/deploy-config');
+    expect(idleStateParam('prod')).toBe('/cloud-vm-llm/prod/idle-state');
+    expect(apiKeySecretName('prod')).toBe('cloud-vm-llm/prod/api-key');
+    expect(baseUrlFor('203.0.113.10', 8000)).toBe('http://203.0.113.10:8000/v1');
+  });
+});
+
+describe('LlmStack (shared layer)', () => {
   let template: Template;
   beforeAll(() => {
-    template = runtimeTemplate();
+    template = sharedTemplate();
   });
 
   it('holds no EC2 instance and no persistent EBS volume', () => {
     template.resourceCountIs('AWS::EC2::Instance', 0);
     template.resourceCountIs('AWS::EC2::Volume', 0);
+  });
+
+  it('creates no per-environment resources: no EIP, no SSM state, no API key', () => {
+    // These are created per environment by the deploy Lambda, not the stack.
+    template.resourceCountIs('AWS::EC2::EIP', 0);
+    template.resourceCountIs('AWS::SSM::Parameter', 0);
+    template.resourceCountIs('AWS::SecretsManager::Secret', 0);
   });
 
   it('creates one public subnet per configured AZ', () => {
@@ -93,19 +118,12 @@ describe('LlmStack (runtime)', () => {
     expect(azs.sort()).toEqual(['us-east-1b', 'us-east-1c', 'us-east-1d', 'us-east-1e']);
   });
 
-  it('opens only the vLLM port, only to the allowed CIDR', () => {
-    template.hasResourceProperties('AWS::EC2::SecurityGroup', {
-      SecurityGroupIngress: [
-        Match.objectLike({ CidrIp: '203.0.113.7/32', FromPort: 8000, ToPort: 8000, IpProtocol: 'tcp' }),
-      ],
-    });
-  });
-
-  it('allocates an Elastic IP but does not attach it at deploy', () => {
-    template.resourceCountIs('AWS::EC2::EIP', 1);
-    for (const eip of Object.values(template.findResources('AWS::EC2::EIP'))) {
-      expect(eip.Properties?.InstanceId).toBeUndefined();
-    }
+  it('has only the seed security group, with no ingress', () => {
+    // Environment security groups (per-env allowed CIDR) come from the deploy
+    // Lambda; the stack ships only the egress-only seed SG.
+    const groups = Object.values(template.findResources('AWS::EC2::SecurityGroup'));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].Properties.SecurityGroupIngress).toBeUndefined();
   });
 
   it('creates the start, stop and deploy Lambdas with IAM-authenticated function URLs', () => {
@@ -117,39 +135,15 @@ describe('LlmStack (runtime)', () => {
     }
   });
 
-  it('has a placeholder deploy-config parameter and a deploy Lambda that writes it', () => {
-    const params = template.findResources('AWS::SSM::Parameter');
-    const deployParam = Object.values(params).find(
-      (p) => p.Properties.Name === '/cloud-vm-llm/deploy-config',
-    );
-    expect(deployParam).toBeDefined();
-    // The parameter's CloudFormation value is a constant placeholder so a later
-    // `cdk deploy` never clobbers a real (outfit/manual) config. The cfg-derived
-    // initial config is emitted as an output instead, which `pnpm deploy` seeds
-    // over the placeholder the first time.
-    expect(deployParam!.Properties.Value).toBe(UNCONFIGURED_DEPLOY_CONFIG);
-    const initialOutput = Object.values(template.findOutputs('InitialDeployConfig'))[0];
-    const initial = parseDeployConfig(initialOutput.Value);
-    expect(initial.runner).toBe('vllm');
-    expect(initial.contextSize).toBe(32768);
-    expect(initial.serveArgs).toContain('--enforce-eager');
-    expect(initial.serveArgs).toContain('qwen3_coder');
-
+  it('lets the deploy Lambda create environments (EIP, SG, key) and seed weights', () => {
     const fns = template.findResources('AWS::Lambda::Function');
     const deploy = Object.values(fns).find((f) =>
-      String(f.Properties.Description).includes('deploy-config'),
+      String(f.Properties.Description).includes('Creates an environment'),
     );
     expect(deploy).toBeDefined();
-    expect(Object.keys(template.findOutputs('DeployUrl'))).toHaveLength(1);
-  });
-
-  it('lets the deploy Lambda seed the weights, with PassRole scoped to the seed role', () => {
-    const fns = template.findResources('AWS::Lambda::Function');
-    const deploy = Object.values(fns).find((f) =>
-      String(f.Properties.Description).includes('deploy-config'),
-    );
     const env = deploy!.Properties.Environment.Variables;
     for (const key of [
+      'VPC_ID',
       'WEIGHTS_BUCKET',
       'SEED_INSTANCE_TYPE',
       'SEED_SUBNET_ID',
@@ -161,6 +155,19 @@ describe('LlmStack (runtime)', () => {
       expect(env).toHaveProperty(key);
     }
 
+    const actions = allPolicyActions(template);
+    for (const action of [
+      'ec2:AllocateAddress',
+      'ec2:CreateSecurityGroup',
+      'ec2:AuthorizeSecurityGroupIngress',
+      'ec2:RevokeSecurityGroupIngress',
+      'secretsmanager:CreateSecret',
+    ]) {
+      expect(actions).toContain(action);
+    }
+  });
+
+  it('scopes PassRole to the stack roles, never a wildcard', () => {
     const passRole = allPolicyStatements(template).filter((s) =>
       [s.Action].flat().includes('iam:PassRole'),
     );
@@ -172,16 +179,28 @@ describe('LlmStack (runtime)', () => {
     }
   });
 
-  it('schedules the idle check every 5 minutes', () => {
+  it('schedules the idle sweep every 5 minutes', () => {
     template.hasResourceProperties('AWS::Events::Rule', { ScheduleExpression: 'rate(5 minutes)' });
   });
 
-  it('grants the start Lambda RunInstances, PassRole, AssociateAddress and DescribeImages', () => {
+  it('grants the start Lambda launch, EIP and per-env discovery permissions', () => {
     const actions = allPolicyActions(template);
     expect(actions).toContain('ec2:RunInstances');
     expect(actions).toContain('ec2:AssociateAddress');
     expect(actions).toContain('iam:PassRole');
     expect(actions).toContain('ec2:DescribeImages');
+    expect(actions).toContain('ec2:DescribeAddresses');
+    expect(actions).toContain('ec2:DescribeSecurityGroups');
+  });
+
+  it('scopes per-environment SSM and secret access to the cloud-vm-llm prefix', () => {
+    const statements = allPolicyStatements(template);
+    const ssmStatement = statements.find((s) => [s.Action].flat().includes('ssm:PutParameter'));
+    expect(JSON.stringify(ssmStatement!.Resource)).toContain('parameter/cloud-vm-llm/*');
+    const secretRead = statements.find((s) =>
+      [s.Action].flat().includes('secretsmanager:GetSecretValue'),
+    );
+    expect(JSON.stringify(secretRead!.Resource)).toContain('secret:cloud-vm-llm/*');
   });
 
   it('tag-scopes the terminate permission', () => {
@@ -194,13 +213,17 @@ describe('LlmStack (runtime)', () => {
   it('passes the AMI role tag, weights bucket and subnet list to the start Lambda', () => {
     const fns = template.findResources('AWS::Lambda::Function');
     const start = Object.values(fns).find((f) =>
-      String(f.Properties.Description).includes('Launches the baked AMI'),
+      String(f.Properties.Description).includes('Launches an environment instance'),
     );
     const env = start!.Properties.Environment.Variables;
     expect(env.AMI_ROLE_TAG_KEY).toBe('cloud-vm-llm:role');
     expect(env.WEIGHTS_BUCKET).toBeDefined();
-    expect(env.DEPLOY_CONFIG_PARAM).toBeDefined();
     expect(env.SUBNET_IDS).toBeDefined();
+    // Per-environment values are found at wake by name, never baked in.
+    expect(env.DEPLOY_CONFIG_PARAM).toBeUndefined();
+    expect(env.EIP_ALLOCATION_ID).toBeUndefined();
+    expect(env.API_KEY_SECRET_ARN).toBeUndefined();
+    expect(env.BASE_URL).toBeUndefined();
   });
 
   it('creates an S3 weights bucket retained on destroy', () => {
@@ -218,19 +241,27 @@ describe('LlmStack (runtime)', () => {
   });
 
   it('creates the HF-token secret only when a token is configured', () => {
-    // The runtime always has the API-key secret; the HF secret is conditional.
-    template.resourceCountIs('AWS::SecretsManager::Secret', 1);
-    runtimeTemplate({ ...CONTEXT, hfToken: 'hf_abc' }).resourceCountIs(
-      'AWS::SecretsManager::Secret',
-      2,
-    );
+    template.resourceCountIs('AWS::SecretsManager::Secret', 0);
+    sharedTemplate({ hfToken: 'hf_abc' }).resourceCountIs('AWS::SecretsManager::Secret', 1);
   });
 
-  it('outputs the outfit remote config, EIP and seed inputs', () => {
-    expect(Object.keys(template.findOutputs('OutfitRemoteConfig'))).toHaveLength(1);
-    expect(Object.keys(template.findOutputs('EipAddress'))).toHaveLength(1);
-    expect(Object.keys(template.findOutputs('WeightsBucket'))).toHaveLength(1);
-    expect(Object.keys(template.findOutputs('SeedInstanceProfileArn'))).toHaveLength(1);
+  it('outputs the discovery values and no per-environment address', () => {
+    for (const name of [
+      'OutfitRemoteConfig',
+      'StartUrl',
+      'StopUrl',
+      'DeployUrl',
+      'WeightsBucket',
+      'VpcId',
+      'SeedInstanceProfileArn',
+    ]) {
+      expect(Object.keys(template.findOutputs(name))).toHaveLength(1);
+    }
+    // An environment's base URL is its own EIP, allocated at deploy — the
+    // shared stack has no address to output.
+    expect(Object.keys(template.findOutputs('BaseUrl'))).toHaveLength(0);
+    expect(Object.keys(template.findOutputs('EipAddress'))).toHaveLength(0);
+    expect(Object.keys(template.findOutputs('InitialDeployConfig'))).toHaveLength(0);
   });
 });
 

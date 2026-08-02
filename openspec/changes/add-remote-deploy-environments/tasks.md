@@ -16,11 +16,11 @@
 
 ## 3. Environment-aware Lambdas and per-env resources (`remote/`, TypeScript CDK)
 
-- [ ] 3.1 Split the per-environment resources out of the shared stack; the shared **deploy** Lambda provisions, keyed by environment name, an Elastic IP, an API-key secret, an allowed-CIDR security-group rule, and SSM deploy-config/idle-state, returning the base URL and identifier.
-- [ ] 3.2 Make the **start**/**stop**/**status** Lambdas take an environment identifier: launch that environment's instance, associate its EIP, and act only on it (by tag + per-env SSM state).
-- [ ] 3.3 Make the scheduled idle sweep iterate every environment's instance, judging and terminating each on its own activity.
-- [ ] 3.4 Have the shared stack publish the discovery outputs (Lambda URLs, bucket, roles, region) under the well-known stack name.
-- [ ] 3.5 Update the CDK/Lambda vitest tests for per-environment behaviour (per-env SSM keys, env-scoped start/stop, the multi-environment idle sweep).
+- [x] 3.1 Split the per-environment resources out of the shared stack; the shared **deploy** Lambda provisions, keyed by environment name, an Elastic IP, an API-key secret, an allowed-CIDR security-group rule, and SSM deploy-config/idle-state, returning the base URL and identifier.
+- [x] 3.2 Make the **start**/**stop**/**status** Lambdas take an environment identifier: launch that environment's instance, associate its EIP, and act only on it (by tag + per-env SSM state).
+- [x] 3.3 Make the scheduled idle sweep iterate every environment's instance, judging and terminating each on its own activity.
+- [x] 3.4 Have the shared stack publish the discovery outputs (Lambda URLs, bucket, roles, region) under the well-known stack name.
+- [x] 3.5 Update the CDK/Lambda vitest tests for per-environment behaviour (per-env SSM keys, env-scoped start/stop, the multi-environment idle sweep).
 
 ## 4. Help, completion, docs
 
