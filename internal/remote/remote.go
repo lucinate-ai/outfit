@@ -20,7 +20,6 @@ import (
 	"time"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
-	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 )
 
 // httpClient is a package variable so tests can substitute it. The long
@@ -287,7 +286,7 @@ func call(ctx context.Context, cfg Config, method, rawURL string, body []byte) (
 // (environment, shared config/credentials, SSO). Function URL IAM auth
 // requires the payload hash to be sent and signed via X-Amz-Content-Sha256.
 func sign(ctx context.Context, req *http.Request, region string, body []byte) error {
-	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	awsCfg, err := LoadAWSConfig(ctx, region)
 	if err != nil {
 		return err
 	}

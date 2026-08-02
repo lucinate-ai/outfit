@@ -5,15 +5,39 @@ Run a model too big for your laptop on a GPU in the cloud, from the same
 while you're using it.
 
 ```sh
-outfit remote deploy   # tell the endpoint what to serve
-outfit remote start    # boot it; prints the exports your agent needs (progress on stderr)
-outfit remote status   # is it up? is it healthy?
-outfit remote stop     # shut it down now, rather than waiting for the idle timer
+outfit remote bootstrap  # once per account: deploy the shared infrastructure
+outfit remote deploy     # create an endpoint (environment) and tell it what to serve
+outfit remote start      # boot it; prints the exports your agent needs (progress on stderr)
+outfit remote status     # is it up? is it healthy?
+outfit remote stop       # shut it down now, rather than waiting for the idle timer
 ```
 
 The endpoint is the one [`remote/`](../../remote/) in this repository deploys: a
 GPU instance that exists only while you're using it, and terminates itself once
-you stop. `outfit remote` drives it; it doesn't create it.
+you stop.
+
+## Bootstrapping the account
+
+Before any endpoint can run, the shared, account-level infrastructure has to
+exist — much like `cdk bootstrap`. `outfit remote bootstrap` does it once per
+account: it downloads the `remote/` CDK project (version-matched to your binary)
+and deploys the shared layer — the EC2 Image Builder pipelines and baked AMIs,
+the lifecycle Lambdas, and the shared weights bucket, roles and VPC — publishing
+them as CloudFormation outputs that `outfit remote deploy` discovers later.
+
+```sh
+outfit remote bootstrap                 # shows a consent plan, then deploys
+outfit remote bootstrap --dry-run       # print the plan and do nothing
+outfit remote bootstrap --runners llamacpp   # bake only one engine's AMI
+outfit remote bootstrap --wait          # block until the AMI bake(s) finish
+```
+
+Before deploying, bootstrap prints a plan — the target account and region, the
+shared resources, the cost, and the exact commands — and asks you to confirm
+(`--yes` skips the prompt). It creates **no** Elastic IP or instance and **no**
+environment; those come from `outfit remote deploy`. Re-running is safe: it
+updates the shared stack and doesn't touch any live instance. It needs Node 22,
+`pnpm`, AWS credentials, and enough GPU vCPU quota for a later launch.
 
 ## The usual flow
 
