@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -211,13 +212,33 @@ func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string
 	return resp, nil
 }
 
-// Start boots the instance and blocks until vLLM is serving, retrying while
-// the endpoint reports it is still starting. progress is called with a status
-// line before each wait.
+// startRetryWait is how long Start waits before retrying a dropped
+// connection. A variable so tests can shorten it.
+var startRetryWait = 5 * time.Second
+
+// Start boots the instance and blocks until the model is serving, retrying
+// while the endpoint reports it is still starting. progress is called with a
+// status line before each wait.
+//
+// A start holds one long-lived request while the instance boots, so a network
+// blip mid-wait (switching networks, a dropped VPN) surfaces as a transport
+// error even though the boot continues server-side. Those are retried within
+// the caller's deadline: the wake is idempotent — a repeated call reattaches
+// to the same booting instance — so retrying never launches a second one.
 func Start(ctx context.Context, cfg Config, progress func(string)) (*Response, error) {
 	for {
 		resp, err := call(ctx, cfg, http.MethodPost, cfg.StartURL, nil)
 		if err != nil {
+			var urlErr *url.Error
+			if ctx.Err() == nil && errors.As(err, &urlErr) {
+				progress(fmt.Sprintf("connection dropped (%v); retrying in %s", urlErr.Unwrap(), startRetryWait))
+				select {
+				case <-ctx.Done():
+					return nil, fmt.Errorf("gave up waiting for the endpoint: %w", ctx.Err())
+				case <-time.After(startRetryWait):
+				}
+				continue
+			}
 			return nil, err
 		}
 		switch {

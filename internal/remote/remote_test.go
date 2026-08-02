@@ -186,6 +186,74 @@ func TestStart_RetriesUntilReady(t *testing.T) {
 	}
 }
 
+func TestStart_RetriesADroppedConnection(t *testing.T) {
+	stubAWSEnv(t)
+	origWait := startRetryWait
+	startRetryWait = 10 * time.Millisecond
+	t.Cleanup(func() { startRetryWait = origWait })
+
+	// First call: the server kills the TCP connection mid-request (a network
+	// change mid-boot looks like this). Second call: ready. The wake is
+	// idempotent server-side, so the client must reattach, not give up.
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn.Close()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	var progress []string
+	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.State != "ready" {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+	if calls != 2 {
+		t.Errorf("expected 2 calls, got %d", calls)
+	}
+	if len(progress) != 1 || !strings.Contains(progress[0], "connection dropped") {
+		t.Errorf("expected a connection-dropped progress line, got %v", progress)
+	}
+}
+
+func TestStart_DoesNotRetryPastTheDeadline(t *testing.T) {
+	stubAWSEnv(t)
+	origWait := startRetryWait
+	startRetryWait = 10 * time.Millisecond
+	t.Cleanup(func() { startRetryWait = origWait })
+
+	// Every call drops: the retry loop must still respect the caller's
+	// deadline rather than spinning forever.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.Close()
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Start(ctx, cfg, func(string) {})
+	if err == nil {
+		t.Fatal("expected an error once the deadline passed")
+	}
+}
+
 func TestStart_Failure(t *testing.T) {
 	stubAWSEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
