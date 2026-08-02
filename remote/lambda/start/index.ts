@@ -175,9 +175,10 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
     await sleep(POLL_MS);
   }
 
-  // Phase 3: server health. The server binds its port only once the engine has
-  // loaded the weights, so any HTTP answer (200, or 401 from the api-key
-  // middleware) means ready; connection refused means still loading.
+  // Phase 3: server health. vLLM binds its port only once the engine has
+  // loaded the weights, but llama.cpp binds immediately and serves 503 while
+  // loading — so only a 200 (or a 401 from the api-key middleware) means
+  // ready; a 503 or connection refused means still loading.
   while (Date.now() < deadline) {
     if (await checkHealth(instanceId)) {
       return ready(env, baseUrl);
@@ -363,7 +364,9 @@ async function checkHealth(instanceId: string): Promise<boolean> {
   try {
     const result = await runShellCommand(instanceId, HEALTH_COMMAND, 30);
     const code = result.stdout.trim();
-    return result.status === 'Success' && code !== '' && code !== '000';
+    // Only 200/401 count: llama.cpp answers 503 on /health while the model is
+    // still loading, and "ready" must never hand out a URL that is not serving.
+    return result.status === 'Success' && (code === '200' || code === '401');
   } catch (err) {
     console.log(JSON.stringify({ phase: 'health', error: errorName(err) }));
     return false;
