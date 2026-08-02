@@ -78,11 +78,13 @@ describe('environments (pure helpers)', () => {
     expect(isValidEnvironmentName('-leading')).toBe(false);
   });
 
-  it('resolves the environment from query, body, then default', () => {
+  it('requires the environment: query or body, never a silent default', () => {
     expect(environmentFrom({ env: 'prod' })).toBe('prod');
     expect(environmentFrom(undefined, 'staging')).toBe('staging');
     expect(environmentFrom({ env: 'prod' }, 'staging')).toBe('prod'); // query wins
-    expect(environmentFrom(undefined)).toBe('default');
+    // Defaults are a CLI affordance; the AWS API is explicit.
+    expect(() => environmentFrom(undefined)).toThrow(/missing environment/);
+    expect(() => environmentFrom({})).toThrow(/missing environment/);
     expect(() => environmentFrom({ env: 'a/b' })).toThrow(/invalid environment/);
   });
 

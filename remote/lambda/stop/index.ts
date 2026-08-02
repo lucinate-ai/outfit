@@ -14,7 +14,6 @@ import {
 } from '../shared/aws';
 import type { Runner } from '../shared/deploy-config';
 import {
-  DEFAULT_ENVIRONMENT,
   deployConfigParam,
   ENV_TAG_KEY,
   environmentFrom,
@@ -96,21 +95,19 @@ async function idleSweep(): Promise<void> {
     return;
   }
   for (const instance of instances) {
-    // An instance launched before environments existed has no env tag; treat
-    // it as the default environment rather than skipping it forever.
-    const env = instance.environment ?? DEFAULT_ENVIRONMENT;
     try {
-      await idleCheck(env, instance);
+      await idleCheck(instance);
     } catch (err) {
       console.log(
-        JSON.stringify({ mode: 'idle', environment: env, error: errorName(err) }),
+        JSON.stringify({ mode: 'idle', environment: instance.environment, error: errorName(err) }),
       );
     }
   }
 }
 
-/** Judge one environment's instance and terminate it if idle past its bounds. */
-async function idleCheck(env: string, instance: InstanceInfo): Promise<void> {
+/** Judge one instance and terminate it if idle past its bounds. */
+async function idleCheck(instance: InstanceInfo): Promise<void> {
+  const env = instance.environment;
   if (instance.state !== 'running' || !instance.launchTime) {
     console.log(
       JSON.stringify({ mode: 'idle', action: 'noop', environment: env, state: instance.state }),
@@ -119,24 +116,31 @@ async function idleCheck(env: string, instance: InstanceInfo): Promise<void> {
   }
 
   // The runner (which metric names to scrape) comes from the environment's
-  // deploy-config. If it is unreadable, fall through with no metrics:
-  // decideIdle then treats this as "no activity observed" rather than
-  // crashing the tick.
+  // deploy-config. An instance with no environment tag is an anomaly (launched
+  // outside the deploy flow): nothing is assumed for it — no scrape, no state —
+  // so it is judged on launch time alone and cleaned up at the threshold
+  // rather than burning GPU-hours. For a tagged instance whose config is
+  // unreadable, decideIdle likewise treats "no metrics" as no activity.
   let metrics: MetricsResult = { ok: false };
-  try {
-    const { runner } = await readDeployConfig(deployConfigParam(env));
-    metrics = await scrapeMetrics(instance.instanceId, runner);
-  } catch (err) {
+  if (env) {
+    try {
+      const { runner } = await readDeployConfig(deployConfigParam(env));
+      metrics = await scrapeMetrics(instance.instanceId, runner);
+    } catch (err) {
+      console.log(
+        JSON.stringify({
+          mode: 'idle',
+          environment: env,
+          warning: `deploy-config unreadable: ${errorName(err)}`,
+        }),
+      );
+    }
+  } else {
     console.log(
-      JSON.stringify({
-        mode: 'idle',
-        environment: env,
-        warning: `deploy-config unreadable: ${errorName(err)}`,
-      }),
+      JSON.stringify({ mode: 'idle', warning: `untagged instance ${instance.instanceId}` }),
     );
   }
-  const stateParam = idleStateParam(env);
-  const state = await readState(stateParam);
+  const state = env ? await readState(idleStateParam(env)) : {};
   const decision = decideIdle({
     now: new Date(),
     launchTime: instance.launchTime,
@@ -151,8 +155,8 @@ async function idleCheck(env: string, instance: InstanceInfo): Promise<void> {
     JSON.stringify({ mode: 'idle', environment: env, decision: decision.action, reason: decision.reason }),
   );
 
-  if (decision.action === 'update') {
-    await writeState(stateParam, decision.newState);
+  if (decision.action === 'update' && env) {
+    await writeState(idleStateParam(env), decision.newState);
   } else if (decision.action === 'stop') {
     await terminateInstance(instance.instanceId);
   }

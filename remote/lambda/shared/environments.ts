@@ -37,9 +37,6 @@ const ssm = new SSMClient({});
 /** Tag naming which environment a resource (instance, EIP, SG) belongs to. */
 export const ENV_TAG_KEY = 'cloud-vm-llm:env';
 
-/** The environment used when a control call names none. */
-export const DEFAULT_ENVIRONMENT = 'default';
-
 // A plain name: starts alphanumeric, then alphanumerics, dot, underscore or
 // dash. Safe in an SSM parameter path, a Secrets Manager name, and a tag.
 const ENV_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -50,20 +47,24 @@ export function isValidEnvironmentName(name: string): boolean {
 
 /**
  * The environment a Function URL event addresses: the `env` query parameter,
- * else a JSON body's `environment` field (already parsed by the caller), else
- * the default. Throws on an invalid name so a typo cannot silently create or
- * drive the wrong environment.
+ * else a JSON body's `environment` field (already parsed by the caller).
+ * Mandatory — there is deliberately no default here: a control API that
+ * silently assumed an environment could create or drive the wrong instance.
+ * Conveniences like a default environment belong in the CLI, not in AWS.
+ * Throws on a missing or invalid name.
  */
 export function environmentFrom(
   query: Record<string, string | undefined> | undefined | null,
   bodyEnvironment?: unknown,
 ): string {
-  const name = query?.env ?? (typeof bodyEnvironment === 'string' ? bodyEnvironment : '') ?? '';
-  const resolved = name || DEFAULT_ENVIRONMENT;
-  if (!isValidEnvironmentName(resolved)) {
-    throw new Error(`invalid environment name ${JSON.stringify(resolved)}`);
+  const name = query?.env ?? (typeof bodyEnvironment === 'string' ? bodyEnvironment : '');
+  if (!name) {
+    throw new Error('missing environment: pass ?env=<name> (or "environment" in the body)');
   }
-  return resolved;
+  if (!isValidEnvironmentName(name)) {
+    throw new Error(`invalid environment name ${JSON.stringify(name)}`);
+  }
+  return name;
 }
 
 /** SSM parameter holding what an environment serves. */

@@ -29,3 +29,10 @@ hold as many environments as the user has instances.
   command runs for one of them
 - **THEN** the environment identifier in its `remote.json` is sent so the shared
   Lambda acts on that environment's instance
+
+#### Scenario: A control call without an environment is rejected
+
+- **WHEN** a control request reaches a lifecycle Lambda naming no environment
+- **THEN** it is rejected with an error saying how to name one, rather than a
+  default being silently assumed — defaults are a CLI affordance, not part of
+  the control API
