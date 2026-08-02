@@ -302,8 +302,10 @@ coding a day lands around $90/month. Full breakdown in
   `vllmVersion` / `nvidiaDriverPackage`, **bump the recipe (and component)
   `version` in `lib/image-stack.ts`** (Image Builder versions are immutable),
   then `pnpm deploy:image` + `pnpm bake <runner>`.
-- **Your home IP changed**: `outfit remote deploy --overwrite` (a fresh CIDR is
-  detected, or pass `--allowed-cidr`); ingress is per environment.
+- **Your home IP changed**: `outfit remote deploy --overwrite --allowed-cidr
+  <ip>/32`. Ingress is per environment, and an existing environment keeps its
+  ingress unless a CIDR is passed explicitly — auto-detection applies only to a
+  first deploy.
 - **Force a fresh AMI** (same config): just `pnpm bake <runner>` — the runtime
   launches the newest tagged AMI.
 - **Force a re-seed** of weights already in S3: `pnpm seed-model <env>` (the
