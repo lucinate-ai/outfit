@@ -1,11 +1,16 @@
 # remote — the cloud GPU deployment
 
-The deployment [`outfit remote`](../docs/commands/remote.md) drives: a
-scale-to-zero, self-hosted **Qwen3.6-27B** endpoint on AWS, exposing an
-OpenAI-compatible API for use as a coding-agent backend. It runs on a GPU
-instance that exists only while you are actually using it: a start Lambda
-launches it on demand, and a stop Lambda terminates it after a period of
-idleness.
+The deployment [`outfit remote`](../docs/commands/remote.md) drives:
+scale-to-zero, self-hosted LLM endpoints on AWS, each exposing an
+OpenAI-compatible API for use as a coding-agent backend. It is split into two
+layers. A **shared layer** — the lifecycle Lambdas, the weights bucket, the
+VPC and the AMI bake pipelines — is deployed **once per account** by
+`outfit remote bootstrap`. **Environments** — one per endpoint, each with its
+own Elastic IP, API key and allowed CIDR — are created on it by
+`outfit remote deploy`, as many as you need side by side. An environment's GPU
+instance exists only while you are actually using it: the start Lambda
+launches it on demand, and the stop Lambda's idle sweep terminates it after a
+period of idleness.
 
 The inference engine is **pluggable** — [llama.cpp](https://github.com/ggml-org/llama.cpp)
 or [vLLM](https://docs.vllm.ai). The deployed default is llama.cpp, serving
@@ -36,16 +41,18 @@ engine, and the start Lambda launches the **newest AMI matching the engine it
 was told to run**. A failed bake produces no new AMI and changes nothing.
 
 ```
-   pnpm bake llamacpp ─▶ Image Builder pipeline ─(async)─▶ AMI (driver + engine), tagged
-outfit remote deploy ─▶ deploy Lambda ─▶ deploy-config (what to serve)
-                                      └─ seeds weights ─▶ S3 weights bucket
+outfit remote bootstrap ─▶ shared stack (Lambdas, S3, VPC, roles) + bake pipelines
+     pnpm bake llamacpp ─▶ Image Builder pipeline ─(async)─▶ AMI (driver + engine), tagged
+outfit remote deploy ─▶ deploy Lambda ─▶ creates env <name>: EIP, SG (your CIDR),
+                                      │  API key, deploy-config (what to serve)
+                                      └─ seeds weights ─▶ S3 weights bucket (shared)
                                          newest AMI by tag + weights ◀─┐ (at launch)
 outfit remote start ─SigV4▶ start Lambda ─ RunInstances (try each AZ) ─▶ EC2 g6e.xlarge
-outfit remote status ─────▶  (Function URL,   + EIP, SSM health)        │ L40S 48GB
+outfit remote status ──?env▶ (Function URL,  + the env's EIP, SSM)      │ L40S 48GB
 outfit remote stop ───────▶ stop Lambda        AWS_IAM auth             │ s3 sync weights
                                  ▲                                      │ engine on :8000
-EventBridge rate(5 min) ─────────┘ (idle check → TerminateInstances)    ▼
-coding agent ── OPENAI_BASE_URL=http://<EIP>:8000/v1 + api key ──▶ direct HTTP
+EventBridge rate(5 min) ─────────┘ (idle sweep over EVERY environment)  ▼
+coding agent ── OPENAI_BASE_URL=http://<env EIP>:8000/v1 + api key ──▶ direct HTTP
 ```
 
 Inference traffic goes directly from your machine to the instance; the Lambdas
@@ -94,18 +101,27 @@ aws ec2 describe-instance-type-offerings --location-type availability-zone \
 
 ## Deploy
 
-Two stacks. The **image stack** defines the Image Builder pipelines (fast to
-deploy); `pnpm bake` triggers an actual build. The **runtime stack** is the
-endpoint itself.
+The one-time account setup is
+[`outfit remote bootstrap`](../docs/commands/remote.md#bootstrapping-the-account),
+which drives this directory for you — download, consent plan, then the shared
+deploy and the AMI bakes. Endpoints come after it, one `outfit remote deploy`
+per environment:
+
+```sh
+outfit remote bootstrap   # once per account: shared stack + pipelines + bakes
+outfit remote deploy      # creates the Outfit's REMOTE environment and says
+                          # what it serves; seeds the weights if missing
+```
+
+Under the hood, bootstrap runs this directory's own commands — usable by hand
+too:
 
 ```sh
 pnpm install
-pnpm set-ip            # writes this machine's public IP to .env
 pnpm cdk bootstrap     # once per account/region
 pnpm deploy:image      # creates the bake pipelines — instant, no build yet
 pnpm bake llamacpp     # bakes that engine's AMI — ~15-25 min, in the background
-pnpm run deploy        # deploys the runtime + S3 bucket, generates remote.json
-outfit remote deploy   # says what to serve; seeds the weights if they're missing
+pnpm run deploy        # deploys the shared stack (Lambdas, VPC, S3 bucket)
 ```
 
 - `pnpm deploy:image` only creates the pipelines, so it deploys in seconds and
@@ -114,15 +130,16 @@ outfit remote deploy   # says what to serve; seeds the weights if they're missin
   the build runs asynchronously — check it with the `aws imagebuilder get-image`
   command the script prints. Re-bake only when the engine version or the driver
   changes; the model is **not** baked in.
-- `pnpm run deploy` deploys the runtime stack (VPC, Lambdas, EIP, **S3 weights
-  bucket**) and generates the gitignored `remote.json` — the Lambda URLs, the
-  region, and the endpoint's `base_url` — so there is nothing to copy by hand.
-  The [`Outfit`](Outfit) beside it is committed and hand-maintained: it says
-  what to serve, and nothing rewrites it.
-- `outfit remote deploy` reads the `Outfit` and its [`preset.ini`](preset.ini)
-  and tells the endpoint what to serve. If those weights are not in S3 it starts
-  the seed job itself (~15–20 min, all within AWS) and says so; wait for it
-  before the first `start`.
+- `pnpm run deploy` deploys the **shared stack** — VPC, the lifecycle Lambdas,
+  the S3 weights bucket, roles — and publishes its outputs for discovery. It
+  creates no Elastic IP and no environment.
+- `outfit remote deploy` reads the [`Outfit`](Outfit) and its
+  [`preset.ini`](preset.ini), creates the environment the Outfit's `REMOTE`
+  names (its EIP, API key, ingress scoped to your `--allowed-cidr`, defaulting
+  to your public IP), registers it under `~/.config/outfit/remotes/<env>/`, and
+  tells it what to serve. If those weights are not in S3 it starts the seed job
+  itself (~15–20 min, all within AWS) and says so; wait for it before the first
+  `start`.
 
 > Use `pnpm run deploy`, not `pnpm deploy` — the latter is pnpm's own built-in
 > `deploy` command. And don't pass `-c` flags through it: pnpm appends extra
@@ -131,17 +148,13 @@ outfit remote deploy   # says what to serve; seeds the weights if they're missin
 
 The bake and the weight seed are independent and can run in parallel.
 
-Two settings are **required, with no default**: `allowedCidr` (the IP allowed to
-reach the endpoint) and `runner` (which engine's AMI to launch). `pnpm set-ip`
-stores the CIDR in the gitignored `.env` (`ALLOWED_CIDR=<ip>/32`); put `runner`
-in `cdk.json` context. `.env` can also hold `HF_TOKEN` for gated model repos
-(used only when seeding). Everything else has defaults, overridable in
-`cdk.json`:
+Everything per-environment — the model, the engine, the context window, the
+allowed CIDR — is given to `outfit remote deploy`, not to the stack. `.env` can
+hold `HF_TOKEN` for gated model repos (used only when seeding). The shared
+layer's own settings all have defaults, overridable in `cdk.json`:
 
 | Context key | Default | Notes |
 |---|---|---|
-| `allowedCidr` | *(required)* | Your IP as a /32; `pnpm set-ip` writes it to `.env` |
-| `runner` | *(required)* | `llamacpp` or `vllm`. No default; one must be chosen |
 | `region` | `us-east-1` | g6e is not offered everywhere (absent from all of eu-west-1/2) |
 | `availabilityZones` | `us-east-1b,c,d,e` | g6e zones the start Lambda tries, in order |
 | `hfToken` | *(empty)* | Only for gated repos; used only when seeding |
@@ -157,17 +170,17 @@ in `cdk.json` context. `.env` can also hold `HF_TOKEN` for gated model repos
 
 The **model, quant, context window and engine flags are not in this table** —
 they come from the `Outfit` and its preset via `outfit remote deploy`, so
-changing model is a command, not a redeploy. (`modelId`, `maxModelLen`,
-`vllmExtraArgs`, `toolCallParser` and `reasoningParser` remain as context keys,
-but only to seed the very first deploy-config before outfit takes over.)
+changing model is a command, not a redeploy.
 
 What needs what:
 - Change **model, quant, context or engine flags** → edit the `Outfit`/preset,
-  then `outfit remote deploy`. No bake, no redeploy.
+  then `outfit remote deploy --overwrite`. No bake, no redeploy.
+- Change an environment's **allowed CIDR** →
+  `outfit remote deploy --overwrite --allowed-cidr <ip>/32`.
 - Change **`llamacppRelease`/`vllmVersion`/`nvidiaDriverPackage`** → bump the
   recipe `version` in `lib/image-stack.ts`, then `pnpm deploy:image` +
   `pnpm bake <runner>`.
-- Change a runtime-only setting (idle timers, `allowedCidr`) → `pnpm run deploy`.
+- Change a shared setting (idle timers, instance type) → `pnpm run deploy`.
 
 **On the model choice**: BF16 weights for a 27B model are ~54 GB and do not fit
 the L40S's 48 GB, so a quantised checkpoint is mandatory. The default Q6_K_XL
@@ -187,9 +200,9 @@ outfit remote deploy --dry-run       # print the config without sending it
 ```
 
 Cutting back to vLLM means an Outfit with `PROVIDER vllm` and the FP8 repo as
-its `MODEL` — both AMIs stay baked, so it is a deploy, not a rebuild. Note that
-the `runner` context key must match the engine you deploy, since it selects
-which AMI the start Lambda launches.
+its `MODEL` — both AMIs stay baked, so it is a deploy, not a rebuild. The start
+Lambda launches the AMI matching the engine the environment's deploy-config
+names, so nothing else has to agree.
 
 ### First boot
 
@@ -207,9 +220,10 @@ tail -f /var/log/cloud-init-output.log  # boot: s3 sync progress
 
 ## Daily use
 
-The endpoint is driven by the `outfit` CLI, using this directory's `Outfit` and
-the generated `remote.json`. Run these from this directory (`outfit` reads
-`./Outfit`):
+The endpoint is driven by the `outfit` CLI, using this directory's `Outfit`;
+its `REMOTE` names the environment `deploy` registered under
+`~/.config/outfit/remotes/<env>/`. Run these from this directory (`outfit`
+reads `./Outfit`):
 
 ```sh
 outfit remote start    # boots the instance, blocks until it is serving,
@@ -221,8 +235,8 @@ outfit remote stop     # stop immediately instead of waiting for the idle timer
 
 `outfit apply` writes the endpoint's base URL and API key into your harness
 config, so export the key that `outfit remote start` prints first. The base URL
-comes from `remote.json`'s `base_url`, since the Outfit states none; a `BASEURL`
-in the Outfit would override it. The model
+comes from the environment's `remote.json` (`base_url`), since the Outfit
+states none; a `BASEURL` in the Outfit would override it. The model
 name to request is the Outfit's `ALIAS` (`qwen3.6-27b`) — the same value the
 server is started under, so the two cannot drift:
 
@@ -288,11 +302,12 @@ coding a day lands around $90/month. Full breakdown in
   `vllmVersion` / `nvidiaDriverPackage`, **bump the recipe (and component)
   `version` in `lib/image-stack.ts`** (Image Builder versions are immutable),
   then `pnpm deploy:image` + `pnpm bake <runner>`.
-- **Your home IP changed**: `pnpm set-ip && pnpm run deploy` (runtime only).
+- **Your home IP changed**: `outfit remote deploy --overwrite` (a fresh CIDR is
+  detected, or pass `--allowed-cidr`); ingress is per environment.
 - **Force a fresh AMI** (same config): just `pnpm bake <runner>` — the runtime
   launches the newest tagged AMI.
-- **Force a re-seed** of weights already in S3: `pnpm seed-model` (the deploy
-  Lambda only seeds what is missing).
+- **Force a re-seed** of weights already in S3: `pnpm seed-model <env>` (the
+  deploy Lambda only seeds what is missing).
 
 ### Diagnostics
 

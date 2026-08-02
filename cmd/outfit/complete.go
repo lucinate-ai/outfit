@@ -172,10 +172,12 @@ var commands = map[string]command{
 		flags: []string{
 			"--timeout", "--dry-run", "-n", "--yes", "-y", "--wait", "--force-bake",
 			"--runners", "--hf-token", "--ref", "--dir", "--region",
+			"--overwrite", "--allowed-cidr",
 		},
 		values: map[string]candidateKind{
 			"--timeout": kindNone, "--runners": kindNone, "--hf-token": kindNone,
 			"--ref": kindNone, "--region": kindNone, "--dir": kindFile,
+			"--allowed-cidr": kindNone,
 		},
 		// `outfit remote <sub> [outfit]`: the subcommand, then optionally the
 		// Outfit naming the endpoint.

@@ -78,6 +78,41 @@ func TestListEnvironments(t *testing.T) {
 	}
 }
 
+func TestSaveEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	cfg := Config{
+		StartURL: "https://s", StopURL: "https://x", DeployURL: "https://d",
+		Region: "us-east-1", BaseURL: "http://1.2.3.4:8000/v1", Environment: "prod",
+	}
+	if err := SaveEnvironment("prod", cfg); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(EnvConfigPath("prod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Owner-only: the file names a deployment's URLs and address.
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("remote.json mode = %v, want 0600", fi.Mode().Perm())
+	}
+	// Round-trips through the loader, environment identifier included.
+	got, err := LoadConfigFile(EnvConfigPath("prod"), func(string) string { return "" })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Environment != "prod" || got.BaseURL != cfg.BaseURL || got.DeployURL != "https://d" {
+		t.Errorf("round-trip = %+v", got)
+	}
+
+	// A second environment leaves the first intact.
+	if err := SaveEnvironment("staging", Config{StartURL: "https://s2", StopURL: "https://x2", Region: "us-east-1", Environment: "staging"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(EnvConfigPath("prod")); err != nil {
+		t.Error("registering a second environment must not touch the first")
+	}
+}
+
 func TestLoadDefault(t *testing.T) {
 	getenv := func(string) string { return "" }
 	cfg := `{"start_url":"https://s","stop_url":"https://x","region":"eu-west-1"}`

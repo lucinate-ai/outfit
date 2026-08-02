@@ -94,6 +94,21 @@ func ListEnvironments() ([]EnvInfo, error) {
 	return envs, nil
 }
 
+// SaveEnvironment registers a deployed environment: its remote.json (the
+// shared control URLs, region, base URL, and the environment identifier) is
+// written under the registry, owner-only, since it names a deployment's URLs
+// and address. Registering a second environment never touches the first.
+func SaveEnvironment(name string, cfg Config) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(EnvDir(name), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(EnvConfigPath(name), append(data, '\n'), 0o600)
+}
+
 // LoadDefault loads the remote config used when no Outfit names an environment:
 // the `default` environment, falling back to the legacy single per-user file
 // (~/.config/outfit/remote.json) for setups that predate the registry. As with

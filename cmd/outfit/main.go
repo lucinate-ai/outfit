@@ -221,10 +221,12 @@ completion: prints a tab-completion script for bash, zsh, or powershell. Add
 remote: runs the model on a cloud GPU that exists only while you use it, from
       the same Outfit. bootstrap does the once-per-account shared setup (Image
       Builder, the lifecycle Lambdas, shared bucket/roles/VPC) with a consent
-      gate; deploy says what to serve (PROVIDER picks the engine, just as it
-      does for serve); start boots it and prints the exports your agent needs;
-      status reports its state; stop shuts it down rather than waiting for the
-      idle timer; ls lists the registered environments. The
+      gate; deploy creates the environment the Outfit's REMOTE names — its own
+      address, API key and allowed CIDR — and says what it serves (PROVIDER
+      picks the engine, just as it does for serve); start boots it and prints
+      the exports your agent needs; status reports its state; stop shuts it
+      down rather than waiting for the idle timer; ls lists the registered
+      environments. The
       endpoint's URLs come from the Outfit's REMOTE — a bare name selects an
       environment under ~/.config/outfit/remotes/<name>/, a path names a file —
       falling back to the default environment.

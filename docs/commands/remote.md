@@ -108,34 +108,47 @@ session, or environment variables), and the endpoint's URLs require it. Outfit
 stores no credentials of its own and needs no permission beyond invoking those
 URLs.
 
-## Choosing what it serves
+## Creating an endpoint: `deploy`
 
-`outfit remote deploy` reads the Outfit and its preset, and tells the endpoint
-what to load. `PROVIDER` picks the engine, so the file that runs a model
-locally under [`outfit serve`](serve.md) deploys the same model remotely:
+`outfit remote deploy` creates an **environment** on the bootstrapped shared
+layer and tells it what to serve. It reads the Outfit and its preset:
+`PROVIDER` picks the engine (so the file that runs a model locally under
+[`outfit serve`](serve.md) deploys the same model remotely), and `REMOTE` names
+the environment — the committed link between the Outfit and its deployment:
 
 ```dockerfile
 PROVIDER llamacpp        # the engine to run: llamacpp or vllm
 ALIAS    qwen3.6-27b     # the name your agent asks for — and the name served
 CONTEXT  131072
 PRESET   ./preset.ini    # the model and its flags
-REMOTE   ./remote.json
+REMOTE   qwen3.6-27b     # the environment deploy creates and registers
 ```
 
+Deploy discovers the shared layer from the bootstrap stack's outputs, then
+provisions the environment's own Elastic IP, API key, ingress rule and state,
+registers it under `~/.config/outfit/remotes/<env>/`, and stores what to serve.
 Everything the endpoint sets itself — host, port, where the weights live, the
 API key, the context size, the alias — is dropped from the preset, so one
 preset works both locally and remotely without edits.
 
-Deploying doesn't start anything. If the endpoint doesn't have those weights
-yet it fetches them (about 15–20 minutes, entirely on its side) and says so;
-wait for that before your first `start`, or the model won't be there.
+Who may reach the instance is **per environment**: `--allowed-cidr` sets it,
+defaulting to your public IP as a `/32` on first deploy; later deploys leave
+ingress alone unless you pass it again. Deploying over an environment that is
+already registered, or whose instance is live, requires `--overwrite` — a
+redeploy never silently clobbers a running instance.
+
+Deploying doesn't start anything. If the shared bucket doesn't have those
+weights yet it fetches them (about 15–20 minutes, entirely on its side) and
+says so; wait for that before your first `start`, or the model won't be there.
 
 Switching model, quantisation, or engine is an edit to those two files and one
-`deploy` — no redeployment of the infrastructure.
+`deploy` — no redeployment of the infrastructure. A second Outfit naming a
+different `REMOTE` gets its own environment, side by side.
 
 ```sh
 outfit remote deploy --dry-run       # see what would be sent
 outfit remote deploy path/to/Outfit  # deploy a different one
+outfit remote deploy --overwrite     # redeploy over the existing environment
 ```
 
 ## Flags

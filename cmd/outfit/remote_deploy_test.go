@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
@@ -200,44 +203,60 @@ func TestSplitModelQuant(t *testing.T) {
 	}
 }
 
-func TestRemoteDeploy_PostsTheConfig(t *testing.T) {
-	isolateConfig(t)
-	stubAWSEnv(t)
+// stubDeploySeams wires the deploy flow's seams: discovery returns a layer
+// whose control URLs are serverURL, the environment reports the given state,
+// and the public-IP probe is fixed. Restores on cleanup.
+func stubDeploySeams(t *testing.T, serverURL, statusState string) {
+	t.Helper()
+	origDiscover, origStatus, origDetect := deployDiscoverFn, remoteStatusFn, detectPublicCIDRFn
+	t.Cleanup(func() {
+		deployDiscoverFn, remoteStatusFn, detectPublicCIDRFn = origDiscover, origStatus, origDetect
+	})
+	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.SharedLayer, error) {
+		return remote.SharedLayer{Config: remote.Config{
+			StartURL: serverURL, StopURL: serverURL, DeployURL: serverURL, Region: "us-east-1",
+		}}, nil
+	}
+	remoteStatusFn = func(context.Context, remote.Config) (*remote.Response, error) {
+		return &remote.Response{StatusCode: 200, State: statusState}, nil
+	}
+	detectPublicCIDRFn = func(context.Context) (string, error) { return "203.0.113.7/32", nil }
+}
 
-	var got remote.DeployConfig
-	var gotMethod, gotAuth string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotAuth = r.Header.Get("Authorization")
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &got)
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"deployed":true,"seeding":true,"seedInstanceId":"i-123"}`))
-	}))
-	defer server.Close()
-
-	dir := t.TempDir()
-	t.Chdir(dir)
-	if err := os.WriteFile("Outfit", []byte(
-		"PROVIDER llamacpp\nALIAS qwen3.6-27b\nCONTEXT 131072\nPRESET ./preset.ini\nREMOTE ./remote.json\n",
-	), 0o600); err != nil {
+// writeDeployEnvOutfit writes an Outfit (REMOTE names the environment) + preset.
+func writeDeployEnvOutfit(t *testing.T, env string) {
+	t.Helper()
+	t.Chdir(t.TempDir())
+	outfitBody := "PROVIDER llamacpp\nALIAS qwen3.6-27b\nCONTEXT 131072\nPRESET ./preset.ini\nREMOTE " + env + "\n"
+	if err := os.WriteFile("Outfit", []byte(outfitBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile("preset.ini", []byte(qwenPreset), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := json.Marshal(remote.Config{
-		StartURL:  server.URL,
-		StopURL:   server.URL,
-		DeployURL: server.URL,
-		Region:    "us-east-1",
-	})
-	if err != nil {
-		t.Fatal(err)
+}
+
+func TestRemoteDeploy_PostsTheConfigAndRegisters(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	var got struct {
+		remote.DeployConfig
+		AllowedCidr string `json:"allowedCidr"`
 	}
-	if err := os.WriteFile("remote.json", cfg, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	var gotMethod, gotAuth, gotEnv string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotAuth = r.Header.Get("Authorization")
+		gotEnv = r.URL.Query().Get("env")
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &got)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"deployed":true,"environment":"testenv","base_url":"http://198.51.100.9:8000/v1","seeding":true,"seedInstanceId":"i-123"}`))
+	}))
+	defer server.Close()
+	stubDeploySeams(t, server.URL, "undeployed")
+	writeDeployEnvOutfit(t, "testenv")
 
 	out := captureStdout(t, func() {
 		if err := cmdRemoteDeploy(nil); err != nil {
@@ -252,62 +271,142 @@ func TestRemoteDeploy_PostsTheConfig(t *testing.T) {
 	if !strings.Contains(gotAuth, "AWS4-HMAC-SHA256") {
 		t.Errorf("request was not SigV4-signed: %q", gotAuth)
 	}
-	if got.Runner != "llamacpp" || got.ModelID != "unsloth/Qwen3.6-27B-MTP-GGUF" || got.ContextSize != 131072 {
-		t.Errorf("posted config is wrong: %+v", got)
+	// The environment travels on the call; the Lambdas require it.
+	if gotEnv != "testenv" {
+		t.Errorf("env query = %q, want testenv", gotEnv)
 	}
-	// The Lambda derives the prefix, so the body must not pin one.
-	if strings.Contains(strings.ToLower(out), "weightsprefix") {
-		t.Errorf("deploy should not mention a weights prefix, got:\n%s", out)
+	if got.Runner != "llamacpp" || got.ModelID != "unsloth/Qwen3.6-27B-MTP-GGUF" || got.ContextSize != 131072 {
+		t.Errorf("posted config is wrong: %+v", got.DeployConfig)
+	}
+	// A fresh environment gets the detected CIDR.
+	if got.AllowedCidr != "203.0.113.7/32" {
+		t.Errorf("allowedCidr = %q, want the detected /32", got.AllowedCidr)
 	}
 	if !strings.Contains(out, "seeding the weights on i-123") {
 		t.Errorf("seeding should be reported with the instance id, got:\n%s", out)
 	}
+
+	// The environment is registered, owner-only, carrying the base URL and id.
+	path := remote.EnvConfigPath("testenv")
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("environment not registered: %v", err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("registered remote.json mode = %v, want 0600", fi.Mode().Perm())
+	}
+	data, _ := os.ReadFile(path)
+	var saved remote.Config
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.Environment != "testenv" || saved.BaseURL != "http://198.51.100.9:8000/v1" || saved.DeployURL != server.URL {
+		t.Errorf("registered config wrong: %+v", saved)
+	}
 }
 
-func TestRemoteDeploy_NeedsDeployURL(t *testing.T) {
+func TestRemoteDeploy_NotBootstrapped(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)
-	dir := t.TempDir()
-	t.Chdir(dir)
+	stubDeploySeams(t, "https://unused", "undeployed")
+	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.SharedLayer, error) {
+		return remote.SharedLayer{}, fmt.Errorf("the shared infrastructure (stack %q) is not deployed in this account and region — run `outfit remote bootstrap` first", "cloud-vm-llm")
+	}
+	writeDeployEnvOutfit(t, "testenv")
+
+	err := cmdRemoteDeploy(nil)
+	if err == nil || !strings.Contains(err.Error(), "outfit remote bootstrap") {
+		t.Errorf("want a bootstrap-first error, got %v", err)
+	}
+	if _, statErr := os.Stat(remote.EnvConfigPath("testenv")); !os.IsNotExist(statErr) {
+		t.Error("nothing should be registered when the account is not bootstrapped")
+	}
+}
+
+func TestRemoteDeploy_RequiresEnvName(t *testing.T) {
+	isolateConfig(t)
+	t.Chdir(t.TempDir())
+	// A path-form REMOTE is not an environment name.
 	if err := os.WriteFile("Outfit", []byte(
-		"PROVIDER llamacpp\nMODEL org/m:Q4\nCONTEXT 32k\nREMOTE ./remote.json\n",
+		"PROVIDER vllm\nMODEL Qwen/Qwen3.6-27B-FP8\nCONTEXT 32k\nREMOTE ./remote.json\n",
 	), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A config written before `remote deploy` existed: start/stop still work, so
-	// only deploy should complain, and it should say what to add.
-	cfg, _ := json.Marshal(remote.Config{StartURL: "https://x.lambda-url.us-east-1.on.aws/", StopURL: "https://y.lambda-url.us-east-1.on.aws/", Region: "us-east-1"})
-	if err := os.WriteFile("remote.json", cfg, 0o600); err != nil {
-		t.Fatal(err)
-	}
 	err := cmdRemoteDeploy(nil)
-	if err == nil || !strings.Contains(err.Error(), "deploy_url") {
-		t.Errorf("want an error naming deploy_url, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "REMOTE <name>") {
+		t.Errorf("want an error asking for REMOTE <name>, got %v", err)
+	}
+}
+
+func TestRemoteDeploy_OverwriteGuard(t *testing.T) {
+	deployBody := `{"deployed":true,"environment":"testenv","base_url":"http://198.51.100.9:8000/v1"}`
+
+	t.Run("registered environment needs --overwrite", func(t *testing.T) {
+		isolateConfig(t)
+		stubAWSEnv(t)
+		stubDeploySeams(t, "https://unused", "undeployed")
+		if err := remote.SaveEnvironment("testenv", remote.Config{StartURL: "https://s", StopURL: "https://x", Region: "us-east-1"}); err != nil {
+			t.Fatal(err)
+		}
+		writeDeployEnvOutfit(t, "testenv")
+		err := cmdRemoteDeploy(nil)
+		if err == nil || !strings.Contains(err.Error(), "--overwrite") {
+			t.Errorf("want an overwrite refusal, got %v", err)
+		}
+	})
+
+	t.Run("live environment needs --overwrite", func(t *testing.T) {
+		isolateConfig(t)
+		stubAWSEnv(t)
+		stubDeploySeams(t, "https://unused", "running")
+		writeDeployEnvOutfit(t, "testenv")
+		err := cmdRemoteDeploy(nil)
+		if err == nil || !strings.Contains(err.Error(), "--overwrite") {
+			t.Errorf("want an overwrite refusal for a live instance, got %v", err)
+		}
+	})
+
+	t.Run("--overwrite proceeds", func(t *testing.T) {
+		isolateConfig(t)
+		stubAWSEnv(t)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(deployBody))
+		}))
+		defer server.Close()
+		stubDeploySeams(t, server.URL, "running")
+		writeDeployEnvOutfit(t, "testenv")
+		out := captureStdout(t, func() {
+			if err := cmdRemoteDeploy([]string{"--overwrite"}); err != nil {
+				t.Errorf("cmdRemoteDeploy --overwrite: %v", err)
+			}
+		})
+		if !strings.Contains(out, "deployed: environment testenv") {
+			t.Errorf("expected a deploy report, got:\n%s", out)
+		}
+	})
+}
+
+func TestRemoteDeploy_RejectsBadCIDR(t *testing.T) {
+	isolateConfig(t)
+	stubDeploySeams(t, "https://unused", "undeployed")
+	writeDeployEnvOutfit(t, "testenv")
+	err := cmdRemoteDeploy([]string{"--allowed-cidr", "bogus"})
+	if err == nil || !strings.Contains(err.Error(), "IPv4 CIDR") {
+		t.Errorf("want a CIDR validation error, got %v", err)
 	}
 }
 
 func TestRemoteDeploy_DryRunSendsNothing(t *testing.T) {
 	isolateConfig(t)
 	called := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	origDiscover := deployDiscoverFn
+	t.Cleanup(func() { deployDiscoverFn = origDiscover })
+	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.SharedLayer, error) {
 		called = true
-	}))
-	defer server.Close()
-
-	dir := t.TempDir()
-	t.Chdir(dir)
-	if err := os.WriteFile("Outfit", []byte(
-		"PROVIDER llamacpp\nALIAS qwen3.6-27b\nPRESET ./preset.ini\nREMOTE ./remote.json\n",
-	), 0o600); err != nil {
-		t.Fatal(err)
+		return remote.SharedLayer{}, fmt.Errorf("must not be called")
 	}
-	if err := os.WriteFile("preset.ini", []byte(qwenPreset), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg, _ := json.Marshal(remote.Config{StartURL: server.URL, StopURL: server.URL, DeployURL: server.URL, Region: "us-east-1"})
-	if err := os.WriteFile("remote.json", cfg, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDeployEnvOutfit(t, "testenv")
 
 	out := captureStdout(t, func() {
 		if err := cmdRemoteDeploy([]string{"--dry-run"}); err != nil {
@@ -315,10 +414,10 @@ func TestRemoteDeploy_DryRunSendsNothing(t *testing.T) {
 		}
 	})
 	if called {
-		t.Error("--dry-run must not call the deploy Lambda")
+		t.Error("--dry-run must touch nothing — not even discovery")
 	}
-	if !strings.Contains(out, "unsloth/Qwen3.6-27B-MTP-GGUF") {
-		t.Errorf("--dry-run should print the config, got:\n%s", out)
+	if !strings.Contains(out, "unsloth/Qwen3.6-27B-MTP-GGUF") || !strings.Contains(out, "environment: testenv") {
+		t.Errorf("--dry-run should print the config and environment, got:\n%s", out)
 	}
 }
 

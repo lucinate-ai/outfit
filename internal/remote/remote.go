@@ -35,12 +35,17 @@ type Config struct {
 	StopURL   string `json:"stop_url"`
 	DeployURL string `json:"deploy_url"`
 	Region    string `json:"region"`
-	// BaseURL is the endpoint's own address (the instance's stable Elastic IP).
-	// It belongs to the deployment rather than to the Outfit, so it is written
-	// here and `apply` reads it back for an Outfit that states no BASEURL. Like
-	// DeployURL it is optional: the control calls do not need it — start and
-	// status report the address themselves — so configs without it still work.
+	// BaseURL is the endpoint's own address (the environment's stable Elastic
+	// IP). It belongs to the deployment rather than to the Outfit, so it is
+	// written here and `apply` reads it back for an Outfit that states no
+	// BASEURL. Like DeployURL it is optional: the control calls do not need it —
+	// start and status report the address themselves — so configs without it
+	// still work.
 	BaseURL string `json:"base_url"`
+	// Environment names which environment's instance the shared lifecycle
+	// Lambdas act on. The control URLs are shared across environments, so this
+	// travels with every control call; the Lambdas reject a call without one.
+	Environment string `json:"environment"`
 }
 
 // ConfigPath returns the path of the legacy per-user remote config file,
@@ -78,7 +83,7 @@ func LoadConfigFile(path string, getenv func(string) string) (Config, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			return Config{}, fmt.Errorf(
-				"remote config %s does not exist: paste the OutfitRemoteConfig output of the remote/ deployment there",
+				"remote config %s does not exist: run `outfit remote deploy` to create and register the environment",
 				path)
 		}
 		return Config{}, err
@@ -147,6 +152,7 @@ type Response struct {
 	Healthy           *bool  `json:"healthy"`
 	BaseURL           string `json:"base_url"`
 	APIKey            string `json:"api_key"`
+	Environment       string `json:"environment"`
 	Message           string `json:"message"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
 	// Deploy-specific fields.
@@ -173,15 +179,21 @@ type DeployConfig struct {
 	ServeArgs       []string `json:"serveArgs"`
 }
 
-// Deploy sets what the next wake will serve. The Lambda validates the config,
-// seeds the weights into S3 if they are absent, and stores it; deploying does
-// not start the instance.
-func Deploy(ctx context.Context, cfg Config, dc DeployConfig) (*Response, error) {
+// Deploy creates (or updates) cfg.Environment on the shared layer and sets
+// what its next wake will serve. The Lambda validates the config, provisions
+// the environment's own resources if absent, seeds the weights into S3 if they
+// are absent, and stores the config; deploying does not start the instance.
+// allowedCidr scopes who may reach this environment's instance; it is required
+// the first time and optional afterwards (empty leaves ingress alone).
+func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string) (*Response, error) {
 	if cfg.DeployURL == "" {
 		return nil, fmt.Errorf(
 			"no deploy_url configured: add the remote/ deployment's DeployUrl output to the remote config (or set OUTFIT_REMOTE_DEPLOY_URL)")
 	}
-	body, err := json.Marshal(dc)
+	body, err := json.Marshal(struct {
+		DeployConfig
+		AllowedCidr string `json:"allowedCidr,omitempty"`
+	}{dc, allowedCidr})
 	if err != nil {
 		return nil, err
 	}
@@ -241,8 +253,20 @@ func Stop(ctx context.Context, cfg Config) (*Response, error) {
 
 // call signs and sends one request. body is nil for the bodyless calls
 // (start/stop/status); deploy passes JSON, which must be hashed into the
-// signature rather than sent unsigned.
+// signature rather than sent unsigned. The environment travels as a query
+// parameter on every call — the Lambdas are shared across environments and
+// require it.
 func call(ctx context.Context, cfg Config, method, rawURL string, body []byte) (*Response, error) {
+	if cfg.Environment != "" {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return nil, err
+		}
+		q := u.Query()
+		q.Set("env", cfg.Environment)
+		u.RawQuery = q.Encode()
+		rawURL = u.String()
+	}
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
