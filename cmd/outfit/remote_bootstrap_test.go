@@ -45,7 +45,7 @@ func stubBootstrapSeams(t *testing.T, alreadyDeployed bool) *[]recordedStep {
 		}
 		return os.WriteFile(filepath.Join(destDir, "cdk.json"), []byte(`{"context":{}}`), 0o644)
 	}
-	bootstrapAccountFn = func(context.Context, aws.Config) (string, error) { return "123456789012", nil }
+	bootstrapAccountFn = func(context.Context, aws.Config) (string, error) { return "1", nil }
 	bootstrapStackDeployedFn = func(context.Context, aws.Config, string) (bool, error) { return alreadyDeployed, nil }
 	bootstrapPreflightFn = func() error { return nil }
 	return &steps
@@ -102,9 +102,9 @@ func TestBootstrap_EnvAndCdkWrites(t *testing.T) {
 
 func TestBootstrap_PlanOutput(t *testing.T) {
 	out := captureStderr(t, func() {
-		renderBootstrapPlan("123456789012", "us-east-1", []string{"llamacpp", "vllm"}, "v1.10.0", "/tmp/cdk/v1.10.0", false)
+		renderBootstrapPlan("1", "us-east-1", []string{"llamacpp", "vllm"}, "v1.10.0", "/tmp/cdk/v1.10.0", false)
 	})
-	for _, want := range []string{"123456789012", "us-east-1", "llamacpp, vllm", "Image Builder", "Cost:", "pnpm run deploy"} {
+	for _, want := range []string{"AWS account:  1\n", "us-east-1", "llamacpp, vllm", "Image Builder", "Cost:", "pnpm run deploy"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan missing %q:\n%s", want, out)
 		}
