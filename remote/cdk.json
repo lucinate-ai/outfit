@@ -1,26 +1,22 @@
 {
   "app": "npx tsx bin/app.ts",
   "context": {
-    "//": "Set allowedCidr (required) and any overrides here or via -c on the CLI.",
+    "//": "Shared-layer overrides (all optional). Per-environment settings — model, runner, context size, allowed CIDR — are given to `outfit remote deploy`, not here.",
     "//examples": {
-      "allowedCidr": "203.0.113.7/32",
-      "runner": "vllm",
-      "region": "us-east-1",
       "availabilityZones": "us-east-1b,us-east-1c,us-east-1d,us-east-1e",
-      "modelId": "Qwen/Qwen3.6-27B-FP8",
-      "hfToken": "",
-      "instanceType": "g6e.xlarge",
       "builderInstanceType": "m5.xlarge",
-      "imageVolumeGb": 80,
-      "vllmVersion": "0.26.0",
-      "nvidiaDriverPackage": "nvidia-driver-570-server-open",
-      "maxModelLen": 32768,
-      "vllmExtraArgs": "--enforce-eager",
-      "toolCallParser": "qwen3_coder",
-      "reasoningParser": "qwen3",
-      "idleThresholdMinutes": 15,
       "gracePeriodMinutes": 30,
-      "maxRuntimeMinutes": 240
-    }
-  }
+      "hfToken": "",
+      "idleThresholdMinutes": 15,
+      "imageVolumeGb": 80,
+      "instanceType": "g6e.xlarge",
+      "llamacppRelease": "b10107",
+      "maxRuntimeMinutes": 240,
+      "nvidiaDriverPackage": "nvidia-driver-570-server-open",
+      "region": "us-east-1",
+      "vllmVersion": "0.26.0"
+    },
+    "runners": "llamacpp,vllm"
+  },
+  "requireApproval": "never"
 }

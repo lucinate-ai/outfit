@@ -25,8 +25,11 @@
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
 //	                                      # Outfit first (--get shows it; --set stores the default)
 //	outfit completion <bash|zsh|powershell> # print the tab-completion script
-//	outfit remote start|stop|status|deploy # control the remote GPU inference
-//	                                      # instance (deploy sets what it serves)
+//	outfit remote bootstrap|start|stop|status|deploy|ls # control the remote GPU
+//	                                      # inference instance (bootstrap does the
+//	                                      # once-per-account shared setup; deploy
+//	                                      # sets what it serves; ls lists
+//	                                      # registered environments)
 //
 // Short flags: -p (provider), -m (model), -a (alias),
 // -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
@@ -146,9 +149,11 @@ Usage:
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
   outfit completion <shell>         (tab completion: bash, zsh, powershell)
-  outfit remote <start|stop|status|deploy> [path]
-                                    (control the remote GPU instance; deploy sets
-                                     what it serves, from the Outfit)
+  outfit remote <bootstrap|start|stop|status|deploy|ls> [path]
+                                    (control the remote GPU instance; bootstrap
+                                     does the once-per-account shared setup;
+                                     deploy sets what it serves, from the Outfit;
+                                     ls lists registered environments)
   outfit version                    (or -v/--version)
 
 Flags:
@@ -214,11 +219,17 @@ completion: prints a tab-completion script for bash, zsh, or powershell. Add
       TAB then completes commands, flags, providers, harnesses, and your
       registered aliases.
 remote: runs the model on a cloud GPU that exists only while you use it, from
-      the same Outfit. deploy says what to serve (PROVIDER picks the engine,
-      just as it does for serve); start boots it and prints the exports your
-      agent needs; status reports its state; stop shuts it down rather than
-      waiting for the idle timer. The endpoint's URLs come from the Outfit's
-      REMOTE file, or ~/.config/outfit/remote.json.
+      the same Outfit. bootstrap does the once-per-account shared setup (Image
+      Builder, the lifecycle Lambdas, shared bucket/roles/VPC) with a consent
+      gate; deploy creates the environment the Outfit's REMOTE names — its own
+      address, API key and allowed CIDR — and says what it serves (PROVIDER
+      picks the engine, just as it does for serve); start boots it and prints
+      the exports your agent needs; status reports its state; stop shuts it
+      down rather than waiting for the idle timer; ls lists the registered
+      environments. The
+      endpoint's URLs come from the Outfit's REMOTE — a bare name selects an
+      environment under ~/.config/outfit/remotes/<name>/, a path names a file —
+      falling back to the default environment.
 `, strings.Join(harness.Names(), ", "))
 }
 

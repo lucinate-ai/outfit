@@ -7,12 +7,17 @@ what to serve from an Outfit: the `outfit remote` command group.
 ## Requirements
 ### Requirement: Remote command group
 
-The system SHALL provide a `remote` command group with the subcommands `start`,
-`stop`, `status` and `deploy`, each taking an optional Outfit path. `start`
-SHALL boot the endpoint and block until it is serving, printing the base URL
-and API key as shell exports; `stop` SHALL stop it immediately rather than
-waiting for its idle timer; `status` SHALL report instance state and endpoint
-health without side effects; `deploy` SHALL set what the endpoint serves. An
+The system SHALL provide a `remote` command group with the subcommands
+`bootstrap`, `start`, `stop`, `status`, `deploy` and `ls`. `start`, `stop`,
+`status` and `deploy` each take an optional Outfit path: `start` SHALL boot the
+endpoint and block until it is serving, printing the base URL and API key as
+shell exports; `stop` SHALL stop it immediately rather than waiting for its idle
+timer; `status` SHALL report instance state and endpoint health without side
+effects; `deploy` SHALL set what the endpoint serves. `ls` SHALL list the
+registered remote environments (see the Remote Environments specification).
+`bootstrap` SHALL stand up the shared, account-level AWS infrastructure (once
+per account) by obtaining and driving the CDK project, and takes its own flags
+rather than an Outfit path (see the Endpoint Provisioning specification). An
 unrecognised subcommand SHALL fail naming the accepted ones.
 
 #### Scenario: Starting the endpoint
@@ -26,10 +31,23 @@ unrecognised subcommand SHALL fail naming the accepted ones.
 - **THEN** the command waits and retries until it is ready or the timeout
   passes, rather than failing on the first attempt
 
+#### Scenario: Listing environments
+
+- **WHEN** the user runs `outfit remote ls`
+- **THEN** the registered environments are listed rather than any endpoint being
+  contacted
+
+#### Scenario: Bootstrap is a recognised subcommand
+
+- **WHEN** the user runs `outfit remote bootstrap`
+- **THEN** the command is dispatched to the provisioning flow rather than
+  reported as unknown
+
 #### Scenario: Unknown subcommand
 
 - **WHEN** the user runs `outfit remote frobnicate`
-- **THEN** the command fails listing the accepted subcommands
+- **THEN** the command fails listing the accepted subcommands, which now
+  include `bootstrap`
 
 ### Requirement: Reporting a start in progress
 
@@ -58,13 +76,14 @@ The endpoint's control URLs SHALL come from a JSON configuration naming a start
 URL, a stop URL, an optional deploy URL, and a region. That configuration MAY
 also name the endpoint's own base URL; it SHALL be optional, since no control
 call needs it, and a configuration without it SHALL remain valid. An Outfit's
-`REMOTE` instruction SHALL select that file, resolved relative to the Outfit
-when the value is not absolute. When no Outfit names one, the per-user
-configuration SHALL be used, so the command works outside any project.
-Environment variables SHALL override individual values, and the region SHALL
-fall back to the standard AWS region variable and then to the region named in
-the URL. A missing or incomplete configuration SHALL fail saying where to put
-it.
+`REMOTE` instruction SHALL select that configuration: a bare name selects the
+named environment from the per-user registry, and a path selects a file resolved
+relative to the Outfit when not absolute (see the Remote Environments
+specification). When no Outfit names one, the `default` environment SHALL be
+used, so the command works outside any project. Environment variables SHALL
+override individual values, and the region SHALL fall back to the standard AWS
+region variable and then to the region named in the URL. A missing or incomplete
+configuration SHALL fail saying where to put it.
 
 #### Scenario: Outfit names the configuration
 
@@ -72,16 +91,22 @@ it.
   with that Outfit
 - **THEN** the URLs come from that file, resolved beside the Outfit
 
+#### Scenario: Outfit names an environment
+
+- **WHEN** an Outfit sets `REMOTE qwen3.6-27b-prod` and a `remote` subcommand
+  runs with that Outfit
+- **THEN** the URLs come from that environment's `remote.json` in the registry
+
 #### Scenario: Explicit Outfit without a REMOTE instruction
 
 - **WHEN** a `remote` subcommand is given an Outfit that has no `REMOTE`
 - **THEN** it fails saying that Outfit has no `REMOTE` instruction, rather than
-  silently using the per-user configuration
+  silently using the default environment
 
 #### Scenario: No Outfit in play
 
 - **WHEN** a `remote` subcommand runs outside a project
-- **THEN** the per-user configuration is used
+- **THEN** the `default` environment is used
 
 #### Scenario: Configuration without a base URL
 
@@ -123,6 +148,12 @@ serve locally and deploy unchanged. The request SHALL describe only what to
 serve, never where the weights are stored. A `--dry-run` SHALL print the
 derived deployment without sending it.
 
+Deploy SHALL target a named environment: in addition to deriving what to serve,
+it SHALL create and register that environment on the shared layer (its Elastic
+IP, instance configuration, per-environment API key and ingress, and SSM state),
+as defined by the Environment Deployment specification. Deploying SHALL NOT start
+the instance.
+
 #### Scenario: A preset drives both serving and deploying
 
 - **WHEN** an Outfit with a preset is deployed
@@ -147,9 +178,16 @@ derived deployment without sending it.
 - **THEN** the command fails saying to name a repository instead, because the
   endpoint fetches its own weights
 
+#### Scenario: Deploying creates and registers the environment
+
+- **WHEN** a deployment succeeds against a bootstrapped account
+- **THEN** the named environment is created and registered in the registry, and
+  the report says whether the weights still have to be fetched before it can
+  serve
+
 #### Scenario: Deploying is not starting
 
 - **WHEN** a deployment succeeds
-- **THEN** the endpoint is configured but not started, and the report says
+- **THEN** the environment is configured but not started, and the report says
   whether the weights still have to be fetched before it can serve
 

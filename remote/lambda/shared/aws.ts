@@ -64,6 +64,8 @@ export interface InstanceInfo {
   launchTime?: Date;
   /** Parsed from the Retain-Until tag, if present and a valid datetime. */
   retainUntil?: Date;
+  /** The environment the instance belongs to (its cloud-vm-llm:env tag). */
+  environment?: string;
 }
 
 /** Describe a specific instance by id (used to poll a just-launched one). */
@@ -82,33 +84,46 @@ export async function getInstance(instanceId: string): Promise<InstanceInfo> {
 }
 
 /**
- * Find the current managed instance by tag, if one exists in a live state.
- * The runtime holds no fixed instance id — the start Lambda launches one and
- * the stop Lambda terminates it — so everything discovers "the instance" this
- * way. Returns null when none is up.
+ * Find live managed instances by tag. An environment holds no fixed instance
+ * id — the start Lambda launches one and the stop Lambda terminates it — so
+ * everything discovers instances this way. Pass extra tag filters (e.g. the
+ * environment tag) to narrow to one environment; without them this returns
+ * every environment's instance, which is how the idle sweep covers them all.
  */
-export async function findManagedInstance(
+export async function findManagedInstances(
   tagKey: string,
   tagValue: string,
-): Promise<InstanceInfo | null> {
+  extraFilters: Filter[] = [],
+): Promise<InstanceInfo[]> {
   const result = await ec2.send(
     new DescribeInstancesCommand({
       Filters: [
         { Name: `tag:${tagKey}`, Values: [tagValue] },
         { Name: 'instance-state-name', Values: ['pending', 'running'] },
+        ...extraFilters,
       ],
     }),
   );
-  const instance = result.Reservations?.flatMap((r) => r.Instances ?? [])[0];
-  if (!instance?.InstanceId) {
-    return null;
-  }
-  return {
-    instanceId: instance.InstanceId,
-    state: instance.State?.Name ?? 'unknown',
-    launchTime: instance.LaunchTime,
-    retainUntil: parseRetainUntil(instance.Tags),
-  };
+  const instances = result.Reservations?.flatMap((r) => r.Instances ?? []) ?? [];
+  return instances
+    .filter((i) => i.InstanceId)
+    .map((instance) => ({
+      instanceId: instance.InstanceId!,
+      state: instance.State?.Name ?? 'unknown',
+      launchTime: instance.LaunchTime,
+      retainUntil: parseRetainUntil(instance.Tags),
+      environment: instance.Tags?.find((t) => t.Key === 'cloud-vm-llm:env')?.Value,
+    }));
+}
+
+/** Find one environment's live managed instance, if any. */
+export async function findManagedInstance(
+  tagKey: string,
+  tagValue: string,
+  extraFilters: Filter[] = [],
+): Promise<InstanceInfo | null> {
+  const instances = await findManagedInstances(tagKey, tagValue, extraFilters);
+  return instances[0] ?? null;
 }
 
 /**
@@ -261,9 +276,19 @@ export async function runShellCommand(
 }
 
 export async function readState(paramName: string): Promise<IdleState> {
-  const result = await ssm.send(new GetParameterCommand({ Name: paramName }));
+  let raw = '{}';
   try {
-    return JSON.parse(result.Parameter?.Value ?? '{}') as IdleState;
+    const result = await ssm.send(new GetParameterCommand({ Name: paramName }));
+    raw = result.Parameter?.Value ?? '{}';
+  } catch (err) {
+    // A missing parameter is empty state, not an error — so an instance whose
+    // environment never wrote one is still judged (and terminated) normally.
+    if (errorName(err) !== 'ParameterNotFound') {
+      throw err;
+    }
+  }
+  try {
+    return JSON.parse(raw) as IdleState;
   } catch {
     return {};
   }

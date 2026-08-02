@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -27,10 +30,12 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <start|stop|status|deploy> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|deploy|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
+	case "bootstrap":
+		return cmdRemoteBootstrap(rest)
 	case "start":
 		return cmdRemoteStart(rest)
 	case "stop":
@@ -39,9 +44,11 @@ func cmdRemote(args []string) error {
 		return cmdRemoteStatus(rest)
 	case "deploy":
 		return cmdRemoteDeploy(rest)
+	case "ls":
+		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected start, stop, status or deploy)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, stop, status, deploy or ls)", sub)
 	}
 }
 
@@ -62,7 +69,7 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		if sel.Remote == "" {
 			return remote.Config{}, fmt.Errorf("%s has no REMOTE instruction", outfitPath)
 		}
-		return remote.LoadConfigFile(remoteConfigPath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
+		return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 	}
 	if defaultOutfitExists() {
 		sel, outfitPath, err := readOutfit("remote", "")
@@ -70,10 +77,22 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 			return remote.Config{}, err
 		}
 		if sel.Remote != "" {
-			return remote.LoadConfigFile(remoteConfigPath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
+			return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 		}
 	}
-	return remote.LoadConfig(os.Getenv)
+	return remote.LoadDefault(os.Getenv)
+}
+
+// resolveRemotePath turns an Outfit's REMOTE value into the config file to read.
+// A bare name selects an environment from the per-user registry; a path is
+// resolved as a file, relative to the Outfit's directory when not absolute —
+// the same rule PRESET uses. Both the control commands and apply's base-URL
+// lookup go through here, so the two never diverge.
+func resolveRemotePath(remoteValue, outfitDir string) string {
+	if remote.IsEnvName(remoteValue) {
+		return remote.EnvConfigPath(remoteValue)
+	}
+	return remoteConfigPath(remoteValue, outfitDir)
 }
 
 // defaultOutfitExists reports whether the working directory holds a file
@@ -102,14 +121,14 @@ func remoteConfigPath(remoteValue, outfitDir string) string {
 }
 
 // remoteBaseURL returns the endpoint address recorded in the remote config an
-// Outfit's REMOTE names, resolved relative to outfitDir like every other path
-// an Outfit refers to. The deployment generates that file, so the address lives
+// Outfit's REMOTE names — a registry environment or a file, per
+// resolveRemotePath. The deployment generates that config, so the address lives
 // there rather than in the hand-written Outfit — but only as a fallback: an
 // Outfit that states its own BASEURL never asks. A config that is absent, or
 // that predates base_url, yields "" rather than an error, since an Outfit may
 // name a remote config before the deployment that writes it exists.
 func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
-	path := remoteConfigPath(remoteValue, outfitDir)
+	path := resolveRemotePath(remoteValue, outfitDir)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -209,6 +228,37 @@ func cmdRemoteStart(args []string) error {
 	// stdout carries only the result, so `eval "$(outfit remote start)"` works.
 	fmt.Printf("export OPENAI_BASE_URL=%s\n", resp.BaseURL)
 	fmt.Printf("export OPENAI_API_KEY=%s\n", resp.APIKey)
+	return nil
+}
+
+// cmdRemoteList prints the registered remote environments, each with its base
+// URL and region, marking any whose remote.json is missing or unreadable. It
+// contacts no endpoint. Environments are registered under
+// ~/.config/outfit/remotes/<name>/ (by `outfit remote bootstrap`, or by hand).
+func cmdRemoteList(args []string) error {
+	fs := flag.NewFlagSet("remote ls", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	envs, err := remote.ListEnvironments()
+	if err != nil {
+		return err
+	}
+	if len(envs) == 0 {
+		fmt.Println("No remote environments registered. Register one with `outfit remote bootstrap`.")
+		return nil
+	}
+	for _, e := range envs {
+		if !e.OK {
+			fmt.Printf("%s\t(missing or unreadable remote.json)\n", e.Name)
+			continue
+		}
+		base := e.BaseURL
+		if base == "" {
+			base = "(no base URL)"
+		}
+		fmt.Printf("%s\t%s\t%s\n", e.Name, base, e.Region)
+	}
 	return nil
 }
 
@@ -404,11 +454,27 @@ func presetValue(key string, layers ...[]preset.Param) string {
 	return value
 }
 
+// Seams for the deploy flow, so tests drive it without AWS or a network.
+var (
+	deployDiscoverFn   = remote.DiscoverSharedLayer
+	remoteDeployFn     = remote.Deploy
+	remoteStatusFn     = remote.Status
+	detectPublicCIDRFn = detectPublicCIDR
+)
+
 func cmdRemoteDeploy(args []string) error {
 	fs := flag.NewFlagSet("remote deploy", flag.ContinueOnError)
-	var dryRun bool
+	var (
+		dryRun      bool
+		overwrite   bool
+		allowedCidr string
+		region      string
+	)
 	fs.BoolVar(&dryRun, "dry-run", false, "print the config that would be deployed, without sending it")
 	fs.BoolVar(&dryRun, "n", false, "print the config without sending it (shorthand)")
+	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
+	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
+	fs.StringVar(&region, "region", "", "AWS region of the shared layer (default: AWS_REGION or us-east-1)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -424,8 +490,21 @@ func cmdRemoteDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The environment name is the Outfit's REMOTE — the committed link between
+	// the Outfit and its deployment. One source of truth: deploy registers the
+	// environment under exactly the name the same Outfit's REMOTE resolves to.
+	env := sel.Remote
+	if env == "" || !remote.IsEnvName(env) {
+		return fmt.Errorf(
+			"%s must name its environment with `REMOTE <name>` (e.g. REMOTE %s) — deploy creates and registers that environment",
+			outfitPath, dc.ServedModelName)
+	}
+	if allowedCidr != "" && !cidrPattern.MatchString(allowedCidr) {
+		return fmt.Errorf("--allowed-cidr must be an IPv4 CIDR (e.g. 203.0.113.7/32), got %q", allowedCidr)
+	}
 
 	fmt.Printf("Deploying from %s\n", outfitPath)
+	fmt.Printf("  environment: %s\n", env)
 	fmt.Printf("  runner:  %s\n", dc.Runner)
 	fmt.Printf("  model:   %s", dc.ModelID)
 	if dc.Quant != "" {
@@ -441,17 +520,65 @@ func cmdRemoteDeploy(args []string) error {
 		return nil
 	}
 
-	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	// The control URLs come from the shared layer's stack outputs — the
+	// environment may not exist yet, so there is nothing local to resolve.
+	ctx := context.Background()
+	awsCfg, err := remote.LoadAWSConfig(ctx, resolveRegion(region))
 	if err != nil {
 		return err
 	}
-	resp, err := remote.Deploy(context.Background(), cfg, dc)
+	layer, err := deployDiscoverFn(ctx, awsCfg, sharedStackName)
+	if err != nil {
+		return err
+	}
+	cfg := layer.Config
+	cfg.Environment = env
+
+	// Refuse to clobber silently: an environment that is already registered, or
+	// whose instance is live, needs explicit consent to redeploy over.
+	registered := false
+	if _, err := os.Stat(remote.EnvConfigPath(env)); err == nil {
+		registered = true
+	}
+	live := false
+	if status, err := remoteStatusFn(ctx, cfg); err == nil {
+		live = status.State == "running" || status.State == "pending" || status.State == "starting"
+	}
+	if (registered || live) && !overwrite {
+		what := "is already registered"
+		if live {
+			what = "has a live instance"
+		}
+		return fmt.Errorf(
+			"environment %q %s — pass --overwrite to redeploy over it", env, what)
+	}
+
+	// Ingress is per environment. A fresh environment needs a CIDR (default:
+	// the caller's public address); an existing one keeps its ingress unless a
+	// CIDR is given explicitly.
+	if allowedCidr == "" && !registered {
+		allowedCidr, err = detectPublicCIDRFn(ctx)
+		if err != nil {
+			return fmt.Errorf("detecting your public IP for the allowed CIDR: %w (pass --allowed-cidr)", err)
+		}
+		fmt.Printf("  ingress: %s (your public IP; override with --allowed-cidr)\n", allowedCidr)
+	}
+
+	resp, err := remoteDeployFn(ctx, cfg, dc, allowedCidr)
 	if err != nil {
 		return err
 	}
 
+	// Register the environment so REMOTE <env> (and the other remote
+	// subcommands) resolve to it from now on.
+	cfg.BaseURL = resp.BaseURL
+	if err := remote.SaveEnvironment(env, cfg); err != nil {
+		return err
+	}
+
 	fmt.Println()
-	fmt.Println("deployed")
+	fmt.Printf("deployed: environment %s at %s\n", env, resp.BaseURL)
+	fmt.Printf("registered: %s\n", remote.EnvConfigPath(env))
 	if resp.Seeding {
 		fmt.Printf("seeding the weights on %s — this takes ~15-20 min.\n", resp.SeedInstanceID)
 		fmt.Println("Wait for it to finish before `outfit remote start`, or the instance will")
@@ -460,4 +587,31 @@ func cmdRemoteDeploy(args []string) error {
 		fmt.Println("weights already in place — `outfit remote start` will serve this.")
 	}
 	return nil
+}
+
+// cidrPattern matches an IPv4 CIDR, the same shape the deploy Lambda accepts.
+var cidrPattern = regexp.MustCompile(`^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$`)
+
+// detectPublicCIDR returns the caller's public IPv4 address as a /32, the
+// default ingress for a fresh environment.
+func detectPublicCIDR(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://checkip.amazonaws.com", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil {
+		return "", err
+	}
+	ip := strings.TrimSpace(string(data))
+	cidr := ip + "/32"
+	if !cidrPattern.MatchString(cidr) {
+		return "", fmt.Errorf("unexpected public-IP response %q", ip)
+	}
+	return cidr, nil
 }

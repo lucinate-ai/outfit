@@ -8,7 +8,6 @@ import {
   aws_lambda_nodejs as nodejs,
   aws_s3 as s3,
   aws_secretsmanager as secretsmanager,
-  aws_ssm as ssm,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as path from 'path';
@@ -18,32 +17,35 @@ import {
   AMI_RUNNER_TAG_KEY,
   type LlmConfig,
 } from './config';
-import { UNCONFIGURED_DEPLOY_CONFIG, weightsPrefixFor } from '../lambda/shared/deploy-config';
 
 export interface LlmStackProps extends cdk.StackProps {
   config: LlmConfig;
 }
 
 // Instances the start Lambda launches carry this tag; the idle/status Lambdas
-// find "the current instance" by it.
+// find managed instances by it. Which *environment* an instance belongs to is
+// a second tag (cloud-vm-llm:env), applied at launch.
 const TAG_KEY = 'cloud-vm-llm';
 const TAG_VALUE = 'endpoint';
 
 /**
- * The scale-to-zero runtime. It holds no EC2 instance of its own: the start
- * Lambda launches one from the slim baked AMI (found by tag) on demand, trying
- * each g6e AZ until one has capacity, and the idle Lambda terminates it. The
- * model weights live in the S3 bucket here (seeded once by `pnpm seed-model`)
- * and are synced onto the instance at boot, so the instance is stateless and
- * the AMI is model-agnostic.
+ * The shared, account-level layer — deployed once by `outfit remote bootstrap`,
+ * analogous to `cdk bootstrap`. It holds what every environment reuses: the
+ * weights bucket, the VPC, the shared IAM roles, and the environment-aware
+ * lifecycle Lambdas (start/stop/deploy). It creates NO Elastic IP and NO
+ * instance: an environment — its EIP, security group (per-env allowed CIDR),
+ * API-key secret and SSM state — is created on demand by the deploy Lambda
+ * when `outfit remote deploy` names it, and the same shared Lambdas then
+ * start, stop and idle-monitor every environment's instance in the account.
  */
 export class LlmStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: LlmStackProps) {
     super(scope, id, props);
     const cfg = props.config;
 
-    // Where the weights live in S3. modelId contains "/", which is a fine S3
-    // key prefix. Seeded by `pnpm seed-model`, synced down at boot.
+    // Where the weights live in S3, shared by all environments: one model
+    // seeded once (under models/<runner>/<modelId>[/<quant>]/) serves every
+    // environment that names it.
     const weightsBucket = new s3.Bucket(this, 'Weights', {
       // Retain on destroy — the weights are ~30 GB and re-seeding takes time.
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -51,12 +53,9 @@ export class LlmStack extends cdk.Stack {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       enforceSSL: true,
     });
-    // Same derivation the deploy Lambda uses, so the initial config and the
-    // seed agree on where a model's weights live.
-    const weightsPrefix = weightsPrefixFor(cfg.runner, cfg.modelId, '');
 
     // One public subnet per g6e AZ, so the start Lambda has a target in each
-    // zone to try. No NAT gateways — the instance gets a public IP directly.
+    // zone to try. No NAT gateways — instances get public IPs directly.
     const vpc = new ec2.Vpc(this, 'Vpc', {
       availabilityZones: cfg.availabilityZones,
       natGateways: 0,
@@ -64,29 +63,17 @@ export class LlmStack extends cdk.Stack {
       subnetConfiguration: [{ name: 'public', subnetType: ec2.SubnetType.PUBLIC }],
     });
 
-    const securityGroup = new ec2.SecurityGroup(this, 'VllmSg', {
+    // The disposable seed instance's security group: outbound only (Hugging
+    // Face + S3), no ingress. Environment security groups — the ones with a
+    // per-env allowed CIDR — are created by the deploy Lambda, not here.
+    const seedSg = new ec2.SecurityGroup(this, 'SeedSg', {
       vpc,
-      description: 'vLLM endpoint - ingress restricted to the allowed CIDR',
-      allowAllOutbound: true, // S3, Secrets Manager, SSM agent outbound
-    });
-    securityGroup.addIngressRule(
-      ec2.Peer.ipv4(cfg.allowedCidr),
-      ec2.Port.tcp(cfg.vllmPort),
-      'vLLM OpenAI-compatible API',
-    );
-
-    // vLLM's API key. The launched instance reads it via its role at boot; the
-    // start Lambda returns it to the client.
-    const apiKey = new secretsmanager.Secret(this, 'ApiKey', {
-      description: 'API key for the vLLM endpoint',
-      generateSecretString: {
-        excludePunctuation: true,
-        includeSpace: false,
-        passwordLength: 48,
-      },
+      description: 'cloud-vm-llm seed instance - outbound only',
+      allowAllOutbound: true,
     });
 
     // Optional Hugging Face token, used only by the seed job for gated repos.
+    // Shared: seeding fills the shared bucket, whichever environment asked.
     let hfSecret: secretsmanager.Secret | undefined;
     if (cfg.hfToken) {
       hfSecret = new secretsmanager.Secret(this, 'HfToken', {
@@ -95,56 +82,27 @@ export class LlmStack extends cdk.Stack {
       });
     }
 
-    // Stable address so the endpoint base URL survives across launches. The
-    // start Lambda associates it with each freshly launched instance.
-    const eip = new ec2.CfnEIP(this, 'Eip', { domain: 'vpc' });
-    const baseUrl = `http://${eip.attrPublicIp}:${cfg.vllmPort}/v1`;
+    // ARN patterns for the per-environment resources the Lambdas create and
+    // read at runtime: /cloud-vm-llm/<env>/* SSM parameters and
+    // cloud-vm-llm/<env>/api-key secrets.
+    const envParamArn = `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/cloud-vm-llm/*`;
+    const envSecretArn = `arn:${cdk.Aws.PARTITION}:secretsmanager:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:secret:cloud-vm-llm/*`;
 
-    const idleState = new ssm.StringParameter(this, 'IdleState', {
-      parameterName: '/cloud-vm-llm/idle-state',
-      stringValue: '{}',
-    });
-
-    // What to serve — runner/model/context/serveArgs. The start Lambda reads it
-    // at each wake, so switching model/runner is a parameter write, not a
-    // redeploy. The parameter is outfit/manual-owned: CDK creates it with a
-    // constant placeholder (below) so a later `cdk deploy` never clobbers a
-    // real config, and `pnpm deploy` seeds this cfg-derived initial config over
-    // the placeholder ONLY while it is still unconfigured (see
-    // scripts/seed-deploy-config.mjs). The initial config is emitted as an
-    // output rather than baked into the parameter value for that reason.
-    const vllmServeArgs = [
-      ...cfg.vllmExtraArgs.split(/\s+/).filter(Boolean),
-      ...(cfg.toolCallParser
-        ? ['--enable-auto-tool-choice', '--tool-call-parser', cfg.toolCallParser]
-        : []),
-      ...(cfg.reasoningParser ? ['--reasoning-parser', cfg.reasoningParser] : []),
-    ];
-    const initialDeployConfig = {
-      runner: cfg.runner,
-      modelId: cfg.modelId,
-      quant: '',
-      weightsPrefix,
-      contextSize: cfg.maxModelLen,
-      servedModelName: cfg.modelId,
-      // llama.cpp's initial serveArgs come from the Outfit via `outfit remote
-      // deploy`; there is no sensible CDK-side default for them.
-      serveArgs: cfg.runner === 'vllm' ? vllmServeArgs : [],
-    };
-    const deployConfigParam = new ssm.StringParameter(this, 'DeployConfig', {
-      parameterName: '/cloud-vm-llm/deploy-config',
-      stringValue: UNCONFIGURED_DEPLOY_CONFIG,
-    });
-
-    // Role assumed by the launched runtime instance — SSM (for the Lambdas'
-    // health/idle checks), read the API-key secret, and read the weights.
+    // Role assumed by every environment's runtime instance — SSM (for the
+    // Lambdas' health/idle checks), read its environment's API-key secret,
+    // and read the weights.
     const instanceRole = new iam.Role(this, 'InstanceRole', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
       ],
     });
-    apiKey.grantRead(instanceRole);
+    instanceRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [envSecretArn],
+      }),
+    );
     // Broad over the whole models/ tree: the deploy-config chooses the prefix
     // (per runner + model + quant), so the grant can't be pinned to one.
     weightsBucket.grantRead(instanceRole, 'models/*');
@@ -187,17 +145,21 @@ export class LlmStack extends cdk.Stack {
         resources: [runShellScriptDocArn],
       }),
     ];
+    // The per-environment SSM state (deploy-config, idle-state) lives under
+    // /cloud-vm-llm/<env>/ — created and read at runtime, not by CDK.
+    const envParamsStatement = new iam.PolicyStatement({
+      actions: ['ssm:GetParameter', 'ssm:PutParameter'],
+      resources: [envParamArn],
+    });
 
     const commonEnv = {
       TAG_KEY,
       TAG_VALUE,
       VLLM_PORT: String(cfg.vllmPort),
-      BASE_URL: baseUrl,
-      STATE_PARAM_NAME: idleState.parameterName,
     };
 
     const startFn = new nodejs.NodejsFunction(this, 'StartFn', {
-      description: 'Launches the baked AMI (per-AZ capacity fallback) and waits until vLLM serves',
+      description: 'Launches an environment instance (per-AZ capacity fallback) and waits until it serves',
       entry: path.join(__dirname, '..', 'lambda', 'start', 'index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -213,14 +175,10 @@ export class LlmStack extends cdk.Stack {
         AMI_RUNNER_TAG_KEY,
         INSTANCE_TYPE: cfg.instanceType,
         SUBNET_IDS: vpc.publicSubnets.map((s) => s.subnetId).join(','),
-        SECURITY_GROUP_ID: securityGroup.securityGroupId,
         INSTANCE_PROFILE_ARN: instanceProfile.instanceProfileArn,
-        EIP_ALLOCATION_ID: eip.attrAllocationId,
-        API_KEY_SECRET_ARN: apiKey.secretArn,
         WEIGHTS_BUCKET: weightsBucket.bucketName,
-        // The model/runner/context/serveArgs come from the deploy-config
-        // parameter, read at wake — not baked into the Lambda env.
-        DEPLOY_CONFIG_PARAM: deployConfigParam.parameterName,
+        // The environment's EIP, security group, API key and deploy-config are
+        // all found at wake by the environment name — not baked into the env.
       },
     });
     // RunInstances resource-level scoping is impractical (it spans instance,
@@ -249,18 +207,24 @@ export class LlmStack extends cdk.Stack {
     );
     startFn.addToRolePolicy(describeStatement);
     sendCommandStatements().forEach((s) => startFn.addToRolePolicy(s));
-    // Find the latest baked AMI by tag. DescribeImages has no resource-level
-    // scoping, so it is granted broadly.
+    // Find the latest baked AMI, the environment's EIP and its security group.
+    // These Describe calls have no resource-level scoping.
     startFn.addToRolePolicy(
-      new iam.PolicyStatement({ actions: ['ec2:DescribeImages'], resources: ['*'] }),
+      new iam.PolicyStatement({
+        actions: ['ec2:DescribeImages', 'ec2:DescribeAddresses', 'ec2:DescribeSecurityGroups'],
+        resources: ['*'],
+      }),
     );
-    idleState.grantRead(startFn);
-    idleState.grantWrite(startFn);
-    deployConfigParam.grantRead(startFn);
-    apiKey.grantRead(startFn);
+    startFn.addToRolePolicy(envParamsStatement);
+    startFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [envSecretArn],
+      }),
+    );
 
     const stopFn = new nodejs.NodejsFunction(this, 'StopFn', {
-      description: 'Terminates the instance - immediately (manual) or after idle (scheduled)',
+      description: 'Terminates environment instances - immediately (manual) or after idle (scheduled sweep)',
       entry: path.join(__dirname, '..', 'lambda', 'stop', 'index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -272,9 +236,6 @@ export class LlmStack extends cdk.Stack {
         IDLE_THRESHOLD_MINUTES: String(cfg.idleThresholdMinutes),
         GRACE_PERIOD_MINUTES: String(cfg.gracePeriodMinutes),
         MAX_RUNTIME_MINUTES: String(cfg.maxRuntimeMinutes),
-        // The idle scrape reads the runner from the deploy-config to pick the
-        // right /metrics names (vLLM and llama.cpp expose different ones).
-        DEPLOY_CONFIG_PARAM: deployConfigParam.parameterName,
       },
     });
     stopFn.addToRolePolicy(
@@ -286,15 +247,15 @@ export class LlmStack extends cdk.Stack {
     );
     stopFn.addToRolePolicy(describeStatement);
     sendCommandStatements().forEach((s) => stopFn.addToRolePolicy(s));
-    idleState.grantRead(stopFn);
-    idleState.grantWrite(stopFn);
-    deployConfigParam.grantRead(stopFn);
+    stopFn.addToRolePolicy(envParamsStatement);
 
-    // The control plane `outfit remote deploy` calls: it validates the posted
-    // DeployConfig and writes it to the deploy-config parameter. outfit needs
-    // only Lambda invoke (SigV4), no SSM/EC2 perms of its own.
+    // The control plane `outfit remote deploy` calls: it creates the named
+    // environment's resources (EIP, security group, API key, SSM state) if
+    // absent, seeds the weights if missing, and writes the environment's
+    // deploy-config. outfit needs only Lambda invoke (SigV4), no SSM/EC2 perms
+    // of its own.
     const deployFn = new nodejs.NodejsFunction(this, 'DeployFn', {
-      description: 'Sets the deploy-config (runner/model/context) the next wake serves',
+      description: 'Creates an environment (EIP/SG/key/state) and sets what it serves',
       entry: path.join(__dirname, '..', 'lambda', 'deploy', 'index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -302,13 +263,14 @@ export class LlmStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(60),
       memorySize: 256,
       environment: {
-        DEPLOY_CONFIG_PARAM: deployConfigParam.parameterName,
+        VLLM_PORT: String(cfg.vllmPort),
+        VPC_ID: vpc.vpcId,
         // Seeding: the Lambda launches the disposable download instance itself
         // when the posted config names weights that are not in S3 yet.
         WEIGHTS_BUCKET: weightsBucket.bucketName,
         SEED_INSTANCE_TYPE: cfg.builderInstanceType,
         SEED_SUBNET_ID: vpc.publicSubnets[0].subnetId,
-        SEED_SECURITY_GROUP_ID: securityGroup.securityGroupId,
+        SEED_SECURITY_GROUP_ID: seedSg.securityGroupId,
         SEED_INSTANCE_PROFILE_ARN: seedProfile.instanceProfileArn,
         HF_TOKEN_SECRET_ARN: hfSecret?.secretArn ?? '',
         AMI_ROLE_TAG_KEY,
@@ -316,15 +278,32 @@ export class LlmStack extends cdk.Stack {
         AMI_RUNNER_TAG_KEY,
       },
     });
-    deployConfigParam.grantRead(deployFn);
-    deployConfigParam.grantWrite(deployFn);
+    deployFn.addToRolePolicy(envParamsStatement);
     // Read-only on the weights: the Lambda only checks whether the sentinel
     // object exists; the seed instance itself does the writing.
     weightsBucket.grantRead(deployFn, 'models/*');
+    // Environment creation: allocate the EIP, create the security group and
+    // reconcile its ingress, tag both at creation. Describe* are unscoped.
     deployFn.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ['ec2:DescribeImages', 'ec2:RunInstances', 'ec2:CreateTags'],
+        actions: [
+          'ec2:DescribeImages',
+          'ec2:DescribeAddresses',
+          'ec2:DescribeSecurityGroups',
+          'ec2:RunInstances',
+          'ec2:AllocateAddress',
+          'ec2:CreateSecurityGroup',
+          'ec2:AuthorizeSecurityGroupIngress',
+          'ec2:RevokeSecurityGroupIngress',
+          'ec2:CreateTags',
+        ],
         resources: ['*'],
+      }),
+    );
+    deployFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['secretsmanager:CreateSecret', 'secretsmanager:DescribeSecret'],
+        resources: [envSecretArn],
       }),
     );
     // Only the seed role, and only to EC2 — so this cannot be used to hand the
@@ -342,39 +321,31 @@ export class LlmStack extends cdk.Stack {
     const deployUrl = deployFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
     new events.Rule(this, 'IdleCheckRule', {
-      description: 'Periodic idle check for the vLLM instance',
+      description: 'Periodic idle sweep across every environment instance',
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
       targets: [new targets.LambdaFunction(stopFn)],
     });
 
+    // Discovery: `outfit remote deploy` reads these stack outputs (by the
+    // well-known stack name) to find the shared layer from any machine with
+    // account access — no local file carries them.
     new cdk.CfnOutput(this, 'StartUrl', { value: startUrl.url });
     new cdk.CfnOutput(this, 'StopUrl', { value: stopUrl.url });
     new cdk.CfnOutput(this, 'DeployUrl', { value: deployUrl.url });
-    new cdk.CfnOutput(this, 'BaseUrl', { value: baseUrl });
-    new cdk.CfnOutput(this, 'EipAddress', { value: eip.attrPublicIp });
-    new cdk.CfnOutput(this, 'ModelId', { value: cfg.modelId });
     new cdk.CfnOutput(this, 'Region', { value: this.region });
-    // Consumed by `pnpm seed-model` to launch the disposable seed instance.
     new cdk.CfnOutput(this, 'WeightsBucket', { value: weightsBucket.bucketName });
-    // No WeightsPrefix output: the prefix is derived per deployed model and
-    // stored in the deploy-config parameter, so a stack-level value would only
-    // ever be a guess from the CDK defaults.
-    // `pnpm deploy`'s seed step (scripts/seed-deploy-config.mjs) writes this
-    // cfg-derived initial config over the parameter's `unconfigured`
-    // placeholder the first time, and never overwrites an outfit/manual value.
-    new cdk.CfnOutput(this, 'DeployConfigParam', { value: deployConfigParam.parameterName });
-    new cdk.CfnOutput(this, 'InitialDeployConfig', { value: JSON.stringify(initialDeployConfig) });
+    new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
+    // Consumed by `pnpm seed-model` to launch the disposable seed instance.
     new cdk.CfnOutput(this, 'SeedInstanceProfileArn', { value: seedProfile.instanceProfileArn });
     new cdk.CfnOutput(this, 'SeedInstanceType', { value: cfg.builderInstanceType });
     new cdk.CfnOutput(this, 'SeedSubnetId', { value: vpc.publicSubnets[0].subnetId });
-    new cdk.CfnOutput(this, 'SeedSecurityGroupId', { value: securityGroup.securityGroupId });
+    new cdk.CfnOutput(this, 'SeedSecurityGroupId', { value: seedSg.securityGroupId });
     new cdk.CfnOutput(this, 'HfTokenSecretArn', { value: hfSecret?.secretArn ?? '' });
-    // `pnpm write-config` reads this from the outputs file to generate
-    // remote.json. It carries base_url too: the endpoint sits on a stable
-    // Elastic IP, so its address is deployment state that belongs in the
-    // generated config.
+    // The control URLs shared by every environment. No base_url here: an
+    // environment's address is its own EIP, allocated at `outfit remote
+    // deploy` and returned by it.
     new cdk.CfnOutput(this, 'OutfitRemoteConfig', {
-      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","region":"${this.region}","base_url":"${baseUrl}"}`,
+      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","region":"${this.region}"}`,
     });
   }
 }
