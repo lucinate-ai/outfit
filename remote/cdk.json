@@ -1,21 +1,22 @@
 {
   "app": "npx tsx bin/app.ts",
-  "requireApproval": "never",
   "context": {
     "//": "Shared-layer overrides (all optional). Per-environment settings — model, runner, context size, allowed CIDR — are given to `outfit remote deploy`, not here.",
     "//examples": {
-      "region": "us-east-1",
       "availabilityZones": "us-east-1b,us-east-1c,us-east-1d,us-east-1e",
-      "hfToken": "",
-      "instanceType": "g6e.xlarge",
       "builderInstanceType": "m5.xlarge",
-      "imageVolumeGb": 80,
-      "vllmVersion": "0.26.0",
-      "llamacppRelease": "b10107",
-      "nvidiaDriverPackage": "nvidia-driver-570-server-open",
-      "idleThresholdMinutes": 15,
       "gracePeriodMinutes": 30,
-      "maxRuntimeMinutes": 240
-    }
-  }
+      "hfToken": "",
+      "idleThresholdMinutes": 15,
+      "imageVolumeGb": 80,
+      "instanceType": "g6e.xlarge",
+      "llamacppRelease": "b10107",
+      "maxRuntimeMinutes": 240,
+      "nvidiaDriverPackage": "nvidia-driver-570-server-open",
+      "region": "us-east-1",
+      "vllmVersion": "0.26.0"
+    },
+    "runners": "llamacpp,vllm"
+  },
+  "requireApproval": "never"
 }

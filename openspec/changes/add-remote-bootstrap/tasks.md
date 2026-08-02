@@ -62,4 +62,4 @@
 
 - [x] 10.1 Add the bootstrap flow (once-per-account shared setup) to `docs/commands/remote.md` and `remote/README.md`, keeping the manual sequence as under-the-hood detail; note that environments come from `outfit remote deploy`.
 - [x] 10.2 Run `go test ./... -cover` (keep ≥ 80%), `gofmt`, and `outfit remote bootstrap --dry-run` to confirm the plan renders and nothing runs.
-- [ ] 10.3 End-to-end on a throwaway AWS account: `outfit remote bootstrap` → confirm → shared stack deployed, its outputs present, no EIP/instance created.
+- [x] 10.3 End-to-end on a throwaway AWS account: `outfit remote bootstrap` → confirm → shared stack deployed, its outputs present, no EIP/instance created.
