@@ -14,9 +14,6 @@ import (
 	"github.com/tailscale/hujson"
 )
 
-// envFilePath returns the path to the .env file alongside this program's
-// source, mirroring the original "the .env next to the tool" behaviour.
-
 // EnvResolver returns a lookup that prefers a `.env` beside the Outfit being
 // applied, falling back to the process environment. dir is that Outfit's
 // directory; when empty — a selection made entirely from flags, with no Outfit
@@ -53,6 +50,40 @@ func readEnvFileVar(path, name string) string {
 		}
 	}
 	return ""
+}
+
+// ParseEnvFile reads every KEY=VALUE from a dotenv-style file, using the same
+// conventions as readEnvFileVar: leading/trailing whitespace and surrounding
+// double quotes are stripped from the value. Blank lines, full-line `#`
+// comments, lines with no `=`, and entries with an empty value are skipped; on a
+// repeated key the last wins. A missing file is not an error — the `.env` beside
+// an Outfit is optional — so it yields an empty map and a nil error.
+func ParseEnvFile(path string) (map[string]string, error) {
+	vars := map[string]string{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return vars, nil
+		}
+		return nil, err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		if !ok || key == "" {
+			continue
+		}
+		value = strings.Trim(strings.TrimSpace(value), `"`)
+		if value == "" {
+			continue
+		}
+		vars[key] = value
+	}
+	return vars, nil
 }
 
 // configDir returns the user's global opencode config directory.
