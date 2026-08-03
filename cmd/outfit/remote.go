@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/contextsize"
@@ -31,7 +33,7 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|stats|deploy|env|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|metrics|deploy|env|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -43,8 +45,8 @@ func cmdRemote(args []string) error {
 		return cmdRemoteStop(rest)
 	case "status":
 		return cmdRemoteStatus(rest)
-	case "stats":
-		return cmdRemoteStats(rest)
+	case "metrics":
+		return cmdRemoteMetrics(rest)
 	case "deploy":
 		return cmdRemoteDeploy(rest)
 	case "env":
@@ -53,7 +55,7 @@ func cmdRemote(args []string) error {
 		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, stop, status, stats, deploy, env or ls)", sub)
+"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, deploy, env or ls)", sub)
 	}
 }
 
@@ -461,28 +463,85 @@ func cmdRemoteStatus(args []string) error {
 	return nil
 }
 
-// cmdRemoteStats queries the stats Lambda for instance metrics: token usage,
-// GPU, CPU, and RAM utilization. Output is a key-value table to stdout;
-// progress and errors go to stderr. With --cost, it looks up the on-demand
-// price for the instance type from the AWS Price List API.
-func cmdRemoteStats(args []string) error {
-	fs := flag.NewFlagSet("remote stats", flag.ContinueOnError)
-	var withCost bool
+// cmdRemoteMetrics queries the stats Lambda for instance metrics: token usage,
+// GPU, CPU, and RAM utilization. With --format=json it outputs JSON; the
+// default is a key-value table. With --cost, it looks up the on-demand price
+// for the instance type from the AWS Price List API. With --watch it polls
+// every 60 seconds until interrupted.
+func cmdRemoteMetrics(args []string) error {
+	fs := flag.NewFlagSet("remote metrics", flag.ContinueOnError)
+	var (
+		withCost bool
+		format   string
+		watch    bool
+	)
 	fs.BoolVar(&withCost, "cost", false, "include cost estimate from AWS Price List API")
+	fs.StringVar(&format, "format", "table", "output format: table (default) or json")
+	fs.BoolVar(&watch, "watch", false, "poll metrics every 60 seconds")
+	fs.BoolVar(&watch, "w", false, "shorthand for --watch")
 	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
+	if format != "table" && format != "json" {
+		return fmt.Errorf("--format must be \"table\" or \"json\", got %q", format)
+	}
+
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
 	if err != nil {
 		return err
 	}
 
-	ctx := context.Background()
+	if watch {
+		return runMetricsWatch(cfg, format, withCost)
+	}
+	return runMetricsOnce(context.Background(), cfg, format, withCost)
+}
+
+func runMetricsOnce(ctx context.Context, cfg remote.Config, format string, withCost bool) error {
 	resp, err := remote.Stats(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
+	if format == "json" {
+		return formatMetricsJSON(resp, withCost, cfg)
+	}
+	return formatMetricsTable(ctx, resp, withCost, cfg)
+}
+
+func runMetricsWatch(cfg remote.Config, format string, withCost bool) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel()
+	}()
+
+	first := true
+	for {
+		if !first {
+			fmt.Fprintln(os.Stdout)
+			fmt.Fprintln(os.Stdout, "---")
+		}
+		first = false
+		if err := runMetricsOnce(ctx, cfg, format, withCost); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(metricsWatchInterval):
+		}
+	}
+}
+
+func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCost bool, cfg remote.Config) error {
 	fmt.Printf("environment:  %s\n", resp.Environment)
 	fmt.Printf("state:        %s\n", resp.State)
 
@@ -496,7 +555,6 @@ func cmdRemoteStats(args []string) error {
 		return nil
 	}
 
-	// Running — show instance and metrics.
 	if resp.InstanceID != "" {
 		fmt.Printf("instance:     %s\n", resp.InstanceID)
 	}
@@ -513,7 +571,6 @@ func cmdRemoteStats(args []string) error {
 		fmt.Printf("uptime:       %s\n", formatDuration(resp.UptimeSeconds))
 	}
 
-	// Token metrics.
 	if resp.Tokens != nil {
 		fmt.Println()
 		fmt.Printf("  running:          %d\n", resp.Tokens.Running)
@@ -522,7 +579,6 @@ func cmdRemoteStats(args []string) error {
 		fmt.Printf("  requests:         %d\n", resp.Tokens.Requests)
 	}
 
-	// GPU stats.
 	if len(resp.GPUs) > 0 {
 		fmt.Println()
 		for _, g := range resp.GPUs {
@@ -531,7 +587,6 @@ func cmdRemoteStats(args []string) error {
 			fmt.Printf("  GPU %d: %s  util=%d%%  mem=%s/%s  temp=%dC\n",
 				g.Index, g.Name, g.Utilization, memUsed, memTotal, g.Temperature)
 		}
-		// Aggregate for multi-GPU.
 		if len(resp.GPUs) > 1 {
 			var totalUtil, totalMemUsed, totalMemTotal int64
 			for _, g := range resp.GPUs {
@@ -545,13 +600,11 @@ func cmdRemoteStats(args []string) error {
 		}
 	}
 
-	// CPU.
 	if resp.CPU != nil {
 		fmt.Println()
 		fmt.Printf("  CPU: %.0f%% util\n", resp.CPU.Utilization)
 	}
 
-	// Memory.
 	if resp.Memory != nil {
 		memUsed := formatBytes(resp.Memory.Used)
 		memTotal := formatBytes(resp.Memory.Total)
@@ -559,15 +612,55 @@ func cmdRemoteStats(args []string) error {
 		fmt.Printf("  RAM: %s/%s (%.0f%%)\n", memUsed, memTotal, pct)
 	}
 
-	// Cost estimate.
-	if withCost && resp.UptimeSeconds > 0 {
-		if price, err := getOnDemandPrice(ctx, cfg.Region, "g6e.xlarge"); err == nil {
+	if withCost && resp.UptimeSeconds > 0 && resp.InstanceType != "" {
+		if price, err := getOnDemandPrice(ctx, cfg.Region, resp.InstanceType); err == nil {
 			hours := float64(resp.UptimeSeconds) / 3600.0
 			fmt.Printf("  cost so far:  $%.2f (%.4f/hr)\n", hours*price, price)
 		}
 	}
 
-	// Errors (to stderr).
+	if len(resp.Errors) > 0 {
+		fmt.Fprintln(os.Stderr, "metric collection errors:")
+		for _, e := range resp.Errors {
+			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		}
+	}
+
+	return nil
+}
+
+func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Config) error {
+	var costInfo *float64
+	if withCost && resp.UptimeSeconds > 0 && resp.InstanceType != "" {
+		if price, err := getOnDemandPrice(context.Background(), cfg.Region, resp.InstanceType); err == nil {
+			hours := float64(resp.UptimeSeconds) / 3600.0
+			cost := hours * price
+			costInfo = &cost
+		}
+	}
+
+	if costInfo != nil {
+		type output struct {
+			remote.StatsResponse
+			Cost *float64 `json:"cost"`
+		}
+		out := output{
+			StatsResponse: *resp,
+			Cost:          costInfo,
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+	} else {
+		data, err := json.MarshalIndent(resp, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(data))
+	}
+
 	if len(resp.Errors) > 0 {
 		fmt.Fprintln(os.Stderr, "metric collection errors:")
 		for _, e := range resp.Errors {
@@ -774,6 +867,10 @@ var (
 	remoteStatusFn     = remote.Status
 	detectPublicCIDRFn = detectPublicCIDR
 )
+
+// metricsWatchInterval is the polling interval for --watch mode.
+// Tests override this to avoid sleeping 60 seconds.
+var metricsWatchInterval = 60 * time.Second
 
 func cmdRemoteDeploy(args []string) error {
 	fs := flag.NewFlagSet("remote deploy", flag.ContinueOnError)

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
@@ -359,7 +360,7 @@ func TestRemote_IgnoresLowercaseOutfitFile(t *testing.T) {
 	}
 }
 
-func TestRemoteStats_Running(t *testing.T) {
+func TestRemoteMetrics_Running(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -391,13 +392,12 @@ func TestRemoteStats_Running(t *testing.T) {
 		}`))
 	}))
 	defer server.Close()
-	// WriteRemoteConfig requires StartURL/StopURL for validation; stats reuses the same URL.
 	writeRemoteConfig(t, server.URL)
 	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
 
 	out := captureStdout(t, func() {
-		if err := cmdRemoteStats(nil); err != nil {
-			t.Errorf("cmdRemoteStats: %v", err)
+		if err := cmdRemoteMetrics(nil); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
 		}
 	})
 	for _, want := range []string{
@@ -418,12 +418,12 @@ func TestRemoteStats_Running(t *testing.T) {
 		"RAM: 4.0 GB/16.0 GB",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("stats output missing %q:\n%s", want, out)
+			t.Errorf("metrics output missing %q:\n%s", want, out)
 		}
 	}
 }
 
-func TestRemoteStats_Stopped(t *testing.T) {
+func TestRemoteMetrics_Stopped(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -440,19 +440,19 @@ func TestRemoteStats_Stopped(t *testing.T) {
 	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
 
 	out := captureStdout(t, func() {
-		if err := cmdRemoteStats(nil); err != nil {
-			t.Errorf("cmdRemoteStats: %v", err)
+		if err := cmdRemoteMetrics(nil); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
 		}
 	})
 	if !strings.Contains(out, "state:        stopped") {
-		t.Errorf("stats output missing stopped state:\n%s", out)
+		t.Errorf("metrics output missing stopped state:\n%s", out)
 	}
 	if strings.Contains(out, "prompt tokens") {
 		t.Errorf("stopped instance should not show token metrics:\n%s", out)
 	}
 }
 
-func TestRemoteStats_WithErrors(t *testing.T) {
+func TestRemoteMetrics_WithErrors(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -469,14 +469,122 @@ func TestRemoteStats_WithErrors(t *testing.T) {
 	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
 
 	errOut := captureStderr(t, func() {
-		if err := cmdRemoteStats(nil); err != nil {
-			t.Errorf("cmdRemoteStats: %v", err)
+		if err := cmdRemoteMetrics(nil); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
 		}
 	})
 	for _, want := range []string{"metric collection errors", "nvidia-smi failed", "vmstat timeout"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr missing %q:\n%s", want, errOut)
 		}
+	}
+}
+
+func TestRemoteMetrics_DefaultFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-abc123",
+			"instanceType": "g6e.xlarge",
+			"uptimeSeconds": 100
+		}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteMetrics(nil); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
+		}
+	})
+	if !strings.Contains(out, "environment:  dev") || !strings.Contains(out, "state:        running") {
+		t.Errorf("default format should be table, got:\n%s", out)
+	}
+}
+
+func TestRemoteMetrics_JsonFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-abc123",
+			"instanceType": "g6e.xlarge",
+			"runner": "llamacpp",
+			"modelId": "test/model",
+			"uptimeSeconds": 300
+		}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteMetrics([]string{"--format=json"}); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
+		}
+	})
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	if result["environment"] != "dev" {
+		t.Errorf("expected environment=dev, got %v", result["environment"])
+	}
+	if result["state"] != "running" {
+		t.Errorf("expected state=running, got %v", result["state"])
+	}
+	if result["instanceId"] != "i-abc123" {
+		t.Errorf("expected instanceId=i-abc123, got %v", result["instanceId"])
+	}
+}
+
+func TestRemoteMetrics_JsonFormatWithCost(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-abc123",
+			"instanceType": "g6e.xlarge",
+			"uptimeSeconds": 300
+		}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteMetrics([]string{"--format=json", "--cost"}); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
+		}
+	})
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	if result["environment"] != "dev" {
+		t.Errorf("expected environment=dev, got %v", result["environment"])
+	}
+}
+
+func TestRemoteMetrics_InvalidFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	writeRemoteConfig(t, "http://localhost:0")
+
+	err := cmdRemoteMetrics([]string{"--format=csv"})
+	if err == nil || !strings.Contains(err.Error(), "format") {
+		t.Errorf("expected format error, got %v", err)
 	}
 }
 
@@ -541,5 +649,171 @@ func TestSortFlagsBeforeArgs(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+func TestRemoteMetrics_WatchMode(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		// Fail on 3rd call to stop the loop.
+		if callCount >= 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message": "server error"}`))
+			return
+		}
+		w.Write([]byte(`{"environment": "dev", "state": "running", "uptimeSeconds": 100}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	// Short interval so the test completes quickly.
+	oldInterval := metricsWatchInterval
+	metricsWatchInterval = 50 * time.Millisecond
+	defer func() { metricsWatchInterval = oldInterval }()
+
+	out := captureStdout(t, func() {
+		err := cmdRemoteMetrics([]string{"--watch"})
+		// Expects error from the 3rd call.
+		if err == nil {
+			t.Error("watch should exit with error when server fails")
+		}
+	})
+
+	if callCount < 3 {
+		t.Errorf("watch should have polled at least 3 times, got %d calls", callCount)
+	}
+	if !strings.Contains(out, "environment:  dev") {
+		t.Errorf("watch output missing environment:\n%s", out)
+	}
+	// Should see separator between outputs.
+	if !strings.Contains(out, "---") {
+		t.Errorf("watch output should contain separator between refreshes:\n%s", out)
+	}
+}
+
+func TestRemoteMetrics_WatchShortFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount >= 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message": "server error"}`))
+			return
+		}
+		w.Write([]byte(`{"environment": "dev", "state": "stopped"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	oldInterval := metricsWatchInterval
+	metricsWatchInterval = 10 * time.Millisecond
+	defer func() { metricsWatchInterval = oldInterval }()
+
+	out := captureStdout(t, func() {
+		err := cmdRemoteMetrics([]string{"-w"})
+		if err == nil {
+			t.Error("-w should exit with error when server fails")
+		}
+	})
+	if !strings.Contains(out, "environment:  dev") {
+		t.Errorf("-w flag should work like --watch:\n%s", out)
+	}
+	if callCount < 2 {
+		t.Errorf("-w should have polled at least twice, got %d calls", callCount)
+	}
+}
+
+func TestRemoteMetrics_MultiGPU(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"gpus": [
+				{"index": 0, "name": "GPU A", "utilization": 50, "memoryUsed": 1073741824, "memoryTotal": 2147483648, "temperature": 60},
+				{"index": 1, "name": "GPU B", "utilization": 70, "memoryUsed": 2147483648, "memoryTotal": 2147483648, "temperature": 75}
+			]
+		}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteMetrics(nil); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
+		}
+	})
+	for _, want := range []string{"GPU 0: GPU A", "GPU 1: GPU B", "avg util:", "total mem:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("multi-GPU output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRemoteMetrics_JsonStopped(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment": "dev", "state": "stopped"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteMetrics([]string{"--format=json"}); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
+		}
+	})
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	if result["state"] != "stopped" {
+		t.Errorf("expected state=stopped, got %v", result["state"])
+	}
+}
+
+func TestRemoteMetrics_JsonWithErrors(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"uptimeSeconds": 100,
+			"errors": ["nvidia-smi failed"]
+		}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteMetrics([]string{"--format=json"}); err != nil {
+			t.Errorf("cmdRemoteMetrics: %v", err)
+		}
+	})
+	var result map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &result); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	errors, ok := result["errors"].([]any)
+	if !ok || len(errors) == 0 {
+		t.Errorf("expected errors in JSON output:\n%s", out)
 	}
 }
