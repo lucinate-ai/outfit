@@ -316,7 +316,7 @@ func printRemoteEnv(resp *remote.Response) {
 
 func cmdRemoteEnv(args []string) error {
 	fs := flag.NewFlagSet("remote env", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -423,7 +423,7 @@ func cmdRemoteList(args []string) error {
 
 func cmdRemoteStop(args []string) error {
 	fs := flag.NewFlagSet("remote stop", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -440,7 +440,7 @@ func cmdRemoteStop(args []string) error {
 
 func cmdRemoteStatus(args []string) error {
 	fs := flag.NewFlagSet("remote status", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -469,7 +469,7 @@ func cmdRemoteStats(args []string) error {
 	fs := flag.NewFlagSet("remote stats", flag.ContinueOnError)
 	var withCost bool
 	fs.BoolVar(&withCost, "cost", false, "include cost estimate from AWS Price List API")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -788,7 +788,7 @@ func cmdRemoteDeploy(args []string) error {
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
 	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
 	fs.StringVar(&region, "region", "", "AWS region of the shared layer (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 
