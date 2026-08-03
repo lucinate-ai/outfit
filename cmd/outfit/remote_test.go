@@ -156,6 +156,43 @@ func TestRemoteStart_NoExportsWithoutFlag(t *testing.T) {
 	}
 }
 
+// Start with -env after a positional argument still parses the flag.
+// Regression test: Go's flag package stops at the first non-flag argument,
+// so `outfit remote start path -env` would silently ignore -env without
+// sortFlagsBeforeArgs.
+func TestRemoteStart_FlagAfterPositional(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	outfitFile := "PROVIDER openai-compatible\nREMOTE remote.json\n"
+	if err := os.WriteFile(filepath.Join(dir, "Outfit"), []byte(outfitFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := json.Marshal(remote.Config{StartURL: server.URL, StopURL: server.URL, EnvURL: server.URL, Region: "eu-west-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "remote.json"), cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteStart([]string{dir, "-e"}); err != nil {
+			t.Errorf("cmdRemoteStart: %v", err)
+		}
+	})
+	if !strings.Contains(out, "export OPENAI_BASE_URL=http://198.51.100.1:8000/v1") ||
+		!strings.Contains(out, "export OPENAI_API_KEY=sk-test") {
+		t.Errorf("start with -e after positional should print exports, got:\n%s", out)
+	}
+}
+
 // Remote env command prints exports for a running endpoint.
 func TestRemoteEnv_PrintsExports(t *testing.T) {
 	isolateConfig(t)
@@ -493,6 +530,33 @@ func TestFormatBytes(t *testing.T) {
 	for _, tc := range tests {
 		if got := formatBytes(tc.in); got != tc.want {
 			t.Errorf("formatBytes(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestSortFlagsBeforeArgs(t *testing.T) {
+	tests := []struct {
+		in   []string
+		want []string
+	}{
+		{[]string{}, []string{}},
+		{[]string{"-env"}, []string{"-env"}},
+		{[]string{"path"}, []string{"path"}},
+		{[]string{"path", "-env"}, []string{"-env", "path"}},
+		{[]string{"-env", "path"}, []string{"-env", "path"}},
+		{[]string{"path", "-e"}, []string{"-e", "path"}},
+	}
+	for _, tc := range tests {
+		got := sortFlagsBeforeArgs(tc.in)
+		if len(got) != len(tc.want) {
+			t.Errorf("sortFlagsBeforeArgs(%v) = %v (len %d), want %v (len %d)", tc.in, got, len(got), tc.want, len(tc.want))
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("sortFlagsBeforeArgs(%v) = %v, want %v", tc.in, got, tc.want)
+				break
+			}
 		}
 	}
 }

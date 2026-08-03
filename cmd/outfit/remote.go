@@ -331,6 +331,22 @@ func cmdRemoteEnv(args []string) error {
 	return nil
 }
 
+// sortFlagsBeforeArgs moves flag arguments (starting with -) before positional
+// arguments, so Go's flag package parses them regardless of order. The stdlib
+// flag package stops at the first non-flag argument, so flags after a positional
+// arg are silently ignored.
+func sortFlagsBeforeArgs(args []string) []string {
+	flags, pos := []string{}, []string{}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+		} else {
+			pos = append(pos, a)
+		}
+	}
+	return append(flags, pos...)
+}
+
 func cmdRemoteStart(args []string) error {
 	fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
 	var timeout time.Duration
@@ -340,7 +356,7 @@ func cmdRemoteStart(args []string) error {
 	var printEnv bool
 	fs.BoolVar(&printEnv, "env", false, "print export lines to stdout for eval")
 	fs.BoolVar(&printEnv, "e", false, "print export lines to stdout for eval (shorthand)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
