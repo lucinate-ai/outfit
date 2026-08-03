@@ -950,11 +950,12 @@ func cmdHarness(args []string) error {
 
 	// A .env beside the applied Outfit is where its keys live, so the launched
 	// agent is given the same ones. Without an Outfit there is no such file and
-	// only the environment is passed on.
+	// only the environment (plus any provider key outfit resolves) is passed on.
+	var sel outfit.Selection
 	var envDir string
 	if outfitPath.set {
 		var err error
-		if envDir, err = applyBeforeLaunch(outfitPath, providers, h, rest); err != nil {
+		if sel, envDir, err = applyBeforeLaunch(outfitPath, providers, h, rest); err != nil {
 			return err
 		}
 	}
@@ -966,6 +967,14 @@ func cmdHarness(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = harnessEnv(providers, opencode.EnvResolver(envDir))
+	// A worn Outfit brings its whole local environment to the launched agent:
+	// its adjacent .env fills any gaps left above, and its ENV instructions
+	// override everything. These shape only the child's environment — outfit
+	// never mutates its own — and follow the same precedence the remote commands
+	// use: ENV > process environment > .env.
+	if outfitPath.set {
+		cmd.Env = overlayLocalEnv(cmd.Env, sel, envDir)
+	}
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%s not found — install the %s harness or add it to your PATH", bin, h.Name())
@@ -1010,6 +1019,53 @@ func harnessEnv(providersPath string, resolve func(string) string) []string {
 	return env
 }
 
+// overlayLocalEnv layers the worn Outfit's local environment onto the agent's
+// env: the whole `.env` beside the Outfit fills variables the base does not
+// already carry, then the Outfit's ENV instructions override whatever is there.
+// dir is the Outfit's directory. base already holds outfit's process
+// environment and any provider key it resolved, so the `.env` only fills genuine
+// gaps and ENV alone can override an exported variable — the precedence is
+// ENV > process environment > `.env`, the same rule the remote commands follow.
+// A `.env` that cannot be read is not fatal; the agent launches without it.
+func overlayLocalEnv(base []string, sel outfit.Selection, dir string) []string {
+	out := append([]string(nil), base...)
+	at := map[string]int{}
+	for i, kv := range out {
+		if k, _, ok := strings.Cut(kv, "="); ok {
+			at[k] = i
+		}
+	}
+	set := func(key, value string) {
+		if i, ok := at[key]; ok {
+			out[i] = key + "=" + value
+			return
+		}
+		at[key] = len(out)
+		out = append(out, key+"="+value)
+	}
+
+	// The .env only fills gaps, so a variable already in base (process
+	// environment or a resolved provider key) is left untouched.
+	if vars, err := opencode.ParseEnvFile(filepath.Join(dir, ".env")); err == nil {
+		keys := make([]string, 0, len(vars))
+		for k := range vars {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if _, ok := at[k]; !ok {
+				set(k, vars[k])
+			}
+		}
+	}
+
+	// ENV overrides everything, even an exported variable.
+	for _, e := range sel.Env {
+		set(e.Key, e.Value)
+	}
+	return out
+}
+
 // flagsTerminated reports whether flag parsing stopped at an explicit bare
 // `--`. The flag package consumes that terminator without reporting it, so the
 // only reliable trace is the last argument it swallowed — scanning args for a
@@ -1050,16 +1106,16 @@ func namesAnOutfitOrAlias(arg string) bool {
 // harness, inspected only to catch a path that was meant for the flag.
 // It returns the applied Outfit's directory, which is where its `.env` lives,
 // so the launched agent can be given the same keys the apply resolved.
-func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) (string, error) {
+func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) (outfit.Selection, string, error) {
 	// The flag's value has to be attached, so `--outfit ./dev/Outfit` (or
 	// `--outfit q3`) would otherwise apply ./Outfit and quietly hand the path
 	// or alias to the harness.
 	if f.path == "" && len(rest) > 0 && namesAnOutfitOrAlias(rest[0]) {
-		return "", fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
+		return outfit.Selection{}, "", fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
 	}
 	sel, path, err := readOutfit("outfit harness --outfit=<file>", f.path)
 	if err != nil {
-		return "", err
+		return outfit.Selection{}, "", err
 	}
 	// As for apply, --providers overrides the catalogue the selection resolves
 	// against (an Outfit never names one).
@@ -1067,10 +1123,10 @@ func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, re
 	fmt.Printf("Applying %s\n\n", path)
 	envDir := filepath.Dir(path)
 	if err := applySelection(sel, h, envDir); err != nil {
-		return "", err
+		return outfit.Selection{}, "", err
 	}
 	fmt.Println()
-	return envDir, nil
+	return sel, envDir, nil
 }
 
 // namesAnOutfit reports whether arg points at an Outfit file, or at a directory

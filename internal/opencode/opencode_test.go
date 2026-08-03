@@ -343,17 +343,30 @@ func TestEnvResolver_FallsBackToTheEnvironment(t *testing.T) {
 		t.Errorf("with no Outfit directory, want the environment's value, got %q", got)
 	}
 
-	// The file wins when it has the variable, so a project can override.
+	// An exported variable beats the .env — the environment always wins.
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=sk-beside\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := EnvResolver(dir)("OPENAI_API_KEY"); got != "sk-beside" {
-		t.Errorf("the Outfit's .env should win, got %q", got)
+	if got := EnvResolver(dir)("OPENAI_API_KEY"); got != "sk-exported" {
+		t.Errorf("the exported value should win over the .env, got %q", got)
 	}
 	// …and the environment still answers for anything the file omits.
 	if got := EnvResolver(dir)("SOMETHING_ELSE"); got != "" {
 		t.Errorf("unset variable resolved to %q", got)
+	}
+}
+
+// The .env only fills a gap: it answers for a variable the environment leaves
+// unset, but never overrides an exported one.
+func TestEnvResolver_DotEnvFillsAGap(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=sk-beside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENAI_API_KEY", "")
+	if got := EnvResolver(dir)("OPENAI_API_KEY"); got != "sk-beside" {
+		t.Errorf("with the variable unset, the .env should fill the gap, got %q", got)
 	}
 }
 

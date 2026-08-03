@@ -14,11 +14,15 @@ import (
 	"github.com/tailscale/hujson"
 )
 
-// EnvResolver returns a lookup that prefers a `.env` beside the Outfit being
-// applied, falling back to the process environment. dir is that Outfit's
+// EnvResolver returns a lookup that prefers the process environment, falling
+// back to a `.env` beside the Outfit being applied. dir is that Outfit's
 // directory; when empty — a selection made entirely from flags, with no Outfit
 // to sit beside — the working directory is used, so `outfit add` still finds a
 // project's own `.env`.
+//
+// The process environment wins so an exported variable always beats the `.env`,
+// which only fills a gap — the same precedence the remote commands follow, so
+// the whole tool resolves local variables the same way.
 //
 // The file sits beside the Outfit rather than beside the binary because that is
 // where it belongs to a project — the same rule PRESET and REMOTE follow — so an
@@ -29,10 +33,10 @@ func EnvResolver(dir string) func(string) string {
 		dir = "."
 	}
 	return func(name string) string {
-		if v := readEnvFileVar(filepath.Join(dir, ".env"), name); v != "" {
+		if v := os.Getenv(name); v != "" {
 			return v
 		}
-		return os.Getenv(name)
+		return readEnvFileVar(filepath.Join(dir, ".env"), name)
 	}
 }
 

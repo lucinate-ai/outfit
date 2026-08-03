@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lucinate-ai/outfit/internal/outfit"
 )
 
 // readPiModels reads ~/.pi/agent/models.json (HOME must be set) for assertions.
@@ -730,5 +732,159 @@ func TestHarnessEnv_DoesNotOverrideTheEnvironment(t *testing.T) {
 		if kv == "OPENAI_API_KEY=sk-from-dotenv" {
 			t.Error("the .env value overrode an exported one")
 		}
+	}
+}
+
+// envValue returns the value the env slice carries for key, or "" and false.
+func envValue(env []string, key string) (string, bool) {
+	prefix := key + "="
+	var value string
+	var found bool
+	// Later assignments win, matching how exec treats a duplicated key.
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			value, found = strings.TrimPrefix(kv, prefix), true
+		}
+	}
+	return value, found
+}
+
+func writeDotEnv(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The adjacent .env fills a variable the base environment leaves unset.
+func TestOverlayLocalEnv_DotEnvFillsAGap(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "AWS_PROFILE=dev\n")
+
+	out := overlayLocalEnv([]string{"PATH=/usr/bin"}, outfit.Selection{}, dir)
+	if got, ok := envValue(out, "AWS_PROFILE"); !ok || got != "dev" {
+		t.Errorf("AWS_PROFILE = %q (present=%v), want the .env value", got, ok)
+	}
+}
+
+// A variable already in the base environment beats the .env — the .env only
+// fills gaps.
+func TestOverlayLocalEnv_BaseBeatsDotEnv(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "AWS_PROFILE=fromdotenv\n")
+
+	out := overlayLocalEnv([]string{"AWS_PROFILE=exported"}, outfit.Selection{}, dir)
+	if got, _ := envValue(out, "AWS_PROFILE"); got != "exported" {
+		t.Errorf("AWS_PROFILE = %q, want the base value to win over the .env", got)
+	}
+}
+
+// An ENV instruction overrides both the base environment and the .env.
+func TestOverlayLocalEnv_EnvOverridesBoth(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "AWS_PROFILE=fromdotenv\n")
+	sel := outfit.Selection{Env: []outfit.EnvVar{{Key: "AWS_PROFILE", Value: "fromenv"}}}
+
+	out := overlayLocalEnv([]string{"AWS_PROFILE=exported"}, sel, dir)
+	if got, _ := envValue(out, "AWS_PROFILE"); got != "fromenv" {
+		t.Errorf("AWS_PROFILE = %q, want the ENV value to override both", got)
+	}
+}
+
+// stubHarnessDumpingEnv puts a script named after the harness binary first on
+// PATH that writes its whole environment to envFile, so a launch can assert what
+// the agent actually receives.
+func stubHarnessDumpingEnv(t *testing.T, name, envFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	body := "#!/bin/sh\nenv > " + envFile + "\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestHarness_LaunchedAgentSeesLocalEnvironment is the end-to-end check that the
+// worn Outfit's local environment reaches the launched agent with the right
+// precedence: ENV > shell > .env.
+func TestHarness_LaunchedAgentSeesLocalEnvironment(t *testing.T) {
+	isolateConfig(t)
+	envFile := filepath.Join(t.TempDir(), "childenv")
+	stubHarnessDumpingEnv(t, "opencode", envFile)
+
+	dir := t.TempDir()
+	// FOO: set by ENV, .env and the shell — ENV must win.
+	// BAR: only in the .env — it fills a gap and reaches the agent.
+	// BAZ: in the shell and the .env — the shell wins.
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL gemma\nENV FOO=fromenv\n")
+	mustWrite(t, filepath.Join(dir, ".env"), "FOO=fromdotenv\nBAR=frombar\nBAZ=fromdotenv\n")
+	t.Setenv("FOO", "fromshell")
+	t.Setenv("BAZ", "fromshell")
+
+	captureStdout(t, func() {
+		if err := cmdHarness([]string{filepath.Join(dir, "Outfit"), "run"}); err != nil {
+			t.Fatalf("cmdHarness: %v", err)
+		}
+	})
+
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("agent did not launch: %v", err)
+	}
+	got, _ := envValue(strings.Split(string(data), "\n"), "FOO")
+	if got != "fromenv" {
+		t.Errorf("agent FOO = %q, want ENV to win", got)
+	}
+	if got, _ := envValue(strings.Split(string(data), "\n"), "BAR"); got != "frombar" {
+		t.Errorf("agent BAR = %q, want the .env to fill the gap", got)
+	}
+	if got, _ := envValue(strings.Split(string(data), "\n"), "BAZ"); got != "fromshell" {
+		t.Errorf("agent BAZ = %q, want the shell to win over the .env", got)
+	}
+}
+
+// TestHarness_NoOutfitAppliesNoOverlay checks that without a worn Outfit the
+// launch adds no whole-.env overlay and no ENV values — only the shell (plus any
+// provider key outfit resolves) reaches the agent.
+func TestHarness_NoOutfitAppliesNoOverlay(t *testing.T) {
+	isolateConfig(t)
+	envFile := filepath.Join(t.TempDir(), "childenv")
+	stubHarnessDumpingEnv(t, "opencode", envFile)
+
+	// A .env sits in the working directory, but with no Outfit worn its
+	// non-key variables must not be forwarded.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, ".env"), "BAR=frombar\n")
+	t.Chdir(dir)
+
+	captureStdout(t, func() {
+		if err := cmdHarness([]string{"run"}); err != nil {
+			t.Fatalf("cmdHarness: %v", err)
+		}
+	})
+
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("agent did not launch: %v", err)
+	}
+	if got, ok := envValue(strings.Split(string(data), "\n"), "BAR"); ok {
+		t.Errorf("agent BAR = %q, want no overlay when no Outfit is worn", got)
+	}
+}
+
+// The overlay shapes only the returned slice; outfit's own process environment
+// is never mutated, so nothing leaks past the launched agent.
+func TestOverlayLocalEnv_DoesNotMutateProcessEnv(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "OUTFIT_LEAK_CHECK=fromdotenv\n")
+	sel := outfit.Selection{Env: []outfit.EnvVar{{Key: "OUTFIT_ENV_LEAK_CHECK", Value: "fromenv"}}}
+
+	overlayLocalEnv(os.Environ(), sel, dir)
+
+	if v := os.Getenv("OUTFIT_LEAK_CHECK"); v != "" {
+		t.Errorf("the .env leaked into the process env: OUTFIT_LEAK_CHECK=%q", v)
+	}
+	if v := os.Getenv("OUTFIT_ENV_LEAK_CHECK"); v != "" {
+		t.Errorf("an ENV value leaked into the process env: OUTFIT_ENV_LEAK_CHECK=%q", v)
 	}
 }
