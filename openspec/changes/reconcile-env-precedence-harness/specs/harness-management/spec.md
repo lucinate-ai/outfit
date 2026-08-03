@@ -11,10 +11,12 @@ outfit's own environment, then the adjacent `.env`. An `ENV` instruction SHALL
 therefore override an exported variable; the `.env` SHALL only fill a variable
 that is otherwise unset. These values SHALL be placed only in the launched
 agent's environment — outfit SHALL NOT mutate its own process environment on this
-path. When outfit launches with no Outfit worn, only the process environment is
-passed on. Neither harness stores a secret itself — each resolves a reference
-when it runs — so a key kept where only outfit reads it still reaches the agent.
-Failure to read the provider catalogue SHALL NOT prevent the launch.
+path. When outfit launches with no Outfit worn, the whole-`.env` overlay and the
+`ENV` instructions SHALL NOT be applied, though outfit SHALL still forward the
+provider keys it can resolve. Neither harness stores a secret itself — each
+resolves a reference when it runs — so a key kept where only outfit reads it still
+reaches the agent. Failure to read the provider catalogue SHALL NOT prevent the
+launch.
 
 #### Scenario: A key only outfit can see still reaches the agent
 
@@ -41,11 +43,11 @@ Failure to read the provider catalogue SHALL NOT prevent the launch.
   and the harness is launched
 - **THEN** the launched agent sees the `ENV` value
 
-#### Scenario: Launching without an Outfit passes only the environment
+#### Scenario: Launching without an Outfit applies no overlay
 
 - **WHEN** the harness is launched with no Outfit worn
-- **THEN** no adjacent `.env` or `ENV` values are added and the agent receives
-  outfit's process environment
+- **THEN** outfit applies no whole-`.env` overlay and no `ENV` instructions; the
+  agent runs with outfit's environment plus any provider key outfit resolves
 
 #### Scenario: An unreadable catalogue still launches the agent
 

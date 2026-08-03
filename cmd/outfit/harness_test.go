@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lucinate-ai/outfit/internal/outfit"
 )
 
 // readPiModels reads ~/.pi/agent/models.json (HOME must be set) for assertions.
@@ -730,5 +732,78 @@ func TestHarnessEnv_DoesNotOverrideTheEnvironment(t *testing.T) {
 		if kv == "OPENAI_API_KEY=sk-from-dotenv" {
 			t.Error("the .env value overrode an exported one")
 		}
+	}
+}
+
+// envValue returns the value the env slice carries for key, or "" and false.
+func envValue(env []string, key string) (string, bool) {
+	prefix := key + "="
+	var value string
+	var found bool
+	// Later assignments win, matching how exec treats a duplicated key.
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			value, found = strings.TrimPrefix(kv, prefix), true
+		}
+	}
+	return value, found
+}
+
+func writeDotEnv(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The adjacent .env fills a variable the base environment leaves unset.
+func TestOverlayLocalEnv_DotEnvFillsAGap(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "AWS_PROFILE=dev\n")
+
+	out := overlayLocalEnv([]string{"PATH=/usr/bin"}, outfit.Selection{}, dir)
+	if got, ok := envValue(out, "AWS_PROFILE"); !ok || got != "dev" {
+		t.Errorf("AWS_PROFILE = %q (present=%v), want the .env value", got, ok)
+	}
+}
+
+// A variable already in the base environment beats the .env — the .env only
+// fills gaps.
+func TestOverlayLocalEnv_BaseBeatsDotEnv(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "AWS_PROFILE=fromdotenv\n")
+
+	out := overlayLocalEnv([]string{"AWS_PROFILE=exported"}, outfit.Selection{}, dir)
+	if got, _ := envValue(out, "AWS_PROFILE"); got != "exported" {
+		t.Errorf("AWS_PROFILE = %q, want the base value to win over the .env", got)
+	}
+}
+
+// An ENV instruction overrides both the base environment and the .env.
+func TestOverlayLocalEnv_EnvOverridesBoth(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "AWS_PROFILE=fromdotenv\n")
+	sel := outfit.Selection{Env: []outfit.EnvVar{{Key: "AWS_PROFILE", Value: "fromenv"}}}
+
+	out := overlayLocalEnv([]string{"AWS_PROFILE=exported"}, sel, dir)
+	if got, _ := envValue(out, "AWS_PROFILE"); got != "fromenv" {
+		t.Errorf("AWS_PROFILE = %q, want the ENV value to override both", got)
+	}
+}
+
+// The overlay shapes only the returned slice; outfit's own process environment
+// is never mutated, so nothing leaks past the launched agent.
+func TestOverlayLocalEnv_DoesNotMutateProcessEnv(t *testing.T) {
+	dir := t.TempDir()
+	writeDotEnv(t, dir, "OUTFIT_LEAK_CHECK=fromdotenv\n")
+	sel := outfit.Selection{Env: []outfit.EnvVar{{Key: "OUTFIT_ENV_LEAK_CHECK", Value: "fromenv"}}}
+
+	overlayLocalEnv(os.Environ(), sel, dir)
+
+	if v := os.Getenv("OUTFIT_LEAK_CHECK"); v != "" {
+		t.Errorf("the .env leaked into the process env: OUTFIT_LEAK_CHECK=%q", v)
+	}
+	if v := os.Getenv("OUTFIT_ENV_LEAK_CHECK"); v != "" {
+		t.Errorf("an ENV value leaked into the process env: OUTFIT_ENV_LEAK_CHECK=%q", v)
 	}
 }

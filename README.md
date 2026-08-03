@@ -360,10 +360,17 @@ machine; it is never sent to the deployed instance.
 ## Keys and endpoints
 
 Each provider declares which environment variable holds its key (`outfit
-list` shows them). Values are looked up in a `.env` beside the `Outfit` first, then
-your shell environment. Local providers like Ollama, llama.cpp and oMLX need no
+list` shows them). Values are looked up in your shell environment first, then a
+`.env` beside the `Outfit`, so an exported variable always wins and the `.env`
+only fills a gap. Local providers like Ollama, llama.cpp and oMLX need no
 key;
 Bedrock authenticates through your AWS credentials.
+
+`outfit harness` carries that same local environment to the agent it launches:
+the whole `.env` beside the worn Outfit fills gaps, and the Outfit's `ENV` lines
+override both your shell and the `.env` — the same precedence the `outfit remote`
+commands use. These variables shape only the launched agent; `outfit` never
+changes its own environment.
 
 Base URLs default to the usual local ports. Override the endpoint for **any**
 provider with `--base-url`/`-u` or the `OUTFIT_BASE_URL` env var — handy for

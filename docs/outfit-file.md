@@ -100,7 +100,7 @@ One instruction per line: a keyword followed by a single value.
 | `BASEURL`  | no                               | `--base-url`   | `BASEURL https://gateway/v1`   |
 | `PRESET`   | no                               | `outfit serve` | `PRESET ./preset.ini`          |
 | `REMOTE`   | no                               | `outfit remote` | `REMOTE ./remote.json`        |
-| `ENV`      | no (repeatable)                  | `outfit remote` | `ENV AWS_PROFILE=prod`        |
+| `ENV`      | no (repeatable)                  | `outfit remote`, `outfit harness` | `ENV AWS_PROFILE=prod` |
 
 Rules:
 
@@ -128,14 +128,17 @@ Rules:
   resolved against the Outfit's own directory. The file is read in the flag
   vocabulary of the engine `PROVIDER` names, so a preset written for llama.cpp
   is not portable to oMLX and vice versa.
-- `ENV` sets an environment variable for the local `outfit` process and is the
+- `ENV` sets an environment variable on the machine running `outfit` and is the
   one keyword that **may repeat**. Its value is a single `KEY=VALUE` token (no
   spaces). The `outfit remote` commands read it — along with a `.env` beside the
   Outfit — before they sign their AWS calls, so credentials, region and
-  `OUTFIT_REMOTE_*` overrides can travel with the Outfit. Precedence, highest to
-  lowest: an `ENV` line, then a variable already set in your shell, then the
-  `.env`. `ENV` applies only on the machine running `outfit`; it is never sent to
-  a deployed instance.
+  `OUTFIT_REMOTE_*` overrides can travel with the Outfit. `outfit harness` reads
+  it too, passing the whole `.env` and the `ENV` lines to the agent it launches.
+  Precedence, highest to lowest: an `ENV` line, then a variable already set in
+  your shell, then the `.env` — the same rule everywhere outfit resolves local
+  variables. `ENV` applies only on the machine running `outfit`; it is never sent
+  to a deployed instance, and on the harness path it shapes only the launched
+  agent, never outfit's own environment.
 - Keywords are **case-insensitive** — `provider`, `Provider`, and `PROVIDER` are
   all accepted — but **UPPERCASE is canonical** and is what `outfit export`
   writes.
