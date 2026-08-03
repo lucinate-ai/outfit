@@ -175,7 +175,7 @@ func TestStart_RetriesUntilReady(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var progress []string
-	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) })
+	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +187,33 @@ func TestStart_RetriesUntilReady(t *testing.T) {
 	}
 	if len(progress) != 1 || !strings.Contains(progress[0], "starting") {
 		t.Errorf("unexpected progress lines: %v", progress)
+	}
+}
+
+// onState must see the raw state of every poll, so a caller can tell a
+// capacity wait apart from a boot rather than assume the instance is starting.
+func TestStart_ReportsEachPollState(t *testing.T) {
+	stubAWSEnv(t)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"state":"no-capacity","retry_after_seconds":0}`))
+			return
+		}
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	var states []string
+	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(states, ","); got != "no-capacity,ready" {
+		t.Errorf("onState saw %q, want %q", got, "no-capacity,ready")
 	}
 }
 
@@ -217,7 +244,7 @@ func TestStart_RetriesADroppedConnection(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var progress []string
-	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) })
+	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +279,7 @@ func TestStart_DoesNotRetryPastTheDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(ctx, cfg, func(string) {})
+	_, err := Start(ctx, cfg, func(string) {}, nil)
 	if err == nil {
 		t.Fatal("expected an error once the deadline passed")
 	}
@@ -267,7 +294,7 @@ func TestStart_Failure(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(context.Background(), cfg, func(string) {})
+	_, err := Start(context.Background(), cfg, func(string) {}, nil)
 	if err == nil || !strings.Contains(err.Error(), "cannot start") {
 		t.Errorf("expected the server's message in the error, got %v", err)
 	}
@@ -284,7 +311,7 @@ func TestStart_ContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(ctx, cfg, func(string) {})
+	_, err := Start(ctx, cfg, func(string) {}, nil)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Errorf("expected a gave-up error, got %v", err)
 	}
@@ -492,7 +519,7 @@ func TestStart_ExpiredCredentials(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, Region: "eu-west-1"}
-	if _, err := Start(context.Background(), cfg, func(string) {}); err == nil ||
+	if _, err := Start(context.Background(), cfg, func(string) {}, nil); err == nil ||
 		!strings.Contains(err.Error(), "expired or invalid") {
 		t.Errorf("expected start to fail with an expired-credentials error, got %v", err)
 	}

@@ -227,14 +227,17 @@ var startRetryWait = 5 * time.Second
 
 // Start boots the instance and blocks until the model is serving, retrying
 // while the endpoint reports it is still starting. progress is called with a
-// status line before each wait.
+// status line before each wait. onState, when non-nil, is called with the raw
+// state of every poll that returns a response, so a caller can describe what is
+// happening (booting versus waiting for capacity) rather than assume a boot is
+// underway.
 //
 // A start holds one long-lived request while the instance boots, so a network
 // blip mid-wait (switching networks, a dropped VPN) surfaces as a transport
 // error even though the boot continues server-side. Those are retried within
 // the caller's deadline: the wake is idempotent — a repeated call reattaches
 // to the same booting instance — so retrying never launches a second one.
-func Start(ctx context.Context, cfg Config, progress func(string)) (*Response, error) {
+func Start(ctx context.Context, cfg Config, progress func(string), onState func(string)) (*Response, error) {
 	for {
 		resp, err := call(ctx, cfg, http.MethodPost, cfg.StartURL, nil)
 		if err != nil {
@@ -249,6 +252,9 @@ func Start(ctx context.Context, cfg Config, progress func(string)) (*Response, e
 				continue
 			}
 			return nil, err
+		}
+		if onState != nil {
+			onState(resp.State)
 		}
 		switch {
 		case resp.StatusCode == http.StatusOK && resp.State == "ready":
