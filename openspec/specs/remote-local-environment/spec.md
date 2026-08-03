@@ -12,7 +12,8 @@ device invoking `outfit`.
 
 ### Requirement: Remote commands load the Outfit's local environment
 
-The `remote` control commands — `deploy`, `start`, `stop`, and `status` — SHALL,
+The `remote` control commands that resolve an Outfit — `deploy`, `start`,
+`stop`, `status`, and `stats` — SHALL,
 before resolving remote configuration or performing any AWS or control-plane
 work, load environment variables into the process environment from two sources
 tied to the resolved Outfit: the `.env` file beside that Outfit, and the Outfit's
@@ -30,7 +31,8 @@ SHALL proceed on the process environment alone.
 
 #### Scenario: Every control command loads the local environment
 
-- **WHEN** any of `deploy`, `start`, `stop`, or `status` resolves an Outfit
+- **WHEN** any of `deploy`, `start`, `stop`, `status`, or `stats` resolves an
+  Outfit
 - **THEN** that Outfit's adjacent `.env` and its `ENV` instructions are loaded
   before the command performs any AWS or control-plane work
 
