@@ -9,7 +9,6 @@ import {
   VMSTAT_CMD,
   FREE_CMD,
   type GpuStat,
-  type CpuStat,
   type MemoryStat,
 } from '../lambda/shared/stats';
 import { parseMetrics } from '../lambda/shared/idle';

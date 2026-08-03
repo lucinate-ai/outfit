@@ -3,7 +3,7 @@
  * it can be unit tested.
  */
 
-import { metricsGrepPattern, parseMetrics, type MetricsResult } from './idle';
+import { metricsGrepPattern, type MetricsResult } from './idle';
 import type { Runner } from './deploy-config';
 
 // ---------- GPU ----------
