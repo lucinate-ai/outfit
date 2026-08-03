@@ -196,13 +196,13 @@ func extractPrice(doc []byte, instanceType string) (float64, error) {
 		for _, product := range item.Products {
 			if product.Attributes.InstanceType == instanceType {
 				for _, plist := range product.PriceList {
-				for _, ondemand := range plist.OnDemand {
-					for _, unit := range ondemand.PricePerUnit {
-						if unit.Hour != "" {
-							return parseFloat(unit.Hour)
+					for _, ondemand := range plist.OnDemand {
+						for _, unit := range ondemand.PricePerUnit {
+							if unit.Hour != "" {
+								return parseFloat(unit.Hour)
+							}
 						}
 					}
-				}
 				}
 			}
 		}

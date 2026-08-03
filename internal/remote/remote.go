@@ -361,14 +361,14 @@ func truncate(s string, n int) string {
 
 // StatsResponse is the JSON reply from the stats Lambda.
 type StatsResponse struct {
-	StatusCode    int       `json:"-"`
-	Environment   string    `json:"environment"`
-	State         string    `json:"state"`
-	InstanceID    string    `json:"instanceId"`
-	InstanceType  string    `json:"instanceType"`
-	Runner        string    `json:"runner"`
-	ModelID       string    `json:"modelId"`
-	UptimeSeconds int       `json:"uptimeSeconds"`
+	StatusCode    int         `json:"-"`
+	Environment   string      `json:"environment"`
+	State         string      `json:"state"`
+	InstanceID    string      `json:"instanceId"`
+	InstanceType  string      `json:"instanceType"`
+	Runner        string      `json:"runner"`
+	ModelID       string      `json:"modelId"`
+	UptimeSeconds int         `json:"uptimeSeconds"`
 	Tokens        *TokenStats `json:"tokens"`
 	GPUs          []GpuStat   `json:"gpus"`
 	CPU           *CpuStat    `json:"cpu"`
@@ -389,7 +389,7 @@ type TokenStats struct {
 type GpuStat struct {
 	Index       int    `json:"index"`
 	Name        string `json:"name"`
-	Utilization  int    `json:"utilization"`
+	Utilization int    `json:"utilization"`
 	MemoryUsed  int64  `json:"memoryUsed"`
 	MemoryTotal int64  `json:"memoryTotal"`
 	Temperature int    `json:"temperature"`
