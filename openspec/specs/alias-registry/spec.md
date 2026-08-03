@@ -4,7 +4,8 @@
 
 Define the alias registry: naming an Outfit once with `outfit alias` so the
 name stands in for its path in every command that takes one (`apply`,
-`unapply`, `serve`, `harness`), and the rules that keep aliases from ever
+`unapply`, `serve`, `harness`, and the `remote` control commands `deploy`,
+`start`, `stop`, `status`, `stats`), and the rules that keep aliases from ever
 changing what an already-working command does.
 
 ## Requirements
