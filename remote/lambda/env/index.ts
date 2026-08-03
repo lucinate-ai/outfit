@@ -12,7 +12,6 @@ import {
   errorName,
   findManagedInstance,
   requireEnv,
-  type InstanceInfo,
 } from '../shared/aws';
 import {
   baseUrlFor,

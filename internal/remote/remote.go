@@ -36,7 +36,7 @@ type Config struct {
 	StartURL  string `json:"start_url"`
 	StopURL   string `json:"stop_url"`
 	DeployURL string `json:"deploy_url"`
-	StatsURL string `json:"stats_url"`
+	StatsURL  string `json:"stats_url"`
 	// EnvURL is the Lambda that returns environment variables for a running
 	// endpoint without starting it. Optional — configs predating the env Lambda
 	// still work for start/stop/deploy.
