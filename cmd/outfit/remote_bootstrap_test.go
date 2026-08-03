@@ -47,7 +47,7 @@ func stubBootstrapSeams(t *testing.T, alreadyDeployed bool) *[]recordedStep {
 	}
 	bootstrapAccountFn = func(context.Context, aws.Config) (string, error) { return "1", nil }
 	bootstrapStackDeployedFn = func(context.Context, aws.Config, string) (bool, error) { return alreadyDeployed, nil }
-	bootstrapPreflightFn = func() error { return nil }
+	bootstrapPreflightFn = func(name string, _ bool) (packageManager, error) { return managerByName(name), nil }
 	return &steps
 }
 
@@ -102,9 +102,9 @@ func TestBootstrap_EnvAndCdkWrites(t *testing.T) {
 
 func TestBootstrap_PlanOutput(t *testing.T) {
 	out := captureStderr(t, func() {
-		renderBootstrapPlan("1", "us-east-1", []string{"llamacpp", "vllm"}, "v1.10.0", "/tmp/cdk/v1.10.0", false)
+		renderBootstrapPlan("1", "us-east-1", []string{"llamacpp", "vllm"}, "v1.10.0", "/tmp/cdk/v1.10.0", false, pnpmManager)
 	})
-	for _, want := range []string{"AWS account:  1\n", "us-east-1", "llamacpp, vllm", "Image Builder", "Cost:", "pnpm run deploy"} {
+	for _, want := range []string{"AWS account:  1\n", "us-east-1", "llamacpp, vllm", "Image Builder", "Cost:", "pnpm deploy\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan missing %q:\n%s", want, out)
 		}
@@ -157,7 +157,7 @@ func TestBootstrap_ConfirmGate(t *testing.T) {
 		}
 		want := []string{
 			"pnpm install", "pnpm cdk bootstrap", "pnpm deploy:image",
-			"pnpm bake llamacpp", "pnpm bake vllm", "pnpm run deploy",
+			"pnpm bake llamacpp", "pnpm bake vllm", "pnpm deploy",
 		}
 		if strings.Join(got, "|") != strings.Join(want, "|") {
 			t.Errorf("commands = %v, want %v", got, want)
@@ -192,10 +192,195 @@ func TestBootstrap_PreflightAndRunners(t *testing.T) {
 		}
 	})
 
-	t.Run("missing tooling fails", func(t *testing.T) {
-		t.Setenv("PATH", t.TempDir()) // no node/pnpm
-		if err := checkNodeAndPnpm(); err == nil || !strings.Contains(err.Error(), "pnpm") {
-			t.Errorf("empty PATH should fail naming pnpm, got %v", err)
+	t.Run("missing tooling fails naming both managers", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir()) // no node/pnpm/npm
+		_, err := checkNodeAndPackageManager("", false)
+		if err == nil || !strings.Contains(err.Error(), "pnpm") || !strings.Contains(err.Error(), "npm") {
+			t.Errorf("empty PATH should fail naming pnpm and npm, got %v", err)
 		}
 	})
+
+	t.Run("pinned manager not installed fails naming it", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir()) // npm not present
+		_, err := checkNodeAndPackageManager("npm", true)
+		if err == nil || !strings.Contains(err.Error(), "npm") {
+			t.Errorf("pinned npm absent should fail naming npm, got %v", err)
+		}
+	})
+}
+
+// fakeExecOnPath writes an empty executable named `name` into a fresh dir and
+// puts that dir on PATH (only), so exec.LookPath finds it and nothing else.
+func fakeExecOnPath(t *testing.T, names ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
+
+// fakeNode writes a fake `node` (echoing version) and optionally `pnpm` into a
+// fresh dir that becomes the only PATH entry, so the preflight's Node-version
+// check runs against a known value without a real toolchain.
+func fakeNode(t *testing.T, version string, alsoPnpm bool) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "node"), []byte("#!/bin/sh\necho "+version+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if alsoPnpm {
+		if err := os.WriteFile(filepath.Join(dir, "pnpm"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", dir)
+}
+
+func TestCheckNodeAndPackageManager_NodeVersion(t *testing.T) {
+	t.Run("modern node with a manager passes", func(t *testing.T) {
+		fakeNode(t, "v22.3.0", true)
+		pm, err := checkNodeAndPackageManager("", false)
+		if err != nil || pm.name != "pnpm" {
+			t.Errorf("modern node + pnpm should pass, got pm=%q err=%v", pm.name, err)
+		}
+	})
+	t.Run("old node is rejected", func(t *testing.T) {
+		fakeNode(t, "v18.19.0", true)
+		if _, err := checkNodeAndPackageManager("", false); err == nil || !strings.Contains(err.Error(), "Node 22") {
+			t.Errorf("old node should be rejected, got %v", err)
+		}
+	})
+	t.Run("missing node is rejected", func(t *testing.T) {
+		fakeExecOnPath(t, "pnpm") // manager present, no node
+		if _, err := checkNodeAndPackageManager("", false); err == nil || !strings.Contains(err.Error(), "node not found") {
+			t.Errorf("missing node should be rejected, got %v", err)
+		}
+	})
+}
+
+func TestRunBootstrapSequence_SkipsSatisfiedSteps(t *testing.T) {
+	var steps []recordedStep
+	orig := bootstrapRunStep
+	t.Cleanup(func() { bootstrapRunStep = orig })
+	bootstrapRunStep = func(_ context.Context, _ string, argv []string, _ string) error {
+		steps = append(steps, recordedStep{argv: argv})
+		return nil
+	}
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// node_modules present + already bootstrapped, no force-bake: install and bake skip.
+	if err := runBootstrapSequence(context.Background(), dir, []string{"llamacpp"}, true, false, npmManager); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range steps {
+		joined := strings.Join(s.argv, " ")
+		if strings.Contains(joined, "install") {
+			t.Errorf("node_modules present should skip install, got %v", s.argv)
+		}
+		if strings.Contains(joined, "bake") {
+			t.Errorf("alreadyBootstrapped should skip bake, got %v", s.argv)
+		}
+	}
+}
+
+func TestPackageManager_Script(t *testing.T) {
+	cases := []struct {
+		pm   packageManager
+		args []string
+		want []string
+	}{
+		{pnpmManager, []string{"cdk", "bootstrap"}, []string{"pnpm", "cdk", "bootstrap"}},
+		{pnpmManager, []string{"deploy"}, []string{"pnpm", "deploy"}},
+		{npmManager, []string{"cdk", "bootstrap"}, []string{"npm", "run", "cdk", "--", "bootstrap"}},
+		{npmManager, []string{"deploy"}, []string{"npm", "run", "deploy"}},
+	}
+	for _, c := range cases {
+		got := c.pm.script(c.args[0], c.args[1:]...)
+		if strings.Join(got, " ") != strings.Join(c.want, " ") {
+			t.Errorf("%s.script(%v) = %v, want %v", c.pm.name, c.args, got, c.want)
+		}
+	}
+}
+
+func TestDetectPackageManager_PrefersPnpm(t *testing.T) {
+	t.Run("npm only when pnpm absent", func(t *testing.T) {
+		fakeExecOnPath(t, "npm")
+		pm, ok := detectPackageManager()
+		if !ok || pm.name != "npm" {
+			t.Errorf("want npm detected, got %q ok=%v", pm.name, ok)
+		}
+	})
+	t.Run("pnpm wins when both present", func(t *testing.T) {
+		fakeExecOnPath(t, "pnpm", "npm")
+		pm, ok := detectPackageManager()
+		if !ok || pm.name != "pnpm" {
+			t.Errorf("want pnpm detected, got %q ok=%v", pm.name, ok)
+		}
+	})
+	t.Run("neither present", func(t *testing.T) {
+		t.Setenv("PATH", t.TempDir())
+		if _, ok := detectPackageManager(); ok {
+			t.Errorf("empty PATH should detect nothing")
+		}
+	})
+}
+
+func TestResolvePackageManagerName_Precedence(t *testing.T) {
+	t.Run("flag beats env", func(t *testing.T) {
+		t.Setenv(packageManagerEnv, "pnpm")
+		name, pinned, err := resolvePackageManagerName("npm")
+		if err != nil || name != "npm" || !pinned {
+			t.Errorf("flag should win: name=%q pinned=%v err=%v", name, pinned, err)
+		}
+	})
+	t.Run("env used when no flag", func(t *testing.T) {
+		t.Setenv(packageManagerEnv, "npm")
+		name, pinned, err := resolvePackageManagerName("")
+		if err != nil || name != "npm" || !pinned {
+			t.Errorf("env should apply: name=%q pinned=%v err=%v", name, pinned, err)
+		}
+	})
+	t.Run("neither set auto-detects", func(t *testing.T) {
+		t.Setenv(packageManagerEnv, "")
+		name, pinned, err := resolvePackageManagerName("")
+		if err != nil || name != "" || pinned {
+			t.Errorf("unset should auto-detect: name=%q pinned=%v err=%v", name, pinned, err)
+		}
+	})
+	t.Run("invalid flag rejected", func(t *testing.T) {
+		if _, _, err := resolvePackageManagerName("yarn"); err == nil || !strings.Contains(err.Error(), "pnpm or npm") {
+			t.Errorf("invalid flag should be rejected, got %v", err)
+		}
+	})
+	t.Run("invalid env rejected", func(t *testing.T) {
+		t.Setenv(packageManagerEnv, "bun")
+		if _, _, err := resolvePackageManagerName(""); err == nil || !strings.Contains(err.Error(), packageManagerEnv) {
+			t.Errorf("invalid env should be rejected, got %v", err)
+		}
+	})
+}
+
+func TestBootstrap_NpmOverrideDrivesNpmCommands(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	steps := stubBootstrapSeams(t, false)
+	if err := cmdRemoteBootstrap([]string{"--region", "us-east-1", "--yes", "--package-manager", "npm"}); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, s := range *steps {
+		got = append(got, strings.Join(s.argv, " "))
+	}
+	want := []string{
+		"npm install", "npm run cdk -- bootstrap", "npm run deploy:image",
+		"npm run bake -- llamacpp", "npm run bake -- vllm", "npm run deploy",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("commands = %v, want %v", got, want)
+	}
 }

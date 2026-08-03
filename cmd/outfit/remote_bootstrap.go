@@ -24,7 +24,7 @@ import (
 const sharedStackName = "cloud-vm-llm"
 
 // Seams: package variables so tests drive the flow without AWS, a network, or
-// spawning pnpm/cdk.
+// spawning a package manager/cdk.
 type bootstrapStep func(ctx context.Context, name string, argv []string, workDir string) error
 
 var (
@@ -33,8 +33,100 @@ var (
 	bootstrapAccountFn                     = remote.CallerIdentity
 	bootstrapStackDeployedFn               = remote.SharedStackDeployed
 	bootstrapBakedFn                       = remote.BakedRunners
-	bootstrapPreflightFn                   = checkNodeAndPnpm
+	bootstrapPreflightFn                   = checkNodeAndPackageManager
 )
+
+// packageManagerEnv pins the Node package manager bootstrap drives the CDK
+// project with, when the --package-manager flag is not given.
+const packageManagerEnv = "OUTFIT_REMOTE_PACKAGE_MANAGER"
+
+// packageManager shapes the argv for the two things bootstrap asks of a Node
+// package manager: installing dependencies and running a package.json script.
+// pnpm forwards script arguments directly (pnpm bake llamacpp); npm needs a
+// `run` and a `--` separator before them (npm run bake -- llamacpp).
+type packageManager struct {
+	name    string
+	install []string
+}
+
+var (
+	pnpmManager = packageManager{name: "pnpm", install: []string{"pnpm", "install"}}
+	npmManager  = packageManager{name: "npm", install: []string{"npm", "install"}}
+)
+
+// script returns the argv that runs the named package.json script with args.
+func (pm packageManager) script(name string, args ...string) []string {
+	if pm.name == "npm" {
+		argv := []string{"npm", "run", name}
+		if len(args) > 0 {
+			argv = append(argv, "--")
+			argv = append(argv, args...)
+		}
+		return argv
+	}
+	return append([]string{"pnpm", name}, args...)
+}
+
+// managerByName maps a validated name to its packageManager, defaulting to the
+// preferred pnpm.
+func managerByName(name string) packageManager {
+	if name == "npm" {
+		return npmManager
+	}
+	return pnpmManager
+}
+
+// detectPackageManager picks a manager by PATH, preferring pnpm. When neither is
+// present it returns pnpm with ok=false so callers have a name to display.
+func detectPackageManager() (packageManager, bool) {
+	if _, err := exec.LookPath("pnpm"); err == nil {
+		return pnpmManager, true
+	}
+	if _, err := exec.LookPath("npm"); err == nil {
+		return npmManager, true
+	}
+	return pnpmManager, false
+}
+
+// selectPackageManager resolves the manager to use and whether it is on PATH. A
+// pinned name selects that manager; an empty name auto-detects.
+func selectPackageManager(name string) (packageManager, bool) {
+	if name == "" {
+		return detectPackageManager()
+	}
+	pm := managerByName(name)
+	_, err := exec.LookPath(pm.name)
+	return pm, err == nil
+}
+
+// validatePackageManagerName accepts only the two managers bootstrap supports.
+func validatePackageManagerName(name string) error {
+	switch name {
+	case "pnpm", "npm":
+		return nil
+	default:
+		return fmt.Errorf("unknown package manager %q — use pnpm or npm", name)
+	}
+}
+
+// resolvePackageManagerName applies the override precedence — the flag, then the
+// OUTFIT_REMOTE_PACKAGE_MANAGER env var — returning the pinned name (or "" to
+// auto-detect) and whether the choice was pinned. An unrecognised value errors.
+func resolvePackageManagerName(flagVal string) (name string, pinned bool, err error) {
+	if flagVal != "" {
+		if err := validatePackageManagerName(flagVal); err != nil {
+			return "", false, fmt.Errorf("--package-manager: %w", err)
+		}
+		return flagVal, true, nil
+	}
+	if env := os.Getenv(packageManagerEnv); env != "" {
+		if err := validatePackageManagerName(env); err != nil {
+			return "", false, fmt.Errorf("%s: %w", packageManagerEnv, err)
+		}
+		return env, true, nil
+	}
+	return "", false, nil
+}
 
 // cmdRemoteBootstrap deploys the shared, account-level infrastructure once —
 // analogous to `cdk bootstrap` — by downloading the remote/ CDK project and
@@ -52,6 +144,7 @@ func cmdRemoteBootstrap(args []string) error {
 		assumeYes   = fs.Bool("yes", false, "skip the confirmation prompt")
 		wait        = fs.Bool("wait", false, "block until the AMI bake(s) finish")
 		forceBake   = fs.Bool("force-bake", false, "re-bake the AMIs even if already bootstrapped")
+		pkgMgr      = fs.String("package-manager", "", "package manager to use: pnpm or npm (default: auto-detect, preferring pnpm)")
 	)
 	fs.BoolVar(dryRun, "n", false, "shorthand for --dry-run")
 	fs.BoolVar(assumeYes, "y", false, "shorthand for --yes")
@@ -60,6 +153,11 @@ func cmdRemoteBootstrap(args []string) error {
 	}
 
 	runners, err := parseRunners(*runnersFlag)
+	if err != nil {
+		return err
+	}
+
+	pmName, pmPinned, err := resolvePackageManagerName(*pkgMgr)
 	if err != nil {
 		return err
 	}
@@ -92,17 +190,22 @@ func cmdRemoteBootstrap(args []string) error {
 		}
 	}
 
+	var pm packageManager
 	if !*dryRun {
-		if err := bootstrapPreflightFn(); err != nil {
+		selected, err := bootstrapPreflightFn(pmName, pmPinned)
+		if err != nil {
 			return err
 		}
+		pm = selected
 		if credsErr != nil {
 			return fmt.Errorf(
 				"resolving AWS credentials: %w (configure env credentials, a profile or an SSO session)", credsErr)
 		}
+	} else {
+		pm, _ = selectPackageManager(pmName)
 	}
 
-	renderBootstrapPlan(account, resolvedRegion, runners, resolvedRef, cdkDir, alreadyBootstrapped)
+	renderBootstrapPlan(account, resolvedRegion, runners, resolvedRef, cdkDir, alreadyBootstrapped, pm)
 
 	if *dryRun {
 		return nil
@@ -124,7 +227,8 @@ func cmdRemoteBootstrap(args []string) error {
 		return err
 	}
 
-	if err := runBootstrapSequence(ctx, cdkDir, runners, alreadyBootstrapped, *forceBake); err != nil {
+	fmt.Fprintf(os.Stderr, "\nUsing %s to run the CDK project.\n", pm.name)
+	if err := runBootstrapSequence(ctx, cdkDir, runners, alreadyBootstrapped, *forceBake, pm); err != nil {
 		return err
 	}
 
@@ -152,30 +256,31 @@ func cmdRemoteBootstrap(args []string) error {
 	return nil
 }
 
-// runBootstrapSequence runs the pnpm/cdk steps in the sources directory.
-func runBootstrapSequence(ctx context.Context, cdkDir string, runners []string, alreadyBootstrapped, forceBake bool) error {
+// runBootstrapSequence runs the package-manager/cdk steps in the sources
+// directory with the resolved manager.
+func runBootstrapSequence(ctx context.Context, cdkDir string, runners []string, alreadyBootstrapped, forceBake bool, pm packageManager) error {
 	run := func(name string, argv ...string) error {
 		return bootstrapRunStep(ctx, name, argv, cdkDir)
 	}
 	if !dirExists(filepath.Join(cdkDir, "node_modules")) {
-		if err := run("pnpm install", "pnpm", "install"); err != nil {
+		if err := run("install", pm.install...); err != nil {
 			return err
 		}
 	}
-	if err := run("cdk bootstrap", "pnpm", "cdk", "bootstrap"); err != nil {
+	if err := run("cdk bootstrap", pm.script("cdk", "bootstrap")...); err != nil {
 		return err
 	}
-	if err := run("deploy:image", "pnpm", "deploy:image"); err != nil {
+	if err := run("deploy:image", pm.script("deploy:image")...); err != nil {
 		return err
 	}
 	if !alreadyBootstrapped || forceBake {
 		for _, r := range runners {
-			if err := run("bake "+r, "pnpm", "bake", r); err != nil {
+			if err := run("bake "+r, pm.script("bake", r)...); err != nil {
 				return err
 			}
 		}
 	}
-	return run("deploy", "pnpm", "run", "deploy")
+	return run("deploy", pm.script("deploy")...)
 }
 
 // runBootstrapStep runs one external command in workDir, streaming its stdio,
@@ -239,22 +344,31 @@ func loadCreds(ctx context.Context, region string) (aws.Config, error) {
 	return cfg, nil
 }
 
-func checkNodeAndPnpm() error {
-	if _, err := exec.LookPath("pnpm"); err != nil {
-		return fmt.Errorf("pnpm not found on PATH — install pnpm (and Node 22+) to run bootstrap")
+// checkNodeAndPackageManager resolves the package manager to use, requiring the
+// pinned one (or at least one of pnpm/npm when auto-detecting) on PATH, then
+// verifies Node 22+. It returns the resolved manager for the run.
+func checkNodeAndPackageManager(name string, pinned bool) (packageManager, error) {
+	pm, onPath := selectPackageManager(name)
+	if !onPath {
+		if pinned {
+			return pm, fmt.Errorf(
+				"%s was requested via --package-manager/%s but is not on PATH — install it, or omit it to auto-detect",
+				pm.name, packageManagerEnv)
+		}
+		return pm, fmt.Errorf("no Node package manager found on PATH — install pnpm (preferred) or npm, and Node 22+")
 	}
 	nodePath, err := exec.LookPath("node")
 	if err != nil {
-		return fmt.Errorf("node not found on PATH — install Node 22 or newer")
+		return pm, fmt.Errorf("node not found on PATH — install Node 22 or newer")
 	}
 	out, err := exec.Command(nodePath, "--version").Output()
 	if err != nil {
-		return fmt.Errorf("checking node version: %w", err)
+		return pm, fmt.Errorf("checking node version: %w", err)
 	}
 	if major := parseNodeMajor(string(out)); major > 0 && major < 22 {
-		return fmt.Errorf("Node %s found; bootstrap needs Node 22 or newer", strings.TrimSpace(string(out)))
+		return pm, fmt.Errorf("Node %s found; bootstrap needs Node 22 or newer", strings.TrimSpace(string(out)))
 	}
-	return nil
+	return pm, nil
 }
 
 func parseNodeMajor(version string) int {
@@ -324,7 +438,7 @@ func setCdkContext(cdkDir, key, value string) error {
 	return os.WriteFile(path, append(out, '\n'), 0o644)
 }
 
-func renderBootstrapPlan(account, region string, runners []string, ref, cdkDir string, alreadyBootstrapped bool) {
+func renderBootstrapPlan(account, region string, runners []string, ref, cdkDir string, alreadyBootstrapped bool, pm packageManager) {
 	w := os.Stderr
 	fmt.Fprintln(w, "outfit remote bootstrap — shared, account-level setup (once per account)")
 	fmt.Fprintln(w)
@@ -345,14 +459,14 @@ func renderBootstrapPlan(account, region string, runners []string, ref, cdkDir s
 	fmt.Fprintln(w, "an environment is running. See remote/docs/costs.md for the breakdown.")
 	fmt.Fprintln(w, "Note: the GPU vCPU quota must be > 0 in this region or a later launch fails.")
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Commands (in %s):\n", cdkDir)
-	fmt.Fprintln(w, "  pnpm install")
-	fmt.Fprintln(w, "  pnpm cdk bootstrap")
-	fmt.Fprintln(w, "  pnpm deploy:image")
+	fmt.Fprintf(w, "Commands (in %s, using %s):\n", cdkDir, pm.name)
+	fmt.Fprintf(w, "  %s\n", strings.Join(pm.install, " "))
+	fmt.Fprintf(w, "  %s\n", strings.Join(pm.script("cdk", "bootstrap"), " "))
+	fmt.Fprintf(w, "  %s\n", strings.Join(pm.script("deploy:image"), " "))
 	for _, r := range runners {
-		fmt.Fprintf(w, "  pnpm bake %s\n", r)
+		fmt.Fprintf(w, "  %s\n", strings.Join(pm.script("bake", r), " "))
 	}
-	fmt.Fprintln(w, "  pnpm run deploy")
+	fmt.Fprintf(w, "  %s\n", strings.Join(pm.script("deploy"), " "))
 }
 
 func confirmProceed() bool {
