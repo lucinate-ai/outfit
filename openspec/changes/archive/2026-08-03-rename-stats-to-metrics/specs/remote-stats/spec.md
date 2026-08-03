@@ -1,10 +1,4 @@
-# Remote Stats Specification
-
-## Purpose
-
-Define the `outfit remote metrics` command: reading token usage, resource consumption, and GPU information from a running remote inference instance.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Stats subcommand
 
@@ -106,3 +100,13 @@ The system SHALL support a `--watch`/`-w` flag that repeatedly queries metrics e
 
 - **WHEN** the user runs `outfit remote metrics -w` and presses Ctrl+C
 - **THEN** the command exits cleanly without error
+
+## REMOVED Requirements
+
+### Requirement: Stats subcommand name `stats`
+
+The previous subcommand name `stats` is removed. Users MUST use `metrics` instead.
+
+**Reason**: Renamed to better reflect the operational nature of the reported data (resource utilisation, token counts, cost estimates).
+
+**Migration**: Replace `outfit remote stats` with `outfit remote metrics` in all scripts and documentation.
