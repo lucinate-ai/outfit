@@ -218,23 +218,6 @@ func TestRemoteEnv_PrintsExports(t *testing.T) {
 	}
 }
 
-// Remote env command errors when the endpoint is stopped.
-func TestRemoteEnv_FailsWhenStopped(t *testing.T) {
-	isolateConfig(t)
-	stubAWSEnv(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"state":"stopped","message":"instance is not running"}`))
-	}))
-	defer server.Close()
-	writeRemoteConfig(t, server.URL)
-
-	err := cmdRemoteEnv(nil)
-	if err == nil || !strings.Contains(err.Error(), "not running") {
-		t.Errorf("env should fail for stopped instance, got %v", err)
-	}
-}
-
 func TestRemoteStatus_PrintsState(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)

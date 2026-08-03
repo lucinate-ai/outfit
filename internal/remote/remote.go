@@ -312,11 +312,10 @@ func Stop(ctx context.Context, cfg Config) (*Response, error) {
 	return resp, nil
 }
 
-// Env returns the environment variables for a running endpoint (base URL and
-// API key) without starting the instance. It calls the env Lambda, which reads
-// the key from Secrets Manager and derives the base URL from the environment's
-// Elastic IP. If the instance is stopped, it returns a 503 error telling the
-// caller to start the endpoint first.
+// Env returns the environment variables for an endpoint (base URL and API key)
+// without starting the instance. The API key is stored in Secrets Manager and
+// the EIP is allocated at deploy, so both are available regardless of instance
+// state.
 func Env(ctx context.Context, cfg Config) (*Response, error) {
 	if cfg.EnvURL == "" {
 		return nil, fmt.Errorf(
@@ -325,10 +324,6 @@ func Env(ctx context.Context, cfg Config) (*Response, error) {
 	resp, err := call(ctx, cfg, http.MethodGet, cfg.EnvURL, nil)
 	if err != nil {
 		return nil, err
-	}
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		return nil, fmt.Errorf(
-			"remote endpoint is not running: run `outfit remote start` first")
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("env failed (HTTP %d): %s", resp.StatusCode, resp.Message)

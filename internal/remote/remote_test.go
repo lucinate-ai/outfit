@@ -707,24 +707,6 @@ func TestEnv_ReturnsKeyAndBaseURL(t *testing.T) {
 	}
 }
 
-func TestEnv_FailsWhenStopped(t *testing.T) {
-	stubAWSEnv(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"state":"stopped","message":"instance is not running"}`))
-	}))
-	defer server.Close()
-
-	cfg := Config{StartURL: server.URL, StopURL: server.URL, EnvURL: server.URL, Region: "eu-west-1"}
-	_, err := Env(context.Background(), cfg)
-	if err == nil {
-		t.Fatal("expected an error for stopped instance")
-	}
-	if !strings.Contains(err.Error(), "not running") || !strings.Contains(err.Error(), "start") {
-		t.Errorf("expected helpful error, got %v", err)
-	}
-}
-
 func TestEnv_NoEnvURL(t *testing.T) {
 	stubAWSEnv(t)
 	cfg := Config{StartURL: "https://start.example/", StopURL: "https://stop.example/", Region: "eu-west-1"}

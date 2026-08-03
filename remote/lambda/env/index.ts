@@ -1,6 +1,8 @@
 /**
- * Env Lambda — returns the API key and base URL for a running endpoint.
- * Does NOT start the instance: if stopped, it returns 503.
+ * Env Lambda — returns the API key and base URL for an environment.
+ * Does NOT start the instance: the API key lives in Secrets Manager and the
+ * EIP is allocated at deploy, so both are available regardless of instance
+ * state.
  *
  * The caller (outfit harness) uses this to inject OPENAI_API_KEY and
  * OPENAI_BASE_URL into the agent's environment, so the user never has to
@@ -10,20 +12,16 @@
 import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import {
   errorName,
-  findManagedInstance,
   requireEnv,
 } from '../shared/aws';
 import {
   baseUrlFor,
-  ENV_TAG_KEY,
   environmentFrom,
   findEnvEip,
   readEnvApiKey,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
 
-const TAG_KEY = requireEnv('TAG_KEY');
-const TAG_VALUE = requireEnv('TAG_VALUE');
 const VLLM_PORT = requireEnv('VLLM_PORT');
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
@@ -32,18 +30,6 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     env = environmentFrom(event.queryStringParameters);
   } catch (err) {
     return jsonResponse(400, { error: (err as Error).message });
-  }
-
-  // Check if the environment has a running instance.
-  const instance = await findManagedInstance(TAG_KEY, TAG_VALUE, [
-    { Name: `tag:${ENV_TAG_KEY}`, Values: [env] },
-  ]);
-
-  if (!instance) {
-    return jsonResponse(503, {
-      state: 'stopped',
-      message: 'instance is not running',
-    });
   }
 
   try {
