@@ -95,8 +95,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     // Metrics scrape
     (async () => {
       try {
-        const apikey = ''; // The server-side key is embedded in the AMI; we don't need it for scraping.
-        const cmd = metricsCurlCommand(deployConfig.runner, PORT, apikey);
+        const cmd = metricsCurlCommand(deployConfig.runner, PORT);
         return await runShellCommand(instance.instanceId, cmd, 30);
       } catch (err) {
         errors.push(`metrics: ${errorName(err)}`);
