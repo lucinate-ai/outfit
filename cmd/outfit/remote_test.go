@@ -41,6 +41,56 @@ func writeRemoteConfig(t *testing.T, serverURL string) {
 	}
 }
 
+// TestRemoteEnvName covers the harness-provider-name contract: a bare REMOTE is
+// its own name, a path form takes the name from its config's environment field,
+// and an empty value or an absent/environment-less config yields "" so the caller
+// keeps the PROVIDER value.
+func TestRemoteEnvName(t *testing.T) {
+	dir := t.TempDir()
+	withEnv := filepath.Join(dir, "with-env.json")
+	if err := os.WriteFile(withEnv, []byte(`{"environment":"dev-1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withoutEnv := filepath.Join(dir, "without-env.json")
+	if err := os.WriteFile(withoutEnv, []byte(`{"base_url":"http://x/v1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name, value, want string
+	}{
+		{"empty is no name", "", ""},
+		{"bare name is itself", "dev-1", "dev-1"},
+		{"path uses environment field", withEnv, "dev-1"},
+		{"path without environment is no name", withoutEnv, ""},
+		{"absent path is tolerated", filepath.Join(dir, "missing.json"), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := remoteEnvName(tc.value, dir)
+			if err != nil {
+				t.Fatalf("remoteEnvName(%q): %v", tc.value, err)
+			}
+			if got != tc.want {
+				t.Errorf("remoteEnvName(%q) = %q, want %q", tc.value, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRemoteEnvName_Malformed checks that a path-form REMOTE naming a malformed
+// config surfaces a parse error rather than silently yielding no name.
+func TestRemoteEnvName_Malformed(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := remoteEnvName(bad, dir); err == nil {
+		t.Error("expected a parse error for a malformed remote config")
+	}
+}
+
 func TestRemoteDispatch(t *testing.T) {
 	if err := run([]string{"remote"}); err == nil || !strings.Contains(err.Error(), "usage") {
 		t.Errorf("bare remote should error with usage, got %v", err)

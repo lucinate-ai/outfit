@@ -296,6 +296,22 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string) erro
 		return fmt.Errorf("unknown provider %q (see `outfit list`)", sel.Provider)
 	}
 
+	// The catalogue provider p is resolved above by the PROVIDER value, which
+	// stays the engine definition. From here on sel.Provider is the harness-facing
+	// name: for a remote endpoint that is the environment name, so the model reads
+	// as <env>/<model> and each environment keeps its own block rather than
+	// several engines-of-the-same-kind overwriting one. The name comes from
+	// removeSelection too, so apply and unapply stay symmetric.
+	if sel.Remote != "" {
+		env, err := remoteEnvName(sel.Remote, envDir)
+		if err != nil {
+			return err
+		}
+		if env != "" {
+			sel.Provider = env
+		}
+	}
+
 	// An Outfit for a remote endpoint states no BASEURL: the address belongs to
 	// the deployment, which records it in the remote config REMOTE names. Take
 	// it from there — but only when the Outfit stated none, so a hand-written
@@ -488,12 +504,12 @@ func cmdUnapply(args []string) error {
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
-	sel, _, err := readOutfit("outfit unapply <file>", path)
+	sel, outfitPath, err := readOutfit("outfit unapply <file>", path)
 	if err != nil {
 		return err
 	}
 	sel.Providers = providers
-	return removeSelection(sel, h)
+	return removeSelection(sel, h, filepath.Dir(outfitPath))
 }
 
 // cmdAlias registers an Outfit under a short name, so it can be used anywhere a
@@ -780,14 +796,27 @@ func cmdRemove(args []string) error {
 	if err != nil {
 		return err
 	}
-	return removeSelection(sel, h)
+	return removeSelection(sel, h, "")
 }
 
 // removeSelection removes a single provider selection from the active harness's
 // config. It is the shared core of `remove` and `unapply`: both resolve a
 // selection (from flags or an Outfit file) and hand it here. It is the inverse
-// of applySelection.
-func removeSelection(sel outfit.Selection, h harness.Harness) error {
+// of applySelection, so it names the provider the same way — for a remote Outfit
+// that is the environment name, not the PROVIDER value — to remove exactly what
+// apply wrote. envDir is the Outfit's directory, needed to read a path-form
+// REMOTE's environment; it is empty for a flag-based remove.
+func removeSelection(sel outfit.Selection, h harness.Harness, envDir string) error {
+	if sel.Remote != "" {
+		env, err := remoteEnvName(sel.Remote, envDir)
+		if err != nil {
+			return err
+		}
+		if env != "" {
+			sel.Provider = env
+		}
+	}
+
 	// Resolve the model keys to remove. With no model or alias, the whole
 	// provider is removed.
 	var modelKeys []string
