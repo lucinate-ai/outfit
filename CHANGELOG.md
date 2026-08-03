@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.13.0] - 2026-08-03
+### Added
+- feat(remote): rename stats to metrics, add format and watch flags
+- feat: add remote env command and inject env vars in harness (#34)
+- feat: make remote start heartbeat state-aware and add -t timeout alias (#36)
+- feat: support npm or pnpm for the remote bootstrap step (#37)
+- feat: unify local-environment precedence and extend ENV to harness (#35)
+
+### Changed
+- chore: sync local-environment specs and archive the remote-respect-local-env change
+- docs: include remote stats in the local-environment spec
+- docs: note the remote commands accept an alias in the alias-registry spec
+
+### Fixed
+- fix(remote): convert nvidia-smi MiB to bytes in GPU stats parser
+- fix(remote): read API key from file for llamacpp metrics scrape
+- fix: surface expired AWS credentials in remote commands (#33)
+
 ## [1.12.0] - 2026-08-03
 ### Added
 - feat: add outfit remote stats command
