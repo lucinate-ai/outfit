@@ -196,10 +196,10 @@ export const VMSTAT_CMD = 'vmstat 1 2 | tail -1';
 export const FREE_CMD = 'free -b';
 
 /** Build the metrics curl command for the given runner and port. */
-export function metricsCurlCommand(runner: Runner, port: number, apiKey: string): string {
+export function metricsCurlCommand(runner: Runner, port: number): string {
   const pattern = metricsGrepPattern(runner);
   if (runner === 'llamacpp') {
-    return `curl -s -H "Authorization: Bearer ${apiKey}" --max-time 5 http://localhost:${port}/metrics | grep -E '${pattern}'`;
+    return `curl -s -H "Authorization: Bearer $(cat /etc/llm/api-key)" --max-time 5 http://localhost:${port}/metrics | grep -E '${pattern}'`;
   }
   return `curl -s --max-time 5 http://localhost:${port}/metrics | grep -E '${pattern}'`;
 }

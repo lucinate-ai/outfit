@@ -154,15 +154,15 @@ describe('buildTokenStats', () => {
 });
 
 describe('metricsCurlCommand', () => {
-  it('uses Authorization header for llamacpp', () => {
-    const cmd = metricsCurlCommand('llamacpp', 8000, 'mykey');
-    expect(cmd).toContain('-H "Authorization: Bearer mykey"');
+  it('reads API key from file for llamacpp', () => {
+    const cmd = metricsCurlCommand('llamacpp', 8000);
+    expect(cmd).toContain('-H "Authorization: Bearer $(cat /etc/llm/api-key)"');
     expect(cmd).toContain('localhost:8000/metrics');
     expect(cmd).toContain('llamacpp:');
   });
 
   it('omits auth header for vllm', () => {
-    const cmd = metricsCurlCommand('vllm', 8000, 'mykey');
+    const cmd = metricsCurlCommand('vllm', 8000);
     expect(cmd).not.toContain('Authorization');
     expect(cmd).toContain('localhost:8000/metrics');
     expect(cmd).toContain('vllm:');
