@@ -30,14 +30,22 @@ outfit remote bootstrap                 # shows a consent plan, then deploys
 outfit remote bootstrap --dry-run       # print the plan and do nothing
 outfit remote bootstrap --runners llamacpp   # bake only one engine's AMI
 outfit remote bootstrap --wait          # block until the AMI bake(s) finish
+outfit remote bootstrap --package-manager npm  # use npm instead of pnpm
 ```
 
 Before deploying, bootstrap prints a plan — the target account and region, the
 shared resources, the cost, and the exact commands — and asks you to confirm
 (`--yes` skips the prompt). It creates **no** Elastic IP or instance and **no**
 environment; those come from `outfit remote deploy`. Re-running is safe: it
-updates the shared stack and doesn't touch any live instance. It needs Node 22,
-`pnpm`, AWS credentials, and enough GPU vCPU quota for a later launch.
+updates the shared stack and doesn't touch any live instance. It needs Node 22, a
+Node package manager, AWS credentials, and enough GPU vCPU quota for a later
+launch.
+
+By default bootstrap uses `pnpm` and falls back to `npm` when `pnpm` isn't on the
+path, logging which one it picked. To pin the choice, pass `--package-manager`
+(`pnpm` or `npm`) or set `OUTFIT_REMOTE_PACKAGE_MANAGER`; the flag wins over the
+env var. A pinned manager that isn't installed fails the preflight rather than
+falling back.
 
 ## The usual flow
 
