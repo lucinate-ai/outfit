@@ -14,23 +14,23 @@ import {
 import { parseMetrics } from '../lambda/shared/idle';
 
 describe('parseGpuStats', () => {
-  it('parses a single GPU', () => {
-    const gpus = parseGpuStats('0, NVIDIA L40S, 12, 8589934592, 48318382080, 42');
+  it('parses a single GPU and converts MiB to bytes', () => {
+    const gpus = parseGpuStats('0, NVIDIA L40S, 12, 8192, 46080, 42');
     expect(gpus).toHaveLength(1);
     expect(gpus[0]).toEqual<GpuStat>({
       index: 0,
       name: 'NVIDIA L40S',
       utilization: 12,
-      memoryUsed: 8589934592,
-      memoryTotal: 48318382080,
+      memoryUsed: 8192 * 1024 * 1024,
+      memoryTotal: 46080 * 1024 * 1024,
       temperature: 42,
     });
   });
 
   it('parses multiple GPUs', () => {
     const stdout = [
-      '0, NVIDIA L40S, 12, 8589934592, 48318382080, 42',
-      '1, NVIDIA L40S, 8, 4294967296, 48318382080, 38',
+      '0, NVIDIA L40S, 12, 8192, 46080, 42',
+      '1, NVIDIA L40S, 8, 4096, 46080, 38',
     ].join('\n');
     const gpus = parseGpuStats(stdout);
     expect(gpus).toHaveLength(2);
