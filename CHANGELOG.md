@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.12.0] - 2026-08-03
+### Added
+- feat: add outfit remote stats command
+- feat: label a remote harness provider distinctly from the local engine
+- feat: name the harness provider after the remote environment
+- feat: respect the Outfit's local environment in remote commands
+
+### Changed
+- chore: sync remote environment spec and archive the harness-provider-label change
+- chore: sync remote environment spec and archive the harness-provider-name change
+
 ## [1.11.0] - 2026-08-02
 ### Added
 - feat: add qwen3.6 27B example
