@@ -142,13 +142,21 @@ to `outfit add`, not an error.
 
 ### Requirement: Keys reach the launched agent
 
-When outfit launches a harness, the agent's environment SHALL carry the API key
-variables outfit can resolve for the catalogue's providers, so a key kept where
-only outfit reads it still reaches the agent. Neither harness stores the secret
-itself — each resolves a reference when it runs — so without this the user would
-have to set the variable by hand. A variable already present in outfit's own
-environment SHALL be passed through unchanged, so an explicit setting always
-wins. Failure to read the catalogue SHALL NOT prevent the launch.
+When outfit launches a harness, the launched agent's environment SHALL carry the
+worn Outfit's local environment: the whole `.env` file beside that Outfit, and
+the Outfit's own `ENV` instructions, in addition to the API key variables outfit
+can resolve for the catalogue's providers. The precedence, highest to lowest,
+SHALL be the Outfit's `ENV` instructions, then a variable already present in
+outfit's own environment, then the adjacent `.env`. An `ENV` instruction SHALL
+therefore override an exported variable; the `.env` SHALL only fill a variable
+that is otherwise unset. These values SHALL be placed only in the launched
+agent's environment — outfit SHALL NOT mutate its own process environment on this
+path. When outfit launches with no Outfit worn, the whole-`.env` overlay and the
+`ENV` instructions SHALL NOT be applied, though outfit SHALL still forward the
+provider keys it can resolve. Neither harness stores a secret itself — each
+resolves a reference when it runs — so a key kept where only outfit reads it still
+reaches the agent. Failure to read the provider catalogue SHALL NOT prevent the
+launch.
 
 #### Scenario: A key only outfit can see still reaches the agent
 
@@ -156,13 +164,33 @@ wins. Failure to read the catalogue SHALL NOT prevent the launch.
   the environment, and the harness is launched
 - **THEN** the launched agent's environment carries that variable
 
-#### Scenario: An explicit setting is not overridden
+#### Scenario: An explicit setting is not overridden by the .env
 
-- **WHEN** the variable is already set in the environment and outfit can also
-  resolve a different value
-- **THEN** the launched agent sees the environment's value
+- **WHEN** a variable is set both in outfit's environment and in the `.env`
+  beside the worn Outfit, and the harness is launched
+- **THEN** the launched agent sees the environment's value, not the `.env` value
+
+#### Scenario: The adjacent .env fills a gap for the agent
+
+- **WHEN** a variable is set in the `.env` beside the worn Outfit and is unset in
+  outfit's environment, and the harness is launched
+- **THEN** the launched agent's environment carries the `.env` value
+
+#### Scenario: An ENV instruction overrides both
+
+- **WHEN** the worn Outfit sets a variable with an `ENV` instruction and the same
+  variable is also present in outfit's environment and/or the adjacent `.env`,
+  and the harness is launched
+- **THEN** the launched agent sees the `ENV` value
+
+#### Scenario: Launching without an Outfit applies no overlay
+
+- **WHEN** the harness is launched with no Outfit worn
+- **THEN** outfit applies no whole-`.env` overlay and no `ENV` instructions; the
+  agent runs with outfit's environment plus any provider key outfit resolves
 
 #### Scenario: An unreadable catalogue still launches the agent
 
 - **WHEN** the provider catalogue cannot be loaded
-- **THEN** the harness is launched anyway, with the environment unchanged
+- **THEN** the harness is launched anyway, with the environment otherwise
+  unchanged
