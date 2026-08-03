@@ -361,3 +361,131 @@ func TestLoadConfigFile_Missing(t *testing.T) {
 		t.Errorf("expected a does-not-exist error, got %v", err)
 	}
 }
+
+func TestStats_NoStatsURL(t *testing.T) {
+	_, err := Stats(context.Background(), Config{Region: "us-east-1"})
+	if err == nil || !strings.Contains(err.Error(), "no stats_url") {
+		t.Errorf("expected no-stats-url error, got %v", err)
+	}
+}
+
+func TestStats_Success(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("stats should GET, got %s", r.Method)
+		}
+		if auth := r.Header.Get("Authorization"); !strings.HasPrefix(auth, "AWS4-HMAC-SHA256") {
+			t.Errorf("request is not SigV4-signed: %q", auth)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-123456",
+			"instanceType": "g6e.xlarge",
+			"runner": "llamacpp",
+			"modelId": "unsloth/Qwen3.6-27B",
+			"uptimeSeconds": 7200,
+			"tokens": {
+				"running": 1,
+				"promptTokens": 50000,
+				"generationTokens": 120000,
+				"requests": 342
+			},
+			"gpus": [{
+				"index": 0,
+				"name": "NVIDIA L40S",
+				"utilization": 85,
+				"memoryUsed": 32212254720,
+				"memoryTotal": 48130938880,
+				"temperature": 72
+			}],
+			"cpu": {"utilization": 23.5},
+			"memory": {"total": 17179869184, "used": 4294967296}
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StatsURL: server.URL, Region: "us-east-1"}
+	resp, err := Stats(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Environment != "dev" || resp.State != "running" {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+	if resp.Tokens == nil || resp.Tokens.Requests != 342 {
+		t.Errorf("unexpected tokens: %+v", resp.Tokens)
+	}
+	if len(resp.GPUs) != 1 || resp.GPUs[0].Utilization != 85 {
+		t.Errorf("unexpected GPU stats: %+v", resp.GPUs)
+	}
+	if resp.CPU == nil || resp.CPU.Utilization != 23.5 {
+		t.Errorf("unexpected CPU: %+v", resp.CPU)
+	}
+	if resp.Memory == nil || resp.Memory.Used != 4294967296 {
+		t.Errorf("unexpected memory: %+v", resp.Memory)
+	}
+}
+
+func TestStats_Stopped(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "stopped",
+			"runner": "llamacpp",
+			"modelId": "unsloth/Qwen3.6-27B"
+		}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StatsURL: server.URL, Region: "us-east-1"}
+	resp, err := Stats(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.State != "stopped" || resp.Tokens != nil || len(resp.GPUs) != 0 {
+		t.Errorf("stopped instance should have no metrics: %+v", resp)
+	}
+}
+
+func TestStats_WithEnvironment(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		env := r.URL.Query().Get("env")
+		if env != "staging" {
+			t.Errorf("expected env=staging query param, got %q", env)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment":"staging","state":"running"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StatsURL: server.URL, Environment: "staging", Region: "us-east-1"}
+	resp, err := Stats(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Environment != "staging" {
+		t.Errorf("unexpected environment: %+v", resp)
+	}
+}
+
+func TestStats_ErrorResponse(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment":"dev","state":"unknown","errors":["SSM timeout"]}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StatsURL: server.URL, Region: "us-east-1"}
+	_, err := Stats(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "SSM timeout") {
+		t.Errorf("expected error with message, got %v", err)
+	}
+}

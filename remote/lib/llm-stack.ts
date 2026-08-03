@@ -316,9 +316,33 @@ export class LlmStack extends cdk.Stack {
       }),
     );
 
+    const statsFn = new nodejs.NodejsFunction(this, 'StatsFn', {
+      description: 'Returns instance metrics: token usage, GPU, CPU, RAM',
+      entry: path.join(__dirname, '..', 'lambda', 'stats', 'index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: cdk.Duration.seconds(90),
+      memorySize: 256,
+      environment: {
+        ...commonEnv,
+      },
+    });
+    statsFn.addToRolePolicy(describeStatement);
+    sendCommandStatements().forEach((s) => statsFn.addToRolePolicy(s));
+    statsFn.addToRolePolicy(envParamsStatement);
+    // Read the API key from Secrets Manager to auth the /metrics curl.
+    statsFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [envSecretArn],
+      }),
+    );
+
     const startUrl = startFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
     const stopUrl = stopFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
     const deployUrl = deployFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
+    const statsUrl = statsFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
     new events.Rule(this, 'IdleCheckRule', {
       description: 'Periodic idle sweep across every environment instance',
@@ -332,6 +356,7 @@ export class LlmStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'StartUrl', { value: startUrl.url });
     new cdk.CfnOutput(this, 'StopUrl', { value: stopUrl.url });
     new cdk.CfnOutput(this, 'DeployUrl', { value: deployUrl.url });
+    new cdk.CfnOutput(this, 'StatsUrl', { value: statsUrl.url });
     new cdk.CfnOutput(this, 'Region', { value: this.region });
     new cdk.CfnOutput(this, 'WeightsBucket', { value: weightsBucket.bucketName });
     new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
@@ -345,7 +370,7 @@ export class LlmStack extends cdk.Stack {
     // environment's address is its own EIP, allocated at `outfit remote
     // deploy` and returned by it.
     new cdk.CfnOutput(this, 'OutfitRemoteConfig', {
-      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","region":"${this.region}"}`,
+      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","region":"${this.region}"}`,
     });
   }
 }

@@ -128,10 +128,10 @@ describe('LlmStack (shared layer)', () => {
     expect(groups[0].Properties.SecurityGroupIngress).toBeUndefined();
   });
 
-  it('creates the start, stop and deploy Lambdas with IAM-authenticated function URLs', () => {
-    template.resourceCountIs('AWS::Lambda::Function', 3);
+  it('creates the start, stop, deploy and stats Lambdas with IAM-authenticated function URLs', () => {
+    template.resourceCountIs('AWS::Lambda::Function', 4);
     const urls = template.findResources('AWS::Lambda::Url');
-    expect(Object.keys(urls)).toHaveLength(3);
+    expect(Object.keys(urls)).toHaveLength(4);
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).toBe('AWS_IAM');
     }
@@ -253,6 +253,7 @@ describe('LlmStack (shared layer)', () => {
       'StartUrl',
       'StopUrl',
       'DeployUrl',
+      'StatsUrl',
       'WeightsBucket',
       'VpcId',
       'SeedInstanceProfileArn',

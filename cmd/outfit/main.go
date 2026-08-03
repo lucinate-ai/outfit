@@ -25,7 +25,7 @@
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
 //	                                      # Outfit first (--get shows it; --set stores the default)
 //	outfit completion <bash|zsh|powershell> # print the tab-completion script
-//	outfit remote bootstrap|start|stop|status|deploy|ls # control the remote GPU
+//	outfit remote bootstrap|start|stop|status|stats|deploy|ls # control the remote GPU
 //	                                      # inference instance (bootstrap does the
 //	                                      # once-per-account shared setup; deploy
 //	                                      # sets what it serves; ls lists
@@ -149,7 +149,7 @@ Usage:
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
   outfit completion <shell>         (tab completion: bash, zsh, powershell)
-  outfit remote <bootstrap|start|stop|status|deploy|ls> [path]
+		outfit remote <bootstrap|start|stop|status|stats|deploy|ls> [path]
                                     (control the remote GPU instance; bootstrap
                                      does the once-per-account shared setup;
                                      deploy sets what it serves, from the Outfit;
