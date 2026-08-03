@@ -480,6 +480,88 @@ func TestStartProgress_HeartbeatsAndStops(t *testing.T) {
 	}
 }
 
+// The heartbeat must describe what is really happening: while the endpoint
+// reports no capacity, nothing is booting, so it must not claim the instance is
+// still starting.
+func TestStartProgress_HeartbeatReflectsState(t *testing.T) {
+	t.Run("no-capacity says waiting for capacity", func(t *testing.T) {
+		stderr := captureStderr(t, func() {
+			p := newStartProgress(10 * time.Millisecond)
+			p.setState("no-capacity")
+			time.Sleep(45 * time.Millisecond)
+			p.close()
+		})
+		if !strings.Contains(stderr, "waiting for capacity") {
+			t.Errorf("expected a capacity-wait heartbeat, got:\n%s", stderr)
+		}
+		if strings.Contains(stderr, "still starting") {
+			t.Errorf("must not claim it is starting while out of capacity, got:\n%s", stderr)
+		}
+	})
+
+	t.Run("a booting state says still starting", func(t *testing.T) {
+		stderr := captureStderr(t, func() {
+			p := newStartProgress(10 * time.Millisecond)
+			p.setState("starting")
+			time.Sleep(45 * time.Millisecond)
+			p.close()
+		})
+		if !strings.Contains(stderr, "still starting") {
+			t.Errorf("expected a starting heartbeat while booting, got:\n%s", stderr)
+		}
+		if strings.Contains(stderr, "waiting for capacity") {
+			t.Errorf("a booting instance is not a capacity wait, got:\n%s", stderr)
+		}
+	})
+
+	// The line tracks the latest poll: once capacity is found and the instance
+	// starts booting, the heartbeat must stop reporting a capacity wait.
+	t.Run("the latest state wins after a transition", func(t *testing.T) {
+		p := newStartProgress(time.Hour) // no ticks; drive the line directly
+		p.setState("no-capacity")
+		if got := p.heartbeat(); !strings.Contains(got, "waiting for capacity") {
+			t.Errorf("after no-capacity, heartbeat = %q, want a capacity wait", got)
+		}
+		p.setState("starting")
+		if got := p.heartbeat(); !strings.Contains(got, "still starting") {
+			t.Errorf("after booting, heartbeat = %q, want a starting line", got)
+		}
+		p.close()
+	})
+}
+
+// -t is a shorthand for --timeout: a very short one makes a never-ready start
+// give up promptly rather than block for the 15m default.
+func TestRemoteStart_TimeoutShorthand(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	// Never returns ready, so only the timeout ends the wait.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"state":"starting","retry_after_seconds":0}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	// Silence the progress line this writes to stderr; the wait is what matters.
+	oldStderr := os.Stderr
+	_, w, _ := os.Pipe()
+	os.Stderr = w
+	defer func() { os.Stderr = oldStderr; w.Close() }()
+
+	done := make(chan error, 1)
+	go func() { done <- cmdRemoteStart([]string{"-t", "80ms"}) }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected a timeout error, got nil")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("-t 80ms did not bound the wait; command is still blocking")
+	}
+}
+
 // Progress must not land on stdout, or `outfit remote start | grep '^export '`
 // would pick it up.
 func TestRemoteStart_StdoutCarriesOnlyTheResult(t *testing.T) {

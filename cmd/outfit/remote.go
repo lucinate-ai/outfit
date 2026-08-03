@@ -235,6 +235,7 @@ const heartbeatEvery = 30 * time.Second
 type startProgress struct {
 	mu    sync.Mutex
 	since time.Time
+	state string // most recent state the endpoint reported; "" until the first poll
 	done  chan struct{}
 	stop  sync.Once
 }
@@ -249,11 +250,33 @@ func newStartProgress(every time.Duration) *startProgress {
 			case <-p.done:
 				return
 			case <-ticker.C:
-				p.line(fmt.Sprintf("still starting (%s elapsed)", p.elapsed()))
+				p.line(p.heartbeat())
 			}
 		}
 	}()
 	return p
+}
+
+// setState records the state of the latest poll so the heartbeat can describe
+// what is actually happening. Called from remote.Start on every poll.
+func (p *startProgress) setState(state string) {
+	p.mu.Lock()
+	p.state = state
+	p.mu.Unlock()
+}
+
+// heartbeat is the periodic line. It reflects the latest state so it does not
+// claim the instance is booting when it is really blocked on capacity. Any
+// state other than no-capacity (including the unset state before the first
+// poll) reads as a normal cold start.
+func (p *startProgress) heartbeat() string {
+	p.mu.Lock()
+	state := p.state
+	p.mu.Unlock()
+	if state == "no-capacity" {
+		return fmt.Sprintf("still waiting for capacity (%s elapsed)", p.elapsed())
+	}
+	return fmt.Sprintf("still starting (%s elapsed)", p.elapsed())
 }
 
 func (p *startProgress) elapsed() time.Duration {
@@ -275,7 +298,9 @@ func (p *startProgress) close() {
 func cmdRemoteStart(args []string) error {
 	fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
 	var timeout time.Duration
-	fs.DurationVar(&timeout, "timeout", 15*time.Minute, "overall time to wait for the endpoint")
+	const timeoutUsage = "overall time to wait for the endpoint"
+	fs.DurationVar(&timeout, "timeout", 15*time.Minute, timeoutUsage)
+	fs.DurationVar(&timeout, "t", 15*time.Minute, timeoutUsage+" (shorthand)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -291,7 +316,7 @@ func cmdRemoteStart(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	resp, err := remote.Start(ctx, cfg, progress.line)
+	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState)
 	if err != nil {
 		return err
 	}
