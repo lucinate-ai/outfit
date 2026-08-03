@@ -355,7 +355,7 @@ func cmdRemoteStart(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState)
+	_, err = remote.Start(ctx, cfg, progress.line, progress.setState)
 	if err != nil {
 		return err
 	}
@@ -363,7 +363,13 @@ func cmdRemoteStart(args []string) error {
 	progress.line(fmt.Sprintf("ready after %s", progress.elapsed()))
 
 	if printEnv {
-		printRemoteEnv(resp)
+		envCtx, envCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		envResp, err := remote.Env(envCtx, cfg)
+		envCancel()
+		if err != nil {
+			return err
+		}
+		printRemoteEnv(envResp)
 	}
 	return nil
 }
