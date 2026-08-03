@@ -21,9 +21,12 @@ export interface GpuStat {
  * Parse nvidia-smi CSV output for per-GPU stats. The command used is:
  *   nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits
  * which produces lines like:
- *   0, NVIDIA L40S, 12, 8589934592, 48318382080, 42
+ *   0, NVIDIA L40S, 12, 8192, 46080, 42
+ * Memory values are in MiB (nounits strips the label but not the unit);
+ * convert to bytes so the Go CLI's formatBytes renders correctly.
  */
 export function parseGpuStats(stdout: string): GpuStat[] {
+  const MiBToBytes = 1024 * 1024;
   const gpus: GpuStat[] = [];
   for (const line of stdout.split('\n')) {
     const trimmed = line.trim();
@@ -38,8 +41,8 @@ export function parseGpuStats(stdout: string): GpuStat[] {
       index: parseInt(parts[0], 10),
       name: parts[1],
       utilization: parseInt(parts[2], 10) || 0,
-      memoryUsed: parseInt(parts[3], 10) || 0,
-      memoryTotal: parseInt(parts[4], 10) || 0,
+      memoryUsed: (parseInt(parts[3], 10) || 0) * MiBToBytes,
+      memoryTotal: (parseInt(parts[4], 10) || 0) * MiBToBytes,
       temperature: parseInt(parts[5], 10) || 0,
     });
   }
