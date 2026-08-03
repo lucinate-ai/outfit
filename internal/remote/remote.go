@@ -21,6 +21,7 @@ import (
 	"time"
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/smithy-go"
 )
 
 // httpClient is a package variable so tests can substitute it. The long
@@ -211,7 +212,11 @@ func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string
 		if detail == "" {
 			detail = resp.Message
 		}
-		return nil, fmt.Errorf("deploy failed (HTTP %d): %s", resp.StatusCode, detail)
+		hint := ""
+		if resp.StatusCode == http.StatusForbidden {
+			hint = forbiddenHint(detail)
+		}
+		return nil, fmt.Errorf("deploy failed (HTTP %d)%s: %s", resp.StatusCode, hint, detail)
 	}
 	return resp, nil
 }
@@ -260,20 +265,38 @@ func Start(ctx context.Context, cfg Config, progress func(string)) (*Response, e
 			case <-time.After(time.Duration(wait) * time.Second):
 			}
 		default:
-			return nil, fmt.Errorf("start failed (HTTP %d, state %q): %s",
-				resp.StatusCode, resp.State, resp.Message)
+			hint := ""
+			if resp.StatusCode == http.StatusForbidden {
+				hint = forbiddenHint(resp.Message)
+			}
+			return nil, fmt.Errorf("start failed (HTTP %d, state %q)%s: %s",
+				resp.StatusCode, resp.State, hint, resp.Message)
 		}
 	}
 }
 
 // Status reports the instance state and endpoint health without side effects.
 func Status(ctx context.Context, cfg Config) (*Response, error) {
-	return call(ctx, cfg, http.MethodGet, cfg.StartURL, nil)
+	resp, err := call(ctx, cfg, http.MethodGet, cfg.StartURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, controlReplyError("status", resp)
+	}
+	return resp, nil
 }
 
 // Stop stops the instance immediately rather than waiting for the idle timer.
 func Stop(ctx context.Context, cfg Config) (*Response, error) {
-	return call(ctx, cfg, http.MethodPost, cfg.StopURL, nil)
+	resp, err := call(ctx, cfg, http.MethodPost, cfg.StopURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, controlReplyError("stop", resp)
+	}
+	return resp, nil
 }
 
 // call signs and sends one request. body is nil for the bodyless calls
@@ -323,7 +346,7 @@ func call(ctx context.Context, cfg Config, method, rawURL string, body []byte) (
 	if err := json.Unmarshal(respBody, out); err != nil {
 		hint := ""
 		if resp.StatusCode == http.StatusForbidden {
-			hint = " (do your AWS credentials grant lambda:InvokeFunctionUrl?)"
+			hint = forbiddenHint(string(respBody))
 		}
 		return nil, fmt.Errorf("%s returned HTTP %d%s: %s",
 			method, resp.StatusCode, hint, truncate(string(respBody), 200))
@@ -341,6 +364,10 @@ func sign(ctx context.Context, req *http.Request, region string, body []byte) er
 	}
 	creds, err := awsCfg.Credentials.Retrieve(ctx)
 	if err != nil {
+		if credentialError(err) {
+			return fmt.Errorf(
+				"AWS credentials are expired or invalid: %w (%s)", err, refreshCredsHint)
+		}
 		return fmt.Errorf(
 			"resolving AWS credentials: %w (configure env credentials, a profile or an SSO session)", err)
 	}
@@ -359,9 +386,90 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
+// refreshCredsHint is the fix appended when a request is rejected because the
+// caller's AWS credentials are expired or invalid, rather than lacking
+// permission — outfit stores no credentials of its own to refresh.
+const refreshCredsHint = "refresh your env credentials, profile, or SSO session"
+
+// credentialErrorCodes are the SDK/smithy error codes that mean the caller's
+// credentials are expired or otherwise invalid. The same tokens appear in the
+// body of an authorizer 403 on a Function URL, where the rejection arrives as
+// an HTTP reply rather than a typed error.
+var credentialErrorCodes = []string{
+	"ExpiredToken",
+	"ExpiredTokenException",
+	"InvalidClientTokenId",
+	"RequestExpired",
+	"UnrecognizedClientException",
+}
+
+// credentialError reports whether err is an AWS expired- or invalid-credential
+// failure — distinct from lacking permission. It matches a smithy API error
+// code first, then falls back to the message text, since SSO and some
+// credential-provider failures surface as plain errors, not typed ones.
+func credentialError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		for _, code := range credentialErrorCodes {
+			if apiErr.ErrorCode() == code {
+				return true
+			}
+		}
+	}
+	return expiredCredsMarker(err.Error())
+}
+
+// expiredCredsMarker matches the stable tokens AWS uses for an expired or
+// invalid credential, in an error string or the body of an authorizer 403.
+func expiredCredsMarker(s string) bool {
+	for _, code := range credentialErrorCodes {
+		if strings.Contains(s, code) {
+			return true
+		}
+	}
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "security token") && strings.Contains(lower, "expired")
+}
+
+// forbiddenHint builds the guidance appended to an HTTP 403 from a control
+// endpoint: a rejection carrying an expired/invalid-credential marker tells the
+// user to refresh their credentials; anything else keeps the IAM-permission
+// hint, since a resolvable credential that lacks lambda:InvokeFunctionUrl fails
+// the same way.
+func forbiddenHint(detail string) string {
+	if expiredCredsMarker(detail) {
+		return fmt.Sprintf(" (AWS credentials are expired or invalid — %s)", refreshCredsHint)
+	}
+	return " (do your AWS credentials grant lambda:InvokeFunctionUrl?)"
+}
+
+// controlReplyError turns a non-success control reply into an error, reading the
+// reply's own detail (error or message) and, for a 403, classifying whether the
+// credentials are expired/invalid or merely lack permission. Callers that treat
+// some non-200 statuses as expected (Start's 503 "still starting") must handle
+// those before falling through to this.
+func controlReplyError(method string, resp *Response) error {
+	detail := resp.Error
+	if detail == "" {
+		detail = resp.Message
+	}
+	hint := ""
+	if resp.StatusCode == http.StatusForbidden {
+		hint = forbiddenHint(detail)
+	}
+	return fmt.Errorf("%s returned HTTP %d%s: %s", method, resp.StatusCode, hint, truncate(detail, 200))
+}
+
 // StatsResponse is the JSON reply from the stats Lambda.
 type StatsResponse struct {
-	StatusCode    int         `json:"-"`
+	StatusCode int `json:"-"`
+	// Message carries a rejection reason on a non-success reply — including the
+	// authorizer's own text on a 403 — so an expired-credential rejection can be
+	// classified even though the stats fields are empty.
+	Message       string      `json:"message"`
 	Environment   string      `json:"environment"`
 	State         string      `json:"state"`
 	InstanceID    string      `json:"instanceId"`
@@ -419,7 +527,15 @@ func Stats(ctx context.Context, cfg Config) (*StatsResponse, error) {
 		return nil, err
 	}
 	if out.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("stats failed (HTTP %d): %s", out.StatusCode, strings.Join(out.Errors, "; "))
+		detail := strings.Join(out.Errors, "; ")
+		if detail == "" {
+			detail = out.Message
+		}
+		hint := ""
+		if out.StatusCode == http.StatusForbidden {
+			hint = forbiddenHint(detail)
+		}
+		return nil, fmt.Errorf("stats failed (HTTP %d)%s: %s", out.StatusCode, hint, detail)
 	}
 	return out, nil
 }
@@ -459,7 +575,7 @@ func callStats(ctx context.Context, cfg Config) (*StatsResponse, error) {
 	if err := json.Unmarshal(respBody, out); err != nil {
 		hint := ""
 		if resp.StatusCode == http.StatusForbidden {
-			hint = " (do your AWS credentials grant lambda:InvokeFunctionUrl?)"
+			hint = forbiddenHint(string(respBody))
 		}
 		return nil, fmt.Errorf("stats returned HTTP %d%s: %s",
 			resp.StatusCode, hint, truncate(string(respBody), 200))

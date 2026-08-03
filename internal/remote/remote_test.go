@@ -3,6 +3,8 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/aws/smithy-go"
 )
 
 // isolateConfig sandboxes the config file location.
@@ -329,6 +333,168 @@ func TestCall_NonJSONError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "403") ||
 		!strings.Contains(err.Error(), "lambda:InvokeFunctionUrl") {
 		t.Errorf("expected a 403 error with the IAM hint, got %v", err)
+	}
+}
+
+// expiredTokenBody is the shape a Function URL authorizer returns when the
+// signed request carries an expired token: valid JSON, so it parses cleanly
+// into a Response with an empty state.
+const expiredTokenBody = `{"Message":"The security token included in the request is expired"}`
+
+func TestStatus_ExpiredCredentials(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(expiredTokenBody))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	resp, err := Status(context.Background(), cfg)
+	if err == nil {
+		t.Fatalf("expected an error for expired credentials, got a response: %+v", resp)
+	}
+	if !strings.Contains(err.Error(), "expired or invalid") ||
+		!strings.Contains(err.Error(), refreshCredsHint) {
+		t.Errorf("expected an expired-credentials error telling the user to refresh, got %v", err)
+	}
+	if strings.Contains(err.Error(), "lambda:InvokeFunctionUrl") {
+		t.Errorf("expired credentials should not be reported as a permissions problem: %v", err)
+	}
+}
+
+func TestStop_ExpiredCredentials(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(expiredTokenBody))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	if _, err := Stop(context.Background(), cfg); err == nil ||
+		!strings.Contains(err.Error(), "expired or invalid") {
+		t.Errorf("expected stop to fail with an expired-credentials error, got %v", err)
+	}
+}
+
+// A JSON-parseable 403 that is not a credential problem keeps the IAM hint —
+// the parse-success path must classify the same way as the non-JSON one.
+func TestStatus_ForbiddenKeepsPermissionHint(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"message":"AccessDeniedException: not authorized"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, Region: "eu-west-1"}
+	_, err := Status(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "403") ||
+		!strings.Contains(err.Error(), "lambda:InvokeFunctionUrl") {
+		t.Errorf("expected a 403 error with the IAM hint, got %v", err)
+	}
+}
+
+func TestStats_ExpiredCredentials(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(expiredTokenBody))
+	}))
+	defer server.Close()
+
+	cfg := Config{StatsURL: server.URL, Region: "eu-west-1"}
+	if _, err := Stats(context.Background(), cfg); err == nil ||
+		!strings.Contains(err.Error(), "expired or invalid") {
+		t.Errorf("expected stats to fail with an expired-credentials error, got %v", err)
+	}
+}
+
+func TestCredentialError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"typed api error", &smithy.GenericAPIError{Code: "ExpiredToken", Message: "the token expired"}, true},
+		{"typed invalid client", &smithy.GenericAPIError{Code: "InvalidClientTokenId"}, true},
+		{"typed permission error", &smithy.GenericAPIError{Code: "AccessDenied"}, false},
+		{"string marker", errors.New("get credentials: RequestExpired: signature no longer valid"), true},
+		{"security token phrase", errors.New("the security token included in the request is expired"), true},
+		{"unrelated error", errors.New("no EC2 IMDS role found"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := credentialError(tc.err); got != tc.want {
+				t.Errorf("credentialError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDeploy_Success(t *testing.T) {
+	stubAWSEnv(t)
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"state":"deployed","deployed":true}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
+	dc := DeployConfig{Runner: "vllm", ModelID: "org/model"}
+	resp, err := Deploy(context.Background(), cfg, dc, "203.0.113.0/24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Deployed {
+		t.Errorf("expected a deployed response, got %+v", resp)
+	}
+	// The deploy body is signed over, so it must actually reach the endpoint.
+	if !strings.Contains(string(gotBody), `"runner":"vllm"`) ||
+		!strings.Contains(string(gotBody), `"allowedCidr":"203.0.113.0/24"`) {
+		t.Errorf("deploy did not send the expected body: %s", gotBody)
+	}
+}
+
+func TestDeploy_ExpiredCredentials(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(expiredTokenBody))
+	}))
+	defer server.Close()
+
+	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
+	if _, err := Deploy(context.Background(), cfg, DeployConfig{Runner: "vllm"}, ""); err == nil ||
+		!strings.Contains(err.Error(), "expired or invalid") {
+		t.Errorf("expected deploy to fail with an expired-credentials error, got %v", err)
+	}
+}
+
+func TestDeploy_MissingURL(t *testing.T) {
+	if _, err := Deploy(context.Background(), Config{}, DeployConfig{}, ""); err == nil ||
+		!strings.Contains(err.Error(), "no deploy_url") {
+		t.Errorf("expected a missing-URL error, got %v", err)
+	}
+}
+
+// A non-retryable start failure (an expired-credentials 403) returns at once via
+// the default case, classified, rather than looping until the deadline.
+func TestStart_ExpiredCredentials(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(expiredTokenBody))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, Region: "eu-west-1"}
+	if _, err := Start(context.Background(), cfg, func(string) {}); err == nil ||
+		!strings.Contains(err.Error(), "expired or invalid") {
+		t.Errorf("expected start to fail with an expired-credentials error, got %v", err)
 	}
 }
 
