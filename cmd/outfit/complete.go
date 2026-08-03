@@ -172,16 +172,17 @@ var commands = map[string]command{
 		flags: []string{
 			"--timeout", "--dry-run", "-n", "--yes", "-y", "--wait", "--force-bake",
 			"--runners", "--hf-token", "--ref", "--dir", "--region",
-			"--overwrite", "--allowed-cidr", "--cost",
+			"--overwrite", "--allowed-cidr", "--cost", "--env", "-e",
 		},
 		values: map[string]candidateKind{
 			"--timeout": kindNone, "--runners": kindNone, "--hf-token": kindNone,
 			"--ref": kindNone, "--region": kindNone, "--dir": kindFile,
 			"--allowed-cidr": kindNone, "--cost": kindNone,
+			"--env": kindNone, "-e": kindNone,
 		},
 		// `outfit remote <sub> [outfit]`: the subcommand, then optionally the
 		// Outfit naming the endpoint.
-		subcommands: []string{"bootstrap", "start", "stop", "status", "stats", "deploy", "ls"},
+		subcommands: []string{"bootstrap", "start", "stop", "status", "stats", "deploy", "env", "ls"},
 		positional:  kindAlias, positionals: 2,
 	},
 	"completion": {positional: kindShell, positionals: 1},

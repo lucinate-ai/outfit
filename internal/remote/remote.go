@@ -36,8 +36,12 @@ type Config struct {
 	StartURL  string `json:"start_url"`
 	StopURL   string `json:"stop_url"`
 	DeployURL string `json:"deploy_url"`
-	StatsURL  string `json:"stats_url"`
-	Region    string `json:"region"`
+	StatsURL string `json:"stats_url"`
+	// EnvURL is the Lambda that returns environment variables for a running
+	// endpoint without starting it. Optional — configs predating the env Lambda
+	// still work for start/stop/deploy.
+	EnvURL string `json:"env_url"`
+	Region string `json:"region"`
 	// BaseURL is the endpoint's own address (the environment's stable Elastic
 	// IP). It belongs to the deployment rather than to the Outfit, so it is
 	// written here and `apply` reads it back for an Outfit that states no
@@ -112,6 +116,9 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	}
 	if v := getenv("OUTFIT_REMOTE_STATS_URL"); v != "" {
 		cfg.StatsURL = v
+	}
+	if v := getenv("OUTFIT_REMOTE_ENV_URL"); v != "" {
+		cfg.EnvURL = v
 	}
 	if v := getenv("OUTFIT_REMOTE_REGION"); v != "" {
 		cfg.Region = v
@@ -301,6 +308,30 @@ func Stop(ctx context.Context, cfg Config) (*Response, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, controlReplyError("stop", resp)
+	}
+	return resp, nil
+}
+
+// Env returns the environment variables for a running endpoint (base URL and
+// API key) without starting the instance. It calls the env Lambda, which reads
+// the key from Secrets Manager and derives the base URL from the environment's
+// Elastic IP. If the instance is stopped, it returns a 503 error telling the
+// caller to start the endpoint first.
+func Env(ctx context.Context, cfg Config) (*Response, error) {
+	if cfg.EnvURL == "" {
+		return nil, fmt.Errorf(
+			"no env_url configured: the remote deployment needs to be updated for env support")
+	}
+	resp, err := call(ctx, cfg, http.MethodGet, cfg.EnvURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, fmt.Errorf(
+			"remote endpoint is not running: run `outfit remote start` first")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("env failed (HTTP %d): %s", resp.StatusCode, resp.Message)
 	}
 	return resp, nil
 }

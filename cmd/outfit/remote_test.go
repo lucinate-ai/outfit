@@ -32,7 +32,12 @@ func writeRemoteConfig(t *testing.T, serverURL string) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	data, err := json.Marshal(remote.Config{StartURL: serverURL, StopURL: serverURL, Region: "eu-west-1"})
+	data, err := json.Marshal(remote.Config{
+		StartURL: serverURL,
+		StopURL:  serverURL,
+		EnvURL:   serverURL,
+		Region:   "eu-west-1",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,13 +125,76 @@ func TestRemoteStart_PrintsExports(t *testing.T) {
 	writeRemoteConfig(t, server.URL)
 
 	out := captureStdout(t, func() {
-		if err := cmdRemoteStart(nil); err != nil {
+		if err := cmdRemoteStart([]string{"--env"}); err != nil {
 			t.Errorf("cmdRemoteStart: %v", err)
 		}
 	})
 	if !strings.Contains(out, "export OPENAI_BASE_URL=http://198.51.100.1:8000/v1") ||
 		!strings.Contains(out, "export OPENAI_API_KEY=sk-test") {
 		t.Errorf("start should print the endpoint exports, got:\n%s", out)
+	}
+}
+
+// Start without --env prints nothing to stdout (progress goes to stderr).
+func TestRemoteStart_NoExportsWithoutFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteStart(nil); err != nil {
+			t.Errorf("cmdRemoteStart: %v", err)
+		}
+	})
+	if strings.Contains(out, "export OPENAI_") {
+		t.Errorf("start without --env should not print exports, got:\n%s", out)
+	}
+}
+
+// Remote env command prints exports for a running endpoint.
+func TestRemoteEnv_PrintsExports(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("env should GET, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"base_url":"http://198.51.100.1:8000/v1","api_key":"sk-remote"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteEnv(nil); err != nil {
+			t.Errorf("cmdRemoteEnv: %v", err)
+		}
+	})
+	if !strings.Contains(out, "export OPENAI_BASE_URL=http://198.51.100.1:8000/v1") ||
+		!strings.Contains(out, "export OPENAI_API_KEY=sk-remote") {
+		t.Errorf("env should print the endpoint exports, got:\n%s", out)
+	}
+}
+
+// Remote env command errors when the endpoint is stopped.
+func TestRemoteEnv_FailsWhenStopped(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		w.Write([]byte(`{"state":"stopped","message":"instance is not running"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	err := cmdRemoteEnv(nil)
+	if err == nil || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("env should fail for stopped instance, got %v", err)
 	}
 }
 
