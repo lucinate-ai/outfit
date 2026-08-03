@@ -55,7 +55,7 @@ func cmdRemote(args []string) error {
 		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, deploy, env or ls)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, deploy, env or ls)", sub)
 	}
 }
 
