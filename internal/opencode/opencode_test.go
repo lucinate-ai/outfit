@@ -97,6 +97,37 @@ func TestReadEnvFileVar(t *testing.T) {
 	}
 }
 
+func TestParseEnvFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	os.WriteFile(path, []byte(
+		"# a comment\n\nFOO=bar\nQUOTED=\"baz qux\"\nEMPTY=\nNOEQUALS\nDUP=first\nDUP=second\n"), 0o600)
+
+	got, err := ParseEnvFile(path)
+	if err != nil {
+		t.Fatalf("ParseEnvFile: %v", err)
+	}
+	want := map[string]string{"FOO": "bar", "QUOTED": "baz qux", "DUP": "second"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseEnvFile = %v, want %v", got, want)
+	}
+
+	// A missing file is not an error: it yields an empty map.
+	got, err = ParseEnvFile(filepath.Join(dir, "nope"))
+	if err != nil {
+		t.Fatalf("missing file should not error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("missing file should yield empty map, got %v", got)
+	}
+
+	// A read error that is not "file missing" (here, the path is a directory) is
+	// surfaced rather than swallowed.
+	if _, err := ParseEnvFile(dir); err == nil {
+		t.Error("reading a directory as a .env should error")
+	}
+}
+
 func TestWriteConfig_FreshFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "opencode.json")
 	if err := WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1"); err != nil {

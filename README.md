@@ -350,6 +350,13 @@ must be allowed `lambda:InvokeFunctionUrl`. A cold `start` takes a few
 minutes while the instance boots and loads the model; `--timeout` (default
 15m) caps the wait.
 
+The remote commands read the `.env` beside the Outfit before they sign, so the
+AWS credentials, region and `OUTFIT_REMOTE_*` overrides can travel with the
+Outfit. A value already set in your shell wins over the `.env`. To pin a value
+in the Outfit itself, add an `ENV` line (`ENV AWS_PROFILE=prod`) — it may repeat
+and overrides both the `.env` and your shell. `ENV` applies only on your
+machine; it is never sent to the deployed instance.
+
 ## Keys and endpoints
 
 Each provider declares which environment variable holds its key (`outfit

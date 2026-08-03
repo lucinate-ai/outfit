@@ -14,11 +14,17 @@
 //	BASEURL  https://gateway/v1         # optional; API base URL override
 //	PRESET   ./preset.ini               # optional; llama.cpp preset for `serve`
 //	REMOTE   ./remote.json              # optional; remote-instance config for `remote`
+//	ENV      AWS_PROFILE=dev            # optional, repeatable; local env var
 //
 // MODEL is the reference the provider itself understands: an OpenRouter/Bedrock
 // model id, an Ollama name, or — for llamacpp — a Hugging Face repo
 // (org/model:quant) or a path to a .gguf. ALIAS overrides the friendly name the
 // harness shows for it (and the name llama-server reports under `serve`).
+//
+// ENV sets an environment variable for the local `outfit` process — the one
+// keyword that may appear more than once. It carries a single KEY=VALUE token
+// and is used by the remote commands (which read it before signing AWS calls);
+// it is local-only and never reaches a deployed instance.
 //
 // Keywords are matched case-insensitively, but UPPERCASE is canonical (it is
 // what `outfit export` emits). Blank lines, full-line `#` comments, and
@@ -45,6 +51,16 @@ type Selection struct {
 	BaseURL   string
 	Preset    string
 	Remote    string
+	// Env holds the Outfit's ENV instructions in file order. Unlike the other
+	// fields it may carry several entries, since ENV may repeat.
+	Env []EnvVar
+}
+
+// EnvVar is one ENV instruction: an environment variable to set for the local
+// outfit process.
+type EnvVar struct {
+	Key   string
+	Value string
 }
 
 // Outfit keywords, in their canonical (lower-cased) form for matching.
@@ -57,6 +73,7 @@ const (
 	kwBaseURL  = "baseurl"
 	kwPreset   = "preset"
 	kwRemote   = "remote"
+	kwEnv      = "env"
 )
 
 // canonicalKeyword resolves an Outfit keyword (already lower-cased) to its
@@ -64,7 +81,7 @@ const (
 // "" for an unrecognised keyword.
 func canonicalKeyword(kw string) string {
 	switch kw {
-	case kwProvider, kwModel, kwAlias, kwContext, kwOutput, kwPreset, kwRemote:
+	case kwProvider, kwModel, kwAlias, kwContext, kwOutput, kwPreset, kwRemote, kwEnv:
 		return kw
 	case kwBaseURL, "base-url", "base_url", "url":
 		return kwBaseURL
@@ -92,7 +109,7 @@ func Parse(data []byte) (Selection, error) {
 		fields := strings.Fields(text)
 		canon := canonicalKeyword(strings.ToLower(fields[0]))
 		if canon == "" {
-			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, PRESET, or REMOTE)", line, fields[0])
+			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, PRESET, REMOTE, or ENV)", line, fields[0])
 		}
 		switch {
 		case len(fields) < 2:
@@ -101,6 +118,18 @@ func Parse(data []byte) (Selection, error) {
 			return Selection{}, fmt.Errorf("line %d: %s takes a single value, got %d", line, strings.ToUpper(canon), len(fields)-1)
 		}
 		value := fields[1]
+
+		// ENV is the one repeatable instruction, so it sidesteps the single-set
+		// check and appends. Its value is a KEY=VALUE token; the key must be
+		// non-empty (an empty value is allowed, to clear a variable).
+		if canon == kwEnv {
+			key, val, ok := strings.Cut(value, "=")
+			if !ok || key == "" {
+				return Selection{}, fmt.Errorf("line %d: ENV takes KEY=VALUE with a non-empty key, got %q", line, value)
+			}
+			sel.Env = append(sel.Env, EnvVar{Key: key, Value: val})
+			continue
+		}
 
 		if prev, ok := seen[canon]; ok {
 			return Selection{}, fmt.Errorf("line %d: duplicate %s (already set on line %d)", line, strings.ToUpper(canon), prev)
@@ -169,5 +198,8 @@ func Format(sel Selection) string {
 	line("BASEURL", sel.BaseURL)
 	line("PRESET", sel.Preset)
 	line("REMOTE", sel.Remote)
+	for _, e := range sel.Env {
+		line("ENV", e.Key+"="+e.Value)
+	}
 	return b.String()
 }

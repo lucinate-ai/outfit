@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/contextsize"
+	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/preset"
 	"github.com/lucinate-ai/outfit/internal/remote"
@@ -52,6 +53,40 @@ func cmdRemote(args []string) error {
 	}
 }
 
+// applyOutfitEnv makes the remote commands respect the Outfit's local
+// environment. The AWS SDK's credential chain reads the process environment
+// directly, and the OUTFIT_REMOTE_*/AWS_REGION lookups read os.Getenv, so the
+// values have to be present in the environment itself — a lookup closure would
+// not reach the SDK. It therefore mutates this process's environment, in two
+// passes that give the precedence ENV > process environment > .env:
+//
+//  1. the .env beside the Outfit fills only gaps — a variable already set in
+//     the environment wins, so a deliberately exported credential is not shadowed;
+//  2. the Outfit's ENV instructions override both.
+//
+// ENV (and .env) apply only to this local process; they are never sent to the
+// deployed instance — deployConfigFor builds the deploy payload from Outfit
+// fields alone. dir is the Outfit's own directory, where its .env lives.
+func applyOutfitEnv(sel outfit.Selection, dir string) error {
+	vars, err := opencode.ParseEnvFile(filepath.Join(dir, ".env"))
+	if err != nil {
+		return err
+	}
+	for key, value := range vars {
+		if os.Getenv(key) == "" {
+			if err := os.Setenv(key, value); err != nil {
+				return err
+			}
+		}
+	}
+	for _, e := range sel.Env {
+		if err := os.Setenv(e.Key, e.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // resolveRemoteConfig loads the remote config, preferring an Outfit's REMOTE
 // instruction over the per-user file. An explicit [path] argument must name
 // an Outfit (or a directory holding one) with a REMOTE instruction. With no
@@ -69,6 +104,9 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		if sel.Remote == "" {
 			return remote.Config{}, fmt.Errorf("%s has no REMOTE instruction", outfitPath)
 		}
+		if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+			return remote.Config{}, err
+		}
 		return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 	}
 	if defaultOutfitExists() {
@@ -77,6 +115,9 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 			return remote.Config{}, err
 		}
 		if sel.Remote != "" {
+			if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+				return remote.Config{}, err
+			}
 			return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
 		}
 	}
@@ -514,6 +555,13 @@ func cmdRemoteDeploy(args []string) error {
 	// enough.
 	sel, outfitPath, err := readOutfit("outfit remote deploy <file>", outfitArg(fs))
 	if err != nil {
+		return err
+	}
+	// Respect the Outfit's local environment (.env beside it, then its ENV
+	// lines) before any AWS work, so the credentials the deploy signs with, the
+	// region, and the OUTFIT_REMOTE_* overrides all see it. ENV stays local — it
+	// never enters dc, so nothing here reaches the deployed instance.
+	if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
 		return err
 	}
 	dc, err := deployConfigFor(sel, outfitPath)
