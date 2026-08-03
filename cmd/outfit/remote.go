@@ -120,27 +120,57 @@ func remoteConfigPath(remoteValue, outfitDir string) string {
 	return filepath.Join(outfitDir, remoteValue)
 }
 
-// remoteBaseURL returns the endpoint address recorded in the remote config an
-// Outfit's REMOTE names — a registry environment or a file, per
-// resolveRemotePath. The deployment generates that config, so the address lives
-// there rather than in the hand-written Outfit — but only as a fallback: an
-// Outfit that states its own BASEURL never asks. A config that is absent, or
-// that predates base_url, yields "" rather than an error, since an Outfit may
-// name a remote config before the deployment that writes it exists.
-func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
+// remoteConfig reads the remote config an Outfit's REMOTE names — a registry
+// environment or a file, per resolveRemotePath. A config that is absent yields
+// the zero Config rather than an error, since an Outfit may name a remote config
+// before the deployment that writes it exists; only a real read or parse failure
+// is reported.
+func remoteConfig(remoteValue, outfitDir string) (remote.Config, error) {
 	path := resolveRemotePath(remoteValue, outfitDir)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil
+			return remote.Config{}, nil
 		}
-		return "", err
+		return remote.Config{}, err
 	}
 	var cfg remote.Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return "", fmt.Errorf("parsing %s: %w", path, err)
+		return remote.Config{}, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
+// remoteBaseURL returns the endpoint address recorded in the remote config an
+// Outfit's REMOTE names. The deployment generates that config, so the address
+// lives there rather than in the hand-written Outfit — but only as a fallback:
+// an Outfit that states its own BASEURL never asks. A config that is absent, or
+// that predates base_url, yields "" rather than an error.
+func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
+	cfg, err := remoteConfig(remoteValue, outfitDir)
+	if err != nil {
+		return "", err
 	}
 	return cfg.BaseURL, nil
+}
+
+// remoteEnvName returns the harness provider name an Outfit's REMOTE implies: the
+// bare name when REMOTE is a name, otherwise the environment field of the
+// remote.json it names. It yields "" when there is no REMOTE, or when a
+// path-form REMOTE names a config that is absent or records no environment — in
+// which case the caller keeps the PROVIDER value as the name.
+func remoteEnvName(remoteValue, outfitDir string) (string, error) {
+	if remoteValue == "" {
+		return "", nil
+	}
+	if remote.IsEnvName(remoteValue) {
+		return remoteValue, nil
+	}
+	cfg, err := remoteConfig(remoteValue, outfitDir)
+	if err != nil {
+		return "", err
+	}
+	return cfg.Environment, nil
 }
 
 // outfitArg returns the optional positional Outfit path after the flags.

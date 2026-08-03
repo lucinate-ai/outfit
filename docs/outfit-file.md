@@ -71,6 +71,14 @@ which records it in the named file as `base_url`, and
 [`outfit apply`](commands/apply.md) reads it from there. Write a `BASEURL` only
 to override that.
 
+Applying a `REMOTE` Outfit also names the harness provider after the environment
+rather than the engine: the example above is configured under `qwen3.6-27b-prod`,
+with the model reading as `qwen3.6-27b-prod/qwen3.6-27b`. `PROVIDER` still
+supplies the engine's settings; only the name changes, so several environments
+built from the same engine each keep their own entry instead of overwriting one.
+The name is the bare `REMOTE` value, or the `environment` field of the file a
+path-form `REMOTE` names (falling back to `PROVIDER` when that field is absent).
+
 Because `PROVIDER` names the engine, this is the same file that would run the
 model locally with [`outfit serve`](commands/serve.md) — pointed at a bigger
 machine.

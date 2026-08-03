@@ -533,3 +533,170 @@ func TestCmdApply_RemoteConfigAbsent(t *testing.T) {
 		}
 	})
 }
+
+// TestCmdApply_RemoteConfigMalformed checks that applying an Outfit whose
+// path-form REMOTE names a malformed remote.json fails loudly, rather than
+// silently applying under the wrong provider name.
+func TestCmdApply_RemoteConfigMalformed(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := t.TempDir()
+	mustWrite(t, filepath.Join(outfitDir, "remote.json"), "{not valid json")
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE remote.json\n")
+
+	err := cmdApply([]string{outfitFile})
+	if err == nil {
+		t.Fatal("expected an error for a malformed remote config")
+	}
+	if !strings.Contains(err.Error(), "parsing") {
+		t.Errorf("error = %v, want it to mention parsing the remote config", err)
+	}
+}
+
+// TestCmdUnapply_RemoteConfigMalformed checks the same guard on the unapply side,
+// so apply and unapply fail the same way on a broken remote config.
+func TestCmdUnapply_RemoteConfigMalformed(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := t.TempDir()
+	mustWrite(t, filepath.Join(outfitDir, "remote.json"), "{not valid json")
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE remote.json\n")
+
+	if err := cmdUnapply([]string{outfitFile}); err == nil {
+		t.Fatal("expected an error for a malformed remote config")
+	}
+}
+
+// TestCmdApply_RemoteNameIsProviderName checks that a bare-name REMOTE keys the
+// harness provider on the environment name — configured from the PROVIDER's
+// catalogue entry — with the default model reading as <env>/<model> and the base
+// URL taken from that environment's remote.json.
+func TestCmdApply_RemoteNameIsProviderName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	envConfig := filepath.Join(dir, "outfit", "remotes", "dev-1", "remote.json")
+	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, envConfig,
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1","environment":"dev-1"}`)
+
+	outfitDir := t.TempDir()
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE dev-1\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
+	prov := m["provider"].(map[string]any)
+	if _, ok := prov["llamacpp"]; ok {
+		t.Error("provider should be keyed on the environment name, not PROVIDER llamacpp")
+	}
+	dev1, ok := prov["dev-1"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a provider keyed %q, got %v", "dev-1", prov)
+	}
+	if _, ok := dev1["models"].(map[string]any)["qwen"]; !ok {
+		t.Errorf("expected model %q under the dev-1 provider, got %v", "qwen", dev1["models"])
+	}
+	if got := m["model"]; got != "dev-1/qwen" {
+		t.Errorf("default model = %v, want dev-1/qwen", got)
+	}
+	if got := dev1["options"].(map[string]any)["baseURL"]; got != "http://198.51.100.7:8000/v1" {
+		t.Errorf("baseURL = %v, want the environment's base_url", got)
+	}
+}
+
+// TestCmdApply_RemotePathEnvironmentIsProviderName checks that a path-form REMOTE
+// takes the provider name from the environment field of the remote.json it names.
+func TestCmdApply_RemotePathEnvironmentIsProviderName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := t.TempDir()
+	mustWrite(t, filepath.Join(outfitDir, "remote.json"),
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1","environment":"dev-1"}`)
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE remote.json\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	prov := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))["provider"].(map[string]any)
+	if _, ok := prov["dev-1"]; !ok {
+		t.Errorf("expected a provider keyed %q, got %v", "dev-1", prov)
+	}
+}
+
+// TestCmdApply_RemotePathWithoutEnvironmentKeepsProvider checks the fallback: a
+// path-form REMOTE whose remote.json records no environment keeps the PROVIDER
+// value as the provider name.
+func TestCmdApply_RemotePathWithoutEnvironmentKeepsProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	outfitDir := t.TempDir()
+	mustWrite(t, filepath.Join(outfitDir, "remote.json"),
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1"}`)
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE remote.json\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	prov := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))["provider"].(map[string]any)
+	if _, ok := prov["llamacpp"]; !ok {
+		t.Errorf("expected the provider to stay keyed %q, got %v", "llamacpp", prov)
+	}
+}
+
+// TestCmdUnapply_RemoveEnvironmentNamedProvider checks apply/unapply symmetry for
+// a remote Outfit: unapply removes the environment-named provider that apply
+// wrote, not the PROVIDER-named one (which was never written).
+func TestCmdUnapply_RemoveEnvironmentNamedProvider(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	envConfig := filepath.Join(dir, "outfit", "remotes", "dev-1", "remote.json")
+	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, envConfig,
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1","environment":"dev-1"}`)
+
+	outfitDir := t.TempDir()
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE dev-1\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+	captureStdout(t, func() {
+		if err := cmdUnapply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdUnapply: %v", err)
+		}
+	})
+
+	prov := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))["provider"].(map[string]any)
+	dev1, _ := prov["dev-1"].(map[string]any)
+	if models, ok := dev1["models"].(map[string]any); ok && len(models) != 0 {
+		t.Errorf("unapply should have removed the dev-1 model, still have: %v", models)
+	}
+}
