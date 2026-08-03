@@ -78,6 +78,9 @@ supplies the engine's settings; only the name changes, so several environments
 built from the same engine each keep their own entry instead of overwriting one.
 The name is the bare `REMOTE` value, or the `environment` field of the file a
 path-form `REMOTE` names (falling back to `PROVIDER` when that field is absent).
+The provider's display name is qualified by the environment too — `llama.cpp
+(qwen3.6-27b-prod)` rather than a bare `llama.cpp` — so a remote environment reads
+distinctly from a local engine of the same kind in a harness model picker.
 
 Because `PROVIDER` names the engine, this is the same file that would run the
 model locally with [`outfit serve`](commands/serve.md) — pointed at a bigger

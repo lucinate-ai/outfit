@@ -663,6 +663,101 @@ func TestCmdApply_RemotePathWithoutEnvironmentKeepsProvider(t *testing.T) {
 	if _, ok := prov["llamacpp"]; !ok {
 		t.Errorf("expected the provider to stay keyed %q, got %v", "llamacpp", prov)
 	}
+	if got := prov["llamacpp"].(map[string]any)["name"]; got != "llama.cpp" {
+		t.Errorf("display name = %v, want the plain engine name when no environment resolves", got)
+	}
+}
+
+// TestCmdApply_RemoteProviderLabelledPerEnvironment checks that a remote provider
+// gets a display name qualified by its environment, so it reads distinctly from a
+// local engine of the same kind, which keeps the bare engine name.
+func TestCmdApply_RemoteProviderLabelledPerEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	envConfig := filepath.Join(dir, "outfit", "remotes", "dev-2", "remote.json")
+	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, envConfig,
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1","environment":"dev-2"}`)
+
+	outfitDir := t.TempDir()
+	remoteOutfit := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, remoteOutfit, "PROVIDER llamacpp\nALIAS qwen\nREMOTE dev-2\n")
+	localOutfit := filepath.Join(outfitDir, "Local")
+	mustWrite(t, localOutfit, "PROVIDER llamacpp\nALIAS qwen\nBASEURL http://127.0.0.1:8080/v1\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{remoteOutfit}); err != nil {
+			t.Fatalf("cmdApply remote: %v", err)
+		}
+		if err := cmdApply([]string{localOutfit}); err != nil {
+			t.Fatalf("cmdApply local: %v", err)
+		}
+	})
+
+	prov := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))["provider"].(map[string]any)
+	dev2, ok := prov["dev-2"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a provider keyed %q, got %v", "dev-2", prov)
+	}
+	if got := dev2["name"]; got != "llama.cpp (dev-2)" {
+		t.Errorf("remote display name = %v, want %q", got, "llama.cpp (dev-2)")
+	}
+	local, ok := prov["llamacpp"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a local provider keyed %q, got %v", "llamacpp", prov)
+	}
+	if got := local["name"]; got != "llama.cpp" {
+		t.Errorf("local display name = %v, want the bare engine name %q", got, "llama.cpp")
+	}
+	if dev2["name"] == local["name"] {
+		t.Errorf("remote and local providers share a display name %v; they must be distinct", dev2["name"])
+	}
+}
+
+// TestCmdApply_RemoteReapplyRefreshesLabel checks the stale-label mitigation: a
+// provider that a previous apply left with a bare engine name (as it would be
+// before this behaviour existed) has its display name refreshed to the
+// environment-qualified label when the same Outfit is applied again — the
+// deep-merge overwrites the old name rather than keeping it.
+func TestCmdApply_RemoteReapplyRefreshesLabel(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	envConfig := filepath.Join(dir, "outfit", "remotes", "dev-2", "remote.json")
+	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, envConfig,
+		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1","environment":"dev-2"}`)
+
+	// Seed a config as an earlier apply would have left it: the dev-2 provider
+	// carries the bare engine name, with no environment qualifier.
+	opencodeDir := filepath.Join(dir, "opencode")
+	if err := os.MkdirAll(opencodeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configFile := filepath.Join(opencodeDir, "opencode.json")
+	mustWrite(t, configFile,
+		`{"provider":{"dev-2":{"name":"llama.cpp","npm":"@ai-sdk/openai-compatible","models":{"qwen":{"name":"qwen"}}}}}`)
+
+	outfitDir := t.TempDir()
+	outfitFile := filepath.Join(outfitDir, "Outfit")
+	mustWrite(t, outfitFile, "PROVIDER llamacpp\nALIAS qwen\nREMOTE dev-2\n")
+
+	captureStdout(t, func() {
+		if err := cmdApply([]string{outfitFile}); err != nil {
+			t.Fatalf("cmdApply: %v", err)
+		}
+	})
+
+	prov := readConfigMap(t, configFile)["provider"].(map[string]any)
+	dev2 := prov["dev-2"].(map[string]any)
+	if got := dev2["name"]; got != "llama.cpp (dev-2)" {
+		t.Errorf("display name = %v, want the stale bare label refreshed to %q", got, "llama.cpp (dev-2)")
+	}
 }
 
 // TestCmdUnapply_RemoveEnvironmentNamedProvider checks apply/unapply symmetry for

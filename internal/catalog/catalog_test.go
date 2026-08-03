@@ -440,6 +440,23 @@ func TestBuildProviderBlock_NoModelIsNoDefault(t *testing.T) {
 	}
 }
 
+func TestRemoteProviderLabel(t *testing.T) {
+	cases := []struct {
+		name, engine, env, want string
+	}{
+		{"engine and env", "llama.cpp", "dev-2", "llama.cpp (dev-2)"},
+		{"no engine name falls back to env", "", "dev-2", "dev-2"},
+		{"empty env with engine", "llama.cpp", "", "llama.cpp ()"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := RemoteProviderLabel(tc.engine, tc.env); got != tc.want {
+				t.Errorf("RemoteProviderLabel(%q, %q) = %q, want %q", tc.engine, tc.env, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestBuildProviderBlock_BaseURLFlagOverrides checks that the --base-url value
 // wins over both the catalogue's static baseURL and the per-provider
 // optionsFromEnv mapping (here OLLAMA_BASE_URL).

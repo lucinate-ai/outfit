@@ -35,6 +35,13 @@ func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextW
 	if err != nil {
 		return Summary{}, err
 	}
+	// A remote selection renames the provider after its environment and carries a
+	// display name to match; opencode's model picker lists providers by that
+	// name, so use it in place of the catalogue engine's name to tell the remote
+	// provider apart from a local engine of the same kind.
+	if sel.DisplayName != "" {
+		block["name"] = sel.DisplayName
+	}
 	if contextWindow > 0 {
 		if models, ok := block["models"].(map[string]any); ok {
 			contextsize.Apply(models, contextWindow, outputTokens)

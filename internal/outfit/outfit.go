@@ -51,6 +51,12 @@ type Selection struct {
 	BaseURL   string
 	Preset    string
 	Remote    string
+	// DisplayName is the harness provider's display name, derived at apply time
+	// rather than parsed from an Outfit — like BaseURL, it may be filled from the
+	// remote environment. It is set only when a REMOTE renames the provider, to
+	// label it distinctly from a local engine of the same kind; empty otherwise,
+	// leaving the catalogue engine name.
+	DisplayName string
 	// Env holds the Outfit's ENV instructions in file order. Unlike the other
 	// fields it may carry several entries, since ENV may repeat.
 	Env []EnvVar

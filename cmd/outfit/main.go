@@ -309,6 +309,10 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string) erro
 		}
 		if env != "" {
 			sel.Provider = env
+			// The provider is now keyed on the environment; label it so it reads
+			// distinctly from a local engine of the same kind in a model picker
+			// (e.g. "llama.cpp (dev-2)" rather than another bare "llama.cpp").
+			sel.DisplayName = catalog.RemoteProviderLabel(p.Name, env)
 		}
 	}
 

@@ -229,6 +229,18 @@ func BuildProviderBlock(id string, p *Provider, modelOverride, baseURLOverride s
 	return block, defaultModel, nil
 }
 
+// RemoteProviderLabel is the display name for a harness provider that a remote
+// environment has renamed, so it reads distinctly from a local engine of the
+// same kind: the engine's display name qualified by the environment, e.g.
+// "llama.cpp (dev-2)". With no engine name it is the environment alone, which is
+// still unique — no local provider shares it.
+func RemoteProviderLabel(engine, env string) string {
+	if engine == "" {
+		return env
+	}
+	return fmt.Sprintf("%s (%s)", engine, env)
+}
+
 // piPlaceholderAPIKey is the dummy apiKey written for keyless local providers so
 // Pi treats them as authed and lists their models. Pi resolves it as a literal
 // (no leading "$"), and llama.cpp/Ollama-style servers ignore the value.
