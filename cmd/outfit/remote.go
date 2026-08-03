@@ -30,7 +30,7 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|deploy|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|stats|deploy|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -42,13 +42,15 @@ func cmdRemote(args []string) error {
 		return cmdRemoteStop(rest)
 	case "status":
 		return cmdRemoteStatus(rest)
+	case "stats":
+		return cmdRemoteStats(rest)
 	case "deploy":
 		return cmdRemoteDeploy(rest)
 	case "ls":
 		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, stop, status, deploy or ls)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, stop, status, stats, deploy or ls)", sub)
 	}
 }
 
@@ -300,6 +302,160 @@ func cmdRemoteStatus(args []string) error {
 		fmt.Printf("base_url: %s\n", resp.BaseURL)
 	}
 	return nil
+}
+
+// cmdRemoteStats queries the stats Lambda for instance metrics: token usage,
+// GPU, CPU, and RAM utilization. Output is a key-value table to stdout;
+// progress and errors go to stderr. With --cost, it looks up the on-demand
+// price for the instance type from the AWS Price List API.
+func cmdRemoteStats(args []string) error {
+	fs := flag.NewFlagSet("remote stats", flag.ContinueOnError)
+	var withCost bool
+	fs.BoolVar(&withCost, "cost", false, "include cost estimate from AWS Price List API")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	resp, err := remote.Stats(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("environment:  %s\n", resp.Environment)
+	fmt.Printf("state:        %s\n", resp.State)
+
+	if resp.State != "running" {
+		if resp.Runner != "" {
+			fmt.Printf("runner:       %s\n", resp.Runner)
+		}
+		if resp.ModelID != "" {
+			fmt.Printf("model:        %s\n", resp.ModelID)
+		}
+		return nil
+	}
+
+	// Running — show instance and metrics.
+	if resp.InstanceID != "" {
+		fmt.Printf("instance:     %s\n", resp.InstanceID)
+	}
+	if resp.InstanceType != "" {
+		fmt.Printf("instanceType: %s\n", resp.InstanceType)
+	}
+	if resp.Runner != "" {
+		fmt.Printf("runner:       %s\n", resp.Runner)
+	}
+	if resp.ModelID != "" {
+		fmt.Printf("model:        %s\n", resp.ModelID)
+	}
+	if resp.UptimeSeconds > 0 {
+		fmt.Printf("uptime:       %s\n", formatDuration(resp.UptimeSeconds))
+	}
+
+	// Token metrics.
+	if resp.Tokens != nil {
+		fmt.Println()
+		fmt.Printf("  running:          %d\n", resp.Tokens.Running)
+		fmt.Printf("  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
+		fmt.Printf("  generation tokens: %d\n", resp.Tokens.GenerationTokens)
+		fmt.Printf("  requests:         %d\n", resp.Tokens.Requests)
+	}
+
+	// GPU stats.
+	if len(resp.GPUs) > 0 {
+		fmt.Println()
+		for _, g := range resp.GPUs {
+			memUsed := formatBytes(g.MemoryUsed)
+			memTotal := formatBytes(g.MemoryTotal)
+			fmt.Printf("  GPU %d: %s  util=%d%%  mem=%s/%s  temp=%dC\n",
+				g.Index, g.Name, g.Utilization, memUsed, memTotal, g.Temperature)
+		}
+		// Aggregate for multi-GPU.
+		if len(resp.GPUs) > 1 {
+			var totalUtil, totalMemUsed, totalMemTotal int64
+			for _, g := range resp.GPUs {
+				totalUtil += int64(g.Utilization)
+				totalMemUsed += g.MemoryUsed
+				totalMemTotal += g.MemoryTotal
+			}
+			avgUtil := int(totalUtil) / len(resp.GPUs)
+			fmt.Printf("  avg util: %d%%  total mem: %s/%s\n",
+				avgUtil, formatBytes(totalMemUsed), formatBytes(totalMemTotal))
+		}
+	}
+
+	// CPU.
+	if resp.CPU != nil {
+		fmt.Println()
+		fmt.Printf("  CPU: %.0f%% util\n", resp.CPU.Utilization)
+	}
+
+	// Memory.
+	if resp.Memory != nil {
+		memUsed := formatBytes(resp.Memory.Used)
+		memTotal := formatBytes(resp.Memory.Total)
+		pct := float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
+		fmt.Printf("  RAM: %s/%s (%.0f%%)\n", memUsed, memTotal, pct)
+	}
+
+	// Cost estimate.
+	if withCost && resp.UptimeSeconds > 0 {
+		if price, err := getOnDemandPrice(ctx, cfg.Region, "g6e.xlarge"); err == nil {
+			hours := float64(resp.UptimeSeconds) / 3600.0
+			fmt.Printf("  cost so far:  $%.2f (%.4f/hr)\n", hours*price, price)
+		}
+	}
+
+	// Errors (to stderr).
+	if len(resp.Errors) > 0 {
+		fmt.Fprintln(os.Stderr, "metric collection errors:")
+		for _, e := range resp.Errors {
+			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		}
+	}
+
+	return nil
+}
+
+func formatDuration(seconds int) string {
+	d := time.Duration(seconds) * time.Second
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	s := int(d.Seconds()) % 60
+	if h > 0 {
+		return fmt.Sprintf("%dh %dm %ds", h, m, s)
+	}
+	if m > 0 {
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	return fmt.Sprintf("%ds", s)
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024.0
+	if b < int64(unit) {
+		return fmt.Sprintf("%d B", b)
+	}
+	kb := float64(b) / unit
+	if kb < unit {
+		return fmt.Sprintf("%.0f KB", kb)
+	}
+	mb := kb / unit
+	if mb < unit {
+		return fmt.Sprintf("%.0f MB", mb)
+	}
+	return fmt.Sprintf("%.1f GB", mb/unit)
+}
+
+// getOnDemandPrice fetches the hourly on-demand price for an instance type
+// from the AWS Price List API. Uses GetProducts with a filter on instance type
+// and operation (Linux/Windows). Returns the price per hour.
+func getOnDemandPrice(ctx context.Context, region, instanceType string) (float64, error) {
+	return remote.GetOnDemandPrice(ctx, region, instanceType)
 }
 
 // runnerFor maps an Outfit's PROVIDER to the inference runner the cloud should

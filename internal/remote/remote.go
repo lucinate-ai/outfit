@@ -35,6 +35,7 @@ type Config struct {
 	StartURL  string `json:"start_url"`
 	StopURL   string `json:"stop_url"`
 	DeployURL string `json:"deploy_url"`
+	StatsURL  string `json:"stats_url"`
 	Region    string `json:"region"`
 	// BaseURL is the endpoint's own address (the environment's stable Elastic
 	// IP). It belongs to the deployment rather than to the Outfit, so it is
@@ -107,6 +108,9 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	}
 	if v := getenv("OUTFIT_REMOTE_DEPLOY_URL"); v != "" {
 		cfg.DeployURL = v
+	}
+	if v := getenv("OUTFIT_REMOTE_STATS_URL"); v != "" {
+		cfg.StatsURL = v
 	}
 	if v := getenv("OUTFIT_REMOTE_REGION"); v != "" {
 		cfg.Region = v
@@ -353,4 +357,112 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// StatsResponse is the JSON reply from the stats Lambda.
+type StatsResponse struct {
+	StatusCode    int       `json:"-"`
+	Environment   string    `json:"environment"`
+	State         string    `json:"state"`
+	InstanceID    string    `json:"instanceId"`
+	InstanceType  string    `json:"instanceType"`
+	Runner        string    `json:"runner"`
+	ModelID       string    `json:"modelId"`
+	UptimeSeconds int       `json:"uptimeSeconds"`
+	Tokens        *TokenStats `json:"tokens"`
+	GPUs          []GpuStat   `json:"gpus"`
+	CPU           *CpuStat    `json:"cpu"`
+	Memory        *MemoryStat `json:"memory"`
+	Errors        []string    `json:"errors"`
+}
+
+// TokenStats holds per-runner token/request counters from /metrics.
+type TokenStats struct {
+	Running          int `json:"running"`
+	Counter          int `json:"counter"`
+	PromptTokens     int `json:"promptTokens"`
+	GenerationTokens int `json:"generationTokens"`
+	Requests         int `json:"requests"`
+}
+
+// GpuStat holds per-GPU metrics from nvidia-smi.
+type GpuStat struct {
+	Index       int    `json:"index"`
+	Name        string `json:"name"`
+	Utilization  int    `json:"utilization"`
+	MemoryUsed  int64  `json:"memoryUsed"`
+	MemoryTotal int64  `json:"memoryTotal"`
+	Temperature int    `json:"temperature"`
+}
+
+// CpuStat holds CPU utilization from vmstat.
+type CpuStat struct {
+	Utilization float64 `json:"utilization"`
+}
+
+// MemoryStat holds system memory from free.
+type MemoryStat struct {
+	Total int64 `json:"total"`
+	Used  int64 `json:"used"`
+}
+
+// Stats queries the stats Lambda for instance metrics: token usage, GPU, CPU,
+// and RAM utilization. Returns an error if the stats URL is not configured,
+// indicating the shared layer was deployed before stats support was added.
+func Stats(ctx context.Context, cfg Config) (*StatsResponse, error) {
+	if cfg.StatsURL == "" {
+		return nil, fmt.Errorf(
+			"no stats_url configured: the shared layer needs re-deploying with `pnpm deploy` (or set OUTFIT_REMOTE_STATS_URL)")
+	}
+	out, err := callStats(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if out.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("stats failed (HTTP %d): %s", out.StatusCode, strings.Join(out.Errors, "; "))
+	}
+	return out, nil
+}
+
+// callStats signs and sends a request to the stats Lambda, parsing the
+// stats-specific response shape.
+func callStats(ctx context.Context, cfg Config) (*StatsResponse, error) {
+	rawURL := cfg.StatsURL
+	if cfg.Environment != "" {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return nil, err
+		}
+		q := u.Query()
+		q.Set("env", cfg.Environment)
+		u.RawQuery = q.Encode()
+		rawURL = u.String()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	body := []byte{}
+	if err := sign(ctx, req, cfg.Region, body); err != nil {
+		return nil, err
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	out := &StatsResponse{StatusCode: resp.StatusCode}
+	if err := json.Unmarshal(respBody, out); err != nil {
+		hint := ""
+		if resp.StatusCode == http.StatusForbidden {
+			hint = " (do your AWS credentials grant lambda:InvokeFunctionUrl?)"
+		}
+		return nil, fmt.Errorf("stats returned HTTP %d%s: %s",
+			resp.StatusCode, hint, truncate(string(respBody), 200))
+	}
+	return out, nil
 }

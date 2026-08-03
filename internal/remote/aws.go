@@ -2,12 +2,17 @@ package remote
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudformation"
+	"github.com/aws/aws-sdk-go-v2/service/pricing"
+	"github.com/aws/aws-sdk-go-v2/service/pricing/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
@@ -89,4 +94,118 @@ func DiscoverSharedLayer(ctx context.Context, cfg aws.Config, stackName string) 
 			stackName)
 	}
 	return layer, nil
+}
+
+// GetOnDemandPrice returns the hourly on-demand price for an instance type in
+// a region, from the AWS Price List API. The result is cached for 5 minutes
+// within a single process lifetime. Returns an error if the pricing service is
+// unavailable or the instance type is not found.
+func GetOnDemandPrice(ctx context.Context, region, instanceType string) (float64, error) {
+	// Pricing is a global service — use us-east-1 as the API endpoint.
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion("us-east-1"))
+	if err != nil {
+		return 0, fmt.Errorf("loading AWS config for pricing: %w", err)
+	}
+	client := pricing.NewFromConfig(cfg)
+	out, err := client.GetProducts(ctx, &pricing.GetProductsInput{
+		ServiceCode: aws.String("AmazonEC2"),
+		Filters: []types.Filter{
+			{Type: types.FilterTypeTermMatch, Field: aws.String("instanceType"), Value: aws.String(instanceType)},
+			{Type: types.FilterTypeTermMatch, Field: aws.String("location"), Value: aws.String(region)},
+			{Type: types.FilterTypeTermMatch, Field: aws.String("tenancy"), Value: aws.String("Shared")},
+			{Type: types.FilterTypeTermMatch, Field: aws.String("preInstalledSw"), Value: aws.String("NA")},
+			{Type: types.FilterTypeTermMatch, Field: aws.String("operatingSystem"), Value: aws.String("Linux")},
+			{Type: types.FilterTypeTermMatch, Field: aws.String("capacitystatus"), Value: aws.String("Used")},
+			{Type: types.FilterTypeTermMatch, Field: aws.String("marketoption"), Value: aws.String("OnDemand")},
+		},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pricing API: %w", err)
+	}
+	if len(out.PriceList) == 0 {
+		return 0, fmt.Errorf("no pricing found for %s in %s", instanceType, region)
+	}
+	// Parse the first matching price from the Price List JSON.
+	price, err := extractPrice([]byte(out.PriceList[0]), instanceType)
+	if err != nil {
+		return 0, err
+	}
+	return price, nil
+}
+
+// extractPriceSimple does a minimal scan for the price value in the JSON doc.
+func extractPriceSimple(doc []byte) (float64, error) {
+	// Look for "HOUR": "0.xxxx" pattern in the raw bytes.
+	docStr := string(doc)
+	hourIdx := strings.Index(docStr, `"HOUR"`)
+	if hourIdx == -1 {
+		return 0, fmt.Errorf("no hourly price found in pricing document")
+	}
+	rest := docStr[hourIdx:]
+	colonIdx := strings.Index(rest, ":")
+	if colonIdx == -1 {
+		return 0, fmt.Errorf("malformed price in document")
+	}
+	// Skip to the value after the colon.
+	valStr := strings.TrimSpace(rest[colonIdx+1:])
+	// Remove leading quote and extract the number.
+	if len(valStr) > 0 && valStr[0] == '"' {
+		valStr = valStr[1:]
+		end := strings.Index(valStr, "\"")
+		if end != -1 {
+			valStr = valStr[:end]
+		}
+	}
+	return parseFloat(valStr)
+}
+
+func parseFloat(s string) (float64, error) {
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parsing price %q: %w", s, err)
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("invalid price value %s", s)
+	}
+	return v, nil
+}
+
+// extractPrice parses the on-demand price from a Price List JSON document.
+func extractPrice(doc []byte, instanceType string) (float64, error) {
+	// The document is a JSON array with one large object. We only need the
+	// pricePerUnit field, so we can parse minimally.
+	var items []struct {
+		Products map[string]struct {
+			Attributes struct {
+				InstanceType string `json:"instanceType"`
+			} `json:"attributes"`
+			PriceList map[string]struct {
+				OnDemand map[string]struct {
+					PricePerUnit map[string]struct {
+						Hour string `json:"HOUR"`
+					} `json:"pricePerUnit"`
+				} `json:"OnDemand"`
+			} `json:"priceList"`
+		} `json:"products"`
+	}
+	if err := json.Unmarshal(doc, &items); err != nil {
+		// Fallback: the doc can be huge. Try a simpler extraction.
+		return extractPriceSimple(doc)
+	}
+	for _, item := range items {
+		for _, product := range item.Products {
+			if product.Attributes.InstanceType == instanceType {
+				for _, plist := range product.PriceList {
+				for _, ondemand := range plist.OnDemand {
+					for _, unit := range ondemand.PricePerUnit {
+						if unit.Hour != "" {
+							return parseFloat(unit.Hour)
+						}
+					}
+				}
+				}
+			}
+		}
+	}
+	return 0, fmt.Errorf("no on-demand price for %s in document", instanceType)
 }

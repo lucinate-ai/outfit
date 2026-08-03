@@ -8,17 +8,19 @@ what to serve from an Outfit: the `outfit remote` command group.
 ### Requirement: Remote command group
 
 The system SHALL provide a `remote` command group with the subcommands
-`bootstrap`, `start`, `stop`, `status`, `deploy` and `ls`. `start`, `stop`,
-`status` and `deploy` each take an optional Outfit path: `start` SHALL boot the
-endpoint and block until it is serving, printing the base URL and API key as
-shell exports; `stop` SHALL stop it immediately rather than waiting for its idle
-timer; `status` SHALL report instance state and endpoint health without side
-effects; `deploy` SHALL set what the endpoint serves. `ls` SHALL list the
-registered remote environments (see the Remote Environments specification).
-`bootstrap` SHALL stand up the shared, account-level AWS infrastructure (once
-per account) by obtaining and driving the CDK project, and takes its own flags
-rather than an Outfit path (see the Endpoint Provisioning specification). An
-unrecognised subcommand SHALL fail naming the accepted ones.
+`bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, and `stats`. `start`,
+`stop`, `status`, `stats` and `deploy` each take an optional Outfit path:
+`start` SHALL boot the endpoint and block until it is serving, printing the
+base URL and API key as shell exports; `stop` SHALL stop it immediately rather
+than waiting for its idle timer; `status` SHALL report instance state and
+endpoint health without side effects; `stats` SHALL report instance state,
+token usage, resource consumption, and GPU information for a running instance;
+`deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered
+remote environments (see the Remote Environments specification). `bootstrap`
+SHALL stand up the shared, account-level AWS infrastructure (once per account)
+by obtaining and driving the CDK project, and takes its own flags rather than
+an Outfit path (see the Endpoint Provisioning specification). An unrecognised
+subcommand SHALL fail naming the accepted ones.
 
 #### Scenario: Starting the endpoint
 
@@ -37,6 +39,11 @@ unrecognised subcommand SHALL fail naming the accepted ones.
 - **THEN** the registered environments are listed rather than any endpoint being
   contacted
 
+#### Scenario: Stats reports instance metrics
+
+- **WHEN** the user runs `outfit remote stats` with a running instance
+- **THEN** token counts, resource usage, and GPU information are displayed
+
 #### Scenario: Bootstrap is a recognised subcommand
 
 - **WHEN** the user runs `outfit remote bootstrap`
@@ -47,7 +54,7 @@ unrecognised subcommand SHALL fail naming the accepted ones.
 
 - **WHEN** the user runs `outfit remote frobnicate`
 - **THEN** the command fails listing the accepted subcommands, which now
-  include `bootstrap`
+  include `bootstrap` and `stats`
 
 ### Requirement: Reporting a start in progress
 
