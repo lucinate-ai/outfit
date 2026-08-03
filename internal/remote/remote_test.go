@@ -682,3 +682,50 @@ func TestStats_ErrorResponse(t *testing.T) {
 		t.Errorf("expected error with message, got %v", err)
 	}
 }
+
+func TestEnv_ReturnsKeyAndBaseURL(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("env should GET, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"base_url":"http://198.51.100.1:8000/v1","api_key":"sk-remote"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, EnvURL: server.URL, Region: "eu-west-1"}
+	resp, err := Env(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.BaseURL != "http://198.51.100.1:8000/v1" {
+		t.Errorf("base_url = %q, want http://198.51.100.1:8000/v1", resp.BaseURL)
+	}
+	if resp.APIKey != "sk-remote" {
+		t.Errorf("api_key = %q, want sk-remote", resp.APIKey)
+	}
+}
+
+func TestEnv_NoEnvURL(t *testing.T) {
+	stubAWSEnv(t)
+	cfg := Config{StartURL: "https://start.example/", StopURL: "https://stop.example/", Region: "eu-west-1"}
+	_, err := Env(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "env_url") {
+		t.Errorf("expected env_url error, got %v", err)
+	}
+}
+
+func TestLoadConfig_EnvURLOverride(t *testing.T) {
+	isolateConfig(t)
+	writeConfig(t, Config{StartURL: "https://start/", StopURL: "https://stop/", EnvURL: "https://old-env/", Region: "eu-west-1"})
+	cfg, err := LoadConfig(envMap(map[string]string{
+		"OUTFIT_REMOTE_ENV_URL": "https://new-env/",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EnvURL != "https://new-env/" {
+		t.Errorf("env should override env URL, got %q", cfg.EnvURL)
+	}
+}

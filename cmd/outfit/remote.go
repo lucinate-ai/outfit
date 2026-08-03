@@ -31,7 +31,7 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|stats|deploy|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|stats|deploy|env|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -47,11 +47,13 @@ func cmdRemote(args []string) error {
 		return cmdRemoteStats(rest)
 	case "deploy":
 		return cmdRemoteDeploy(rest)
+	case "env":
+		return cmdRemoteEnv(rest)
 	case "ls":
 		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, stop, status, stats, deploy or ls)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, stop, status, stats, deploy, env or ls)", sub)
 	}
 }
 
@@ -216,6 +218,16 @@ func remoteEnvName(remoteValue, outfitDir string) (string, error) {
 	return cfg.Environment, nil
 }
 
+// resolveRemoteConfigForOutfit resolves the remote config for an Outfit's
+// REMOTE value, given the Outfit's directory. Unlike resolveRemoteConfig it
+// does not consult the working directory or the per-user fallback — the REMOTE
+// is already known from the parsed Outfit, so it goes straight to resolving
+// that path.
+func resolveRemoteConfigForOutfit(remoteValue, outfitDir string) (remote.Config, error) {
+	path := resolveRemotePath(remoteValue, outfitDir)
+	return remote.LoadConfigFile(path, os.Getenv)
+}
+
 // outfitArg returns the optional positional Outfit path after the flags.
 func outfitArg(fs *flag.FlagSet) string {
 	if rest := fs.Args(); len(rest) > 0 {
@@ -295,13 +307,56 @@ func (p *startProgress) close() {
 	p.stop.Do(func() { close(p.done) })
 }
 
+// printRemoteEnv prints the remote endpoint's environment variables as shell
+// export lines to stdout, suitable for eval.
+func printRemoteEnv(resp *remote.Response) {
+	fmt.Printf("export OPENAI_BASE_URL=%s\n", resp.BaseURL)
+	fmt.Printf("export OPENAI_API_KEY=%s\n", resp.APIKey)
+}
+
+func cmdRemoteEnv(args []string) error {
+	fs := flag.NewFlagSet("remote env", flag.ContinueOnError)
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+		return err
+	}
+	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	if err != nil {
+		return err
+	}
+	resp, err := remote.Env(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	printRemoteEnv(resp)
+	return nil
+}
+
+// sortFlagsBeforeArgs moves flag arguments (starting with -) before positional
+// arguments, so Go's flag package parses them regardless of order. The stdlib
+// flag package stops at the first non-flag argument, so flags after a positional
+// arg are silently ignored.
+func sortFlagsBeforeArgs(args []string) []string {
+	flags, pos := []string{}, []string{}
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			flags = append(flags, a)
+		} else {
+			pos = append(pos, a)
+		}
+	}
+	return append(flags, pos...)
+}
+
 func cmdRemoteStart(args []string) error {
 	fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
 	var timeout time.Duration
 	const timeoutUsage = "overall time to wait for the endpoint"
 	fs.DurationVar(&timeout, "timeout", 15*time.Minute, timeoutUsage)
 	fs.DurationVar(&timeout, "t", 15*time.Minute, timeoutUsage+" (shorthand)")
-	if err := fs.Parse(args); err != nil {
+	var printEnv bool
+	fs.BoolVar(&printEnv, "env", false, "print export lines to stdout for eval")
+	fs.BoolVar(&printEnv, "e", false, "print export lines to stdout for eval (shorthand)")
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -316,16 +371,22 @@ func cmdRemoteStart(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState)
+	_, err = remote.Start(ctx, cfg, progress.line, progress.setState)
 	if err != nil {
 		return err
 	}
 	progress.close()
 	progress.line(fmt.Sprintf("ready after %s", progress.elapsed()))
 
-	// stdout carries only the result, so `eval "$(outfit remote start)"` works.
-	fmt.Printf("export OPENAI_BASE_URL=%s\n", resp.BaseURL)
-	fmt.Printf("export OPENAI_API_KEY=%s\n", resp.APIKey)
+	if printEnv {
+		envCtx, envCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		envResp, err := remote.Env(envCtx, cfg)
+		envCancel()
+		if err != nil {
+			return err
+		}
+		printRemoteEnv(envResp)
+	}
 	return nil
 }
 
@@ -362,7 +423,7 @@ func cmdRemoteList(args []string) error {
 
 func cmdRemoteStop(args []string) error {
 	fs := flag.NewFlagSet("remote stop", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -379,7 +440,7 @@ func cmdRemoteStop(args []string) error {
 
 func cmdRemoteStatus(args []string) error {
 	fs := flag.NewFlagSet("remote status", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -408,7 +469,7 @@ func cmdRemoteStats(args []string) error {
 	fs := flag.NewFlagSet("remote stats", flag.ContinueOnError)
 	var withCost bool
 	fs.BoolVar(&withCost, "cost", false, "include cost estimate from AWS Price List API")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -727,7 +788,7 @@ func cmdRemoteDeploy(args []string) error {
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
 	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
 	fs.StringVar(&region, "region", "", "AWS region of the shared layer (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
 

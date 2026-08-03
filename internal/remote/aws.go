@@ -84,6 +84,8 @@ func DiscoverSharedLayer(ctx context.Context, cfg aws.Config, stackName string) 
 			StartURL:  outputs["StartUrl"],
 			StopURL:   outputs["StopUrl"],
 			DeployURL: outputs["DeployUrl"],
+			StatsURL:  outputs["StatsUrl"],
+			EnvURL:    outputs["EnvUrl"],
 			Region:    outputs["Region"],
 		},
 		WeightsBucket: outputs["WeightsBucket"],

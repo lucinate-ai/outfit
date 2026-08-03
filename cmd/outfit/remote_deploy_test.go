@@ -575,7 +575,7 @@ func TestRemoteStart_StdoutCarriesOnlyTheResult(t *testing.T) {
 	writeRemoteConfig(t, server.URL)
 
 	out := captureStdout(t, func() {
-		if err := cmdRemoteStart(nil); err != nil {
+		if err := cmdRemoteStart([]string{"--env"}); err != nil {
 			t.Errorf("cmdRemoteStart: %v", err)
 		}
 	})

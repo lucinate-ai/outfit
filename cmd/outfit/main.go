@@ -25,10 +25,11 @@
 //	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
 //	                                      # Outfit first (--get shows it; --set stores the default)
 //	outfit completion <bash|zsh|powershell> # print the tab-completion script
-//	outfit remote bootstrap|start|stop|status|stats|deploy|ls # control the remote GPU
+//	outfit remote bootstrap|start|stop|status|stats|deploy|env|ls # control the remote GPU
 //	                                      # inference instance (bootstrap does the
 //	                                      # once-per-account shared setup; deploy
-//	                                      # sets what it serves; ls lists
+//	                                      # sets what it serves; env returns the
+//	                                      # running endpoint's env vars; ls lists
 //	                                      # registered environments)
 //
 // Short flags: -p (provider), -m (model), -a (alias),
@@ -50,6 +51,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -67,6 +69,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
 // version is the binary's version. It defaults to "dev" and is overridden at
@@ -149,10 +152,11 @@ Usage:
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                     (launch the harness; available: %s)
   outfit completion <shell>         (tab completion: bash, zsh, powershell)
-		outfit remote <bootstrap|start|stop|status|stats|deploy|ls> [path]
+  outfit remote <bootstrap|start|stop|status|stats|deploy|env|ls> [path]
                                     (control the remote GPU instance; bootstrap
                                      does the once-per-account shared setup;
                                      deploy sets what it serves, from the Outfit;
+                                     env returns the running endpoint's env vars;
                                      ls lists registered environments)
   outfit version                    (or -v/--version)
 
@@ -219,17 +223,18 @@ completion: prints a tab-completion script for bash, zsh, or powershell. Add
       TAB then completes commands, flags, providers, harnesses, and your
       registered aliases.
 remote: runs the model on a cloud GPU that exists only while you use it, from
-      the same Outfit. bootstrap does the once-per-account shared setup (Image
-      Builder, the lifecycle Lambdas, shared bucket/roles/VPC) with a consent
-      gate; deploy creates the environment the Outfit's REMOTE names — its own
-      address, API key and allowed CIDR — and says what it serves (PROVIDER
-      picks the engine, just as it does for serve); start boots it and prints
-      the exports your agent needs; status reports its state; stop shuts it
-      down rather than waiting for the idle timer; ls lists the registered
-      environments. The
-      endpoint's URLs come from the Outfit's REMOTE — a bare name selects an
-      environment under ~/.config/outfit/remotes/<name>/, a path names a file —
-      falling back to the default environment.
+       the same Outfit. bootstrap does the once-per-account shared setup (Image
+       Builder, the lifecycle Lambdas, shared bucket/roles/VPC) with a consent
+       gate; deploy creates the environment the Outfit's REMOTE names — its own
+       address, API key and allowed CIDR — and says what it serves (PROVIDER
+       picks the engine, just as it does for serve); start boots it and, with
+       --env/-e, prints the exports your agent needs; env returns the running
+       endpoint's environment variables without starting it; status reports its
+       state; stop shuts it down rather than waiting for the idle timer; ls
+       lists the registered environments. The endpoint's URLs come from the
+       Outfit's REMOTE — a bare name selects an environment under
+       ~/.config/outfit/remotes/<name>/, a path names a file — falling back to
+       the default environment.
 `, strings.Join(harness.Names(), ", "))
 }
 
@@ -951,12 +956,26 @@ func cmdHarness(args []string) error {
 	// A .env beside the applied Outfit is where its keys live, so the launched
 	// agent is given the same ones. Without an Outfit there is no such file and
 	// only the environment (plus any provider key outfit resolves) is passed on.
-	var sel outfit.Selection
 	var envDir string
+	var sel outfit.Selection
 	if outfitPath.set {
 		var err error
-		if sel, envDir, err = applyBeforeLaunch(outfitPath, providers, h, rest); err != nil {
+		sel, envDir, err = applyBeforeLaunch(outfitPath, providers, h, rest)
+		if err != nil {
 			return err
+		}
+	}
+
+	// For a remote Outfit, fetch the live API key and base URL from the
+	// running endpoint so the harness can reach it without the user having
+	// to export anything by hand.
+	var remoteResp *remote.Response
+	if sel.Remote != "" {
+		cfg, cfgErr := resolveRemoteConfigForOutfit(sel.Remote, envDir)
+		if cfgErr == nil {
+			if resp, envErr := remote.Env(context.Background(), cfg); envErr == nil {
+				remoteResp = resp
+			}
 		}
 	}
 
@@ -966,7 +985,7 @@ func cmdHarness(args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = harnessEnv(providers, opencode.EnvResolver(envDir))
+	cmd.Env = harnessEnv(providers, opencode.EnvResolver(envDir), remoteResp)
 	// A worn Outfit brings its whole local environment to the launched agent:
 	// its adjacent .env fills any gaps left above, and its ENV instructions
 	// override everything. These shape only the child's environment — outfit
@@ -999,8 +1018,20 @@ func cmdHarness(args []string) error {
 // A variable already set in the environment is left alone, so an explicit
 // export always wins. A catalogue that cannot be loaded is not fatal: launching
 // the agent matters more than the keys, and it will report its own auth error.
-func harnessEnv(providersPath string, resolve func(string) string) []string {
+//
+// remoteResp carries the live API key and base URL from a running remote
+// endpoint. When present, OPENAI_API_KEY and OPENAI_BASE_URL are injected so
+// the harness can reach the remote without the user exporting them manually.
+func harnessEnv(providersPath string, resolve func(string) string, remoteResp *remote.Response) []string {
 	env := os.Environ()
+	if remoteResp != nil {
+		if os.Getenv("OPENAI_API_KEY") == "" {
+			env = append(env, "OPENAI_API_KEY="+remoteResp.APIKey)
+		}
+		if os.Getenv("OPENAI_BASE_URL") == "" {
+			env = append(env, "OPENAI_BASE_URL="+remoteResp.BaseURL)
+		}
+	}
 	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(providersPath))
 	if err != nil {
 		return env
@@ -1104,8 +1135,9 @@ func namesAnOutfitOrAlias(arg string) bool {
 // is about to be launched — exactly the work `outfit apply` does, so one command
 // can dress the harness and then run it. rest is what will be forwarded to the
 // harness, inspected only to catch a path that was meant for the flag.
-// It returns the applied Outfit's directory, which is where its `.env` lives,
-// so the launched agent can be given the same keys the apply resolved.
+// It returns the applied Outfit's directory and selection, so the launched
+// agent can be given the same keys the apply resolved, and the caller can
+// detect if the Outfit targets a remote endpoint.
 func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) (outfit.Selection, string, error) {
 	// The flag's value has to be attached, so `--outfit ./dev/Outfit` (or
 	// `--outfit q3`) would otherwise apply ./Outfit and quietly hand the path

@@ -713,7 +713,7 @@ func TestHarnessEnv_CarriesResolvableKeys(t *testing.T) {
 	}
 
 	var found string
-	for _, kv := range harnessEnv("", fromDotEnv) {
+	for _, kv := range harnessEnv("", fromDotEnv, nil) {
 		if strings.HasPrefix(kv, "OPENAI_API_KEY=") {
 			found = kv
 		}
@@ -728,7 +728,7 @@ func TestHarnessEnv_DoesNotOverrideTheEnvironment(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "sk-exported")
 	fromDotEnv := func(string) string { return "sk-from-dotenv" }
 
-	for _, kv := range harnessEnv("", fromDotEnv) {
+	for _, kv := range harnessEnv("", fromDotEnv, nil) {
 		if kv == "OPENAI_API_KEY=sk-from-dotenv" {
 			t.Error("the .env value overrode an exported one")
 		}
