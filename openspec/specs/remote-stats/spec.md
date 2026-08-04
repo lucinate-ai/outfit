@@ -46,22 +46,27 @@ When the user passes `--cost`, the stats report SHALL include an estimated on-de
 
 ### Requirement: Tabular display
 
-The stats output SHALL support two formats via the `--format` flag: `table` (default) and `json`. The `table` format SHALL produce a tab-separated key-value table, one line per metric, with the key column left-aligned and values right of it. The `json` format SHALL output the response as a JSON object to standard output. Progress and error messages SHALL go to standard error regardless of format.
+The stats output SHALL support three formats via the `--format` flag: `bar` (default), `table`, and `json`. The `bar` format SHALL produce a compact display with horizontal progress bars for resource metrics, colour-coded by utilization level. The `table` format SHALL produce a tab-separated key-value table, one line per metric, with the key column left-aligned and values right of it. The `json` format SHALL output the response as a JSON object to standard output. Progress and error messages SHALL go to standard error regardless of format.
 
 #### Scenario: Clean output
 
 - **WHEN** the command succeeds
 - **THEN** standard output contains only the stats data with no progress or debug lines
 
-#### Scenario: Default format is table
+#### Scenario: Default format is bar
 
 - **WHEN** the user runs `outfit remote metrics` without `--format`
-- **THEN** the output is in table format
+- **THEN** the output is in bar format
 
 #### Scenario: Table format is explicit
 
 - **WHEN** the user runs `outfit remote metrics --format=table`
 - **THEN** the output is in table format
+
+#### Scenario: Bar format is explicit
+
+- **WHEN** the user runs `outfit remote metrics --format=bar`
+- **THEN** the output is in bar format with progress bars for resource metrics
 
 #### Scenario: JSON format
 
@@ -80,22 +85,22 @@ The stats output SHALL support two formats via the `--format` flag: `table` (def
 
 ### Requirement: Watch mode
 
-The system SHALL support a `--watch`/`-w` flag that repeatedly queries metrics every 60 seconds. When enabled, the command SHALL print the metrics output, then wait 60 seconds and repeat. Each refresh SHALL be preceded by a separator line to distinguish successive outputs. The command SHALL continue until the user sends `SIGINT` (Ctrl+C) or `SIGTERM`, at which point it SHALL exit cleanly.
+The system SHALL support a `--watch`/`-w` flag that repeatedly queries metrics every 60 seconds. When enabled, the command SHALL clear the screen and redraw the output in place for each refresh, producing no scrollback accumulation. Each refresh SHALL pre-render the metrics output into a buffer before clearing the screen, so the redisplay is instantaneous after the network round-trip. The command SHALL continue until the user sends `SIGINT` (Ctrl+C) or `SIGTERM`, at which point it SHALL exit cleanly.
 
 #### Scenario: Watch mode repeats output
 
 - **WHEN** the user runs `outfit remote metrics --watch`
-- **THEN** the command prints metrics, waits 60 seconds, and prints updated metrics
+- **THEN** the command prints metrics, waits 60 seconds, clears the screen, and prints updated metrics
 
-#### Scenario: Watch separator
+#### Scenario: Watch redraws in place
 
 - **WHEN** the user runs `outfit remote metrics -w`
-- **THEN** each refresh after the first is preceded by a separator line
+- **THEN** each refresh after the first clears the screen before displaying new output, with no separator lines
 
 #### Scenario: Watch with JSON format
 
 - **WHEN** the user runs `outfit remote metrics --watch --format=json`
-- **THEN** each refresh outputs a separate JSON object on its own line
+- **THEN** each refresh clears the screen and outputs a JSON object
 
 #### Scenario: Watch with cost
 
