@@ -507,22 +507,22 @@ func cmdRemoteMetrics(args []string) error {
 	if watch {
 		return runMetricsWatch(cfg, format, withCost)
 	}
-	return runMetricsOnce(context.Background(), cfg, format, withCost)
+	return runMetricsOnce(context.Background(), cfg, format, withCost, os.Stdout)
 }
 
-func runMetricsOnce(ctx context.Context, cfg remote.Config, format string, withCost bool) error {
+func runMetricsOnce(ctx context.Context, cfg remote.Config, format string, withCost bool, w io.Writer) error {
 	resp, err := remote.Stats(ctx, cfg)
 	if err != nil {
 		return err
 	}
 
 	if format == "json" {
-		return formatMetricsJSON(resp, withCost, cfg)
+		return formatMetricsJSON(resp, withCost, cfg, w)
 	}
 	if format == "bar" {
-		return formatMetricsBar(resp, cfg)
+		return formatMetricsBar(resp, cfg, w)
 	}
-	return formatMetricsTable(ctx, resp, withCost, cfg)
+	return formatMetricsTable(ctx, resp, withCost, cfg, w)
 }
 
 func runMetricsWatch(cfg remote.Config, format string, withCost bool) error {
@@ -538,17 +538,19 @@ func runMetricsWatch(cfg remote.Config, format string, withCost bool) error {
 
 	first := true
 	for {
-		if !first {
-			// Clear screen and move cursor to home for in-place refresh.
-			fmt.Fprint(os.Stdout, "\033[2J\033[H")
-		}
-		first = false
-		if err := runMetricsOnce(ctx, cfg, format, withCost); err != nil {
+		// Fetch into a buffer first so the clear-and-render is instant.
+		var buf strings.Builder
+		if err := runMetricsOnce(ctx, cfg, format, withCost, &buf); err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
 			return err
 		}
+		if !first {
+			fmt.Fprint(os.Stdout, "\033[2J\033[H")
+		}
+		first = false
+		fmt.Fprint(os.Stdout, buf.String())
 		select {
 		case <-ctx.Done():
 			return nil
@@ -557,50 +559,50 @@ func runMetricsWatch(cfg remote.Config, format string, withCost bool) error {
 	}
 }
 
-func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCost bool, cfg remote.Config) error {
-	fmt.Printf("environment:  %s\n", resp.Environment)
-	fmt.Printf("state:        %s\n", resp.State)
+func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCost bool, cfg remote.Config, w io.Writer) error {
+	fmt.Fprintf(w, "environment:  %s\n", resp.Environment)
+	fmt.Fprintf(w, "state:        %s\n", resp.State)
 
 	if resp.State != "running" {
 		if resp.Runner != "" {
-			fmt.Printf("runner:       %s\n", resp.Runner)
+			fmt.Fprintf(w, "runner:       %s\n", resp.Runner)
 		}
 		if resp.ModelID != "" {
-			fmt.Printf("model:        %s\n", resp.ModelID)
+			fmt.Fprintf(w, "model:        %s\n", resp.ModelID)
 		}
 		return nil
 	}
 
 	if resp.InstanceID != "" {
-		fmt.Printf("instance:     %s\n", resp.InstanceID)
+		fmt.Fprintf(w, "instance:     %s\n", resp.InstanceID)
 	}
 	if resp.InstanceType != "" {
-		fmt.Printf("instanceType: %s\n", resp.InstanceType)
+		fmt.Fprintf(w, "instanceType: %s\n", resp.InstanceType)
 	}
 	if resp.Runner != "" {
-		fmt.Printf("runner:       %s\n", resp.Runner)
+		fmt.Fprintf(w, "runner:       %s\n", resp.Runner)
 	}
 	if resp.ModelID != "" {
-		fmt.Printf("model:        %s\n", resp.ModelID)
+		fmt.Fprintf(w, "model:        %s\n", resp.ModelID)
 	}
 	if resp.UptimeSeconds > 0 {
-		fmt.Printf("uptime:       %s\n", formatDuration(resp.UptimeSeconds))
+		fmt.Fprintf(w, "uptime:       %s\n", formatDuration(resp.UptimeSeconds))
 	}
 
 	if resp.Tokens != nil {
-		fmt.Println()
-		fmt.Printf("  running:          %d\n", resp.Tokens.Running)
-		fmt.Printf("  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
-		fmt.Printf("  generation tokens: %d\n", resp.Tokens.GenerationTokens)
-		fmt.Printf("  requests:         %d\n", resp.Tokens.Requests)
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  running:          %d\n", resp.Tokens.Running)
+		fmt.Fprintf(w, "  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
+		fmt.Fprintf(w, "  generation tokens: %d\n", resp.Tokens.GenerationTokens)
+		fmt.Fprintf(w, "  requests:         %d\n", resp.Tokens.Requests)
 	}
 
 	if len(resp.GPUs) > 0 {
-		fmt.Println()
+		fmt.Fprintln(w)
 		for _, g := range resp.GPUs {
 			memUsed := formatBytes(g.MemoryUsed)
 			memTotal := formatBytes(g.MemoryTotal)
-			fmt.Printf("  GPU %d: %s  util=%d%%  mem=%s/%s  temp=%dC\n",
+			fmt.Fprintf(w, "  GPU %d: %s  util=%d%%  mem=%s/%s  temp=%dC\n",
 				g.Index, g.Name, g.Utilization, memUsed, memTotal, g.Temperature)
 		}
 		if len(resp.GPUs) > 1 {
@@ -611,27 +613,27 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 				totalMemTotal += g.MemoryTotal
 			}
 			avgUtil := int(totalUtil) / len(resp.GPUs)
-			fmt.Printf("  avg util: %d%%  total mem: %s/%s\n",
+			fmt.Fprintf(w, "  avg util: %d%%  total mem: %s/%s\n",
 				avgUtil, formatBytes(totalMemUsed), formatBytes(totalMemTotal))
 		}
 	}
 
 	if resp.CPU != nil {
-		fmt.Println()
-		fmt.Printf("  CPU: %.0f%% util\n", resp.CPU.Utilization)
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  CPU: %.0f%% util\n", resp.CPU.Utilization)
 	}
 
 	if resp.Memory != nil {
 		memUsed := formatBytes(resp.Memory.Used)
 		memTotal := formatBytes(resp.Memory.Total)
 		pct := float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
-		fmt.Printf("  RAM: %s/%s (%.0f%%)\n", memUsed, memTotal, pct)
+		fmt.Fprintf(w, "  RAM: %s/%s (%.0f%%)\n", memUsed, memTotal, pct)
 	}
 
 	if withCost && resp.UptimeSeconds > 0 && resp.InstanceType != "" {
 		if price, err := getOnDemandPrice(ctx, cfg.Region, resp.InstanceType); err == nil {
 			hours := float64(resp.UptimeSeconds) / 3600.0
-			fmt.Printf("  cost so far:  $%.2f (%.4f/hr)\n", hours*price, price)
+			fmt.Fprintf(w, "  cost so far:  $%.2f (%.4f/hr)\n", hours*price, price)
 		}
 	}
 
@@ -645,7 +647,7 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 	return nil
 }
 
-func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Config) error {
+func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Config, w io.Writer) error {
 	var costInfo *float64
 	if withCost && resp.UptimeSeconds > 0 && resp.InstanceType != "" {
 		if price, err := getOnDemandPrice(context.Background(), cfg.Region, resp.InstanceType); err == nil {
@@ -668,13 +670,13 @@ func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Con
 		if err != nil {
 			return err
 		}
-		fmt.Println(string(data))
+		fmt.Fprintln(w, string(data))
 	} else {
 		data, err := json.MarshalIndent(resp, "", "  ")
 		if err != nil {
 			return err
 		}
-		fmt.Println(string(data))
+		fmt.Fprintln(w, string(data))
 	}
 
 	if len(resp.Errors) > 0 {
@@ -687,22 +689,22 @@ func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Con
 	return nil
 }
 
-func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config) error {
-	fmt.Fprintf(os.Stdout, "%s  %s", resp.Environment, resp.State)
+func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config, w io.Writer) error {
+	fmt.Fprintf(w, "%s  %s", resp.Environment, resp.State)
 	if resp.InstanceType != "" {
-		fmt.Fprintf(os.Stdout, "  %s", resp.InstanceType)
+		fmt.Fprintf(w, "  %s", resp.InstanceType)
 	}
 	if resp.ModelID != "" {
-		fmt.Fprintf(os.Stdout, "  %s", resp.ModelID)
+		fmt.Fprintf(w, "  %s", resp.ModelID)
 	}
-	fmt.Fprintln(os.Stdout)
+	fmt.Fprintln(w)
 
 	if resp.State != "running" {
 		return nil
 	}
 
 	if resp.CPU != nil {
-		renderBar("CPU", resp.CPU.Utilization)
+		renderBar(w, "CPU", resp.CPU.Utilization)
 	}
 
 	if resp.Memory != nil {
@@ -710,7 +712,7 @@ func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config) error {
 		if resp.Memory.Total > 0 {
 			pct = float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
 		}
-		renderBar("RAM", pct)
+		renderBar(w, "RAM", pct)
 	}
 
 	for _, g := range resp.GPUs {
@@ -718,20 +720,20 @@ func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config) error {
 		if len(resp.GPUs) > 1 {
 			prefix = fmt.Sprintf("GPU %d", g.Index)
 		}
-		renderBar(prefix+" util", float64(g.Utilization))
+		renderBar(w, prefix+" util", float64(g.Utilization))
 		memPct := 0.0
 		if g.MemoryTotal > 0 {
 			memPct = float64(g.MemoryUsed) / float64(g.MemoryTotal) * 100
 		}
-		renderBar(prefix+" mem", memPct)
+		renderBar(w, prefix+" mem", memPct)
 	}
 
 	if resp.Tokens != nil {
-		fmt.Println()
-		fmt.Printf("  running:          %d\n", resp.Tokens.Running)
-		fmt.Printf("  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
-		fmt.Printf("  generation tokens: %d\n", resp.Tokens.GenerationTokens)
-		fmt.Printf("  requests:         %d\n", resp.Tokens.Requests)
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  running:          %d\n", resp.Tokens.Running)
+		fmt.Fprintf(w, "  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
+		fmt.Fprintf(w, "  generation tokens: %d\n", resp.Tokens.GenerationTokens)
+		fmt.Fprintf(w, "  requests:         %d\n", resp.Tokens.Requests)
 	}
 
 	if len(resp.Errors) > 0 {
@@ -744,7 +746,7 @@ func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config) error {
 	return nil
 }
 
-func renderBar(label string, pct float64) {
+func renderBar(w io.Writer, label string, pct float64) {
 	const width = 25
 	colour := "\033[92m"
 	if pct > 90 {
@@ -757,16 +759,16 @@ func renderBar(label string, pct float64) {
 		filled = width
 	}
 	empty := width - filled
-	fmt.Fprintf(os.Stdout, "  %-9s ", label)
-	fmt.Fprintf(os.Stdout, "%s", colour)
+	fmt.Fprintf(w, "  %-9s ", label)
+	fmt.Fprintf(w, "%s", colour)
 	for i := 0; i < filled; i++ {
-		fmt.Fprint(os.Stdout, "█")
+		fmt.Fprint(w, "█")
 	}
-	fmt.Fprintf(os.Stdout, "\033[0m")
+	fmt.Fprintf(w, "\033[0m")
 	for i := 0; i < empty; i++ {
-		fmt.Fprint(os.Stdout, "░")
+		fmt.Fprint(w, "░")
 	}
-	fmt.Fprintf(os.Stdout, " %.0f%%\n", pct)
+	fmt.Fprintf(w, " %.0f%%\n", pct)
 }
 
 func formatDuration(seconds int) string {

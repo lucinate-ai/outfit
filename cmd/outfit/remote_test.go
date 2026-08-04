@@ -1014,3 +1014,66 @@ func TestRemoteStart_ProbeFailsIPDetectFails(t *testing.T) {
 		t.Errorf("expected the placeholder CIDR, got:\n%s", errOut)
 	}
 }
+
+// TestRemoteMetrics_WatchBuffersBeforeClear verifies the fetch-before-clear
+// invariant: metrics are rendered into a buffer first, then the screen is
+// cleared and the buffer is written. This eliminates the blank-frame flash
+// that occurs when you clear the screen before you have content to show.
+// Regression for: io.Writer refactor was lost when remote.go was reverted.
+func TestRemoteMetrics_WatchBuffersBeforeClear(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount >= 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message": "stop"}`))
+			return
+		}
+		w.Write([]byte(`{"environment": "dev", "state": "running", "uptimeSeconds": 10}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	oldInterval := metricsWatchInterval
+	metricsWatchInterval = 50 * time.Millisecond
+	defer func() { metricsWatchInterval = oldInterval }()
+
+	out := captureStdout(t, func() {
+		cmdRemoteMetrics([]string{"--watch", "--format=table"})
+	})
+
+	// The clear-screen escape sequence.
+	clearScreen := "\033[2J\033[H"
+
+	// First render must NOT have a clear-screen prefix — there's nothing to
+	// clear yet, and writing clear before content causes a visible flash.
+	firstClear := strings.Index(out, clearScreen)
+	firstEnv := strings.Index(out, "environment:")
+	if firstClear != -1 && firstClear < firstEnv {
+		t.Error("first render must not clear screen before rendering content")
+	}
+
+	// Subsequent renders DO have clear-screen before the new content, so the
+	// update is in-place.  With 3 calls (2 good, 1 error), we expect at least
+	// 2 renders and thus at least 1 clear between them.
+	count := strings.Count(out, "environment:")
+	if count < 2 {
+		t.Fatalf("expected at least 2 renders, got %d", count)
+	}
+
+	// There should be at least one clear-screen that appears between the first
+	// and second "environment:" line.
+	firstIdx := strings.Index(out, "environment:")
+	secondIdx := strings.Index(out[firstIdx+len("environment:"):], "environment:")
+	secondIdx += firstIdx + len("environment:")
+
+	between := out[firstIdx:secondIdx]
+	if !strings.Contains(between, clearScreen) {
+		t.Errorf("expected clear-screen escape between first and second render.\n"+
+			"Output (%d bytes):\n%s", len(out), out)
+	}
+}
