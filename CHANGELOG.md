@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.14.0] - 2026-08-04
+### Added
+- feat(remote): add bar graph metrics format and clear screen in watch mode
+- feat(remote): warn when start succeeds but endpoint is unreachable (#43)
+
+### Changed
+- chore: archive remote-env-command change
+- chore: sync specs and archive bar-metrics-format change
+- docs: add openspec artifacts for bar-metrics-format change
+- docs: add remote metrics screenshot
+- docs: sync remote-env-command delta specs to main
+- refactor(remote): accept io.Writer in metrics formatters and restore buffered watch
+
+### Fixed
+- fix(remote): invoke package.json scripts via run in bootstrap
+
 ## [1.13.0] - 2026-08-03
 ### Added
 - feat(remote): rename stats to metrics, add format and watch flags
