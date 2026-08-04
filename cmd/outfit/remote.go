@@ -489,14 +489,14 @@ func cmdRemoteMetrics(args []string) error {
 		watch    bool
 	)
 	fs.BoolVar(&withCost, "cost", false, "include cost estimate from AWS Price List API")
-	fs.StringVar(&format, "format", "table", "output format: table (default) or json")
+	fs.StringVar(&format, "format", "bar", "output format: bar (default), table or json")
 	fs.BoolVar(&watch, "watch", false, "poll metrics every 60 seconds")
 	fs.BoolVar(&watch, "w", false, "shorthand for --watch")
 	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
-	if format != "table" && format != "json" {
-		return fmt.Errorf("--format must be \"table\" or \"json\", got %q", format)
+	if format != "table" && format != "json" && format != "bar" {
+		return fmt.Errorf("--format must be \"table\", \"bar\", or \"json\", got %q", format)
 	}
 
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -519,6 +519,9 @@ func runMetricsOnce(ctx context.Context, cfg remote.Config, format string, withC
 	if format == "json" {
 		return formatMetricsJSON(resp, withCost, cfg)
 	}
+	if format == "bar" {
+		return formatMetricsBar(resp, cfg)
+	}
 	return formatMetricsTable(ctx, resp, withCost, cfg)
 }
 
@@ -536,8 +539,8 @@ func runMetricsWatch(cfg remote.Config, format string, withCost bool) error {
 	first := true
 	for {
 		if !first {
-			fmt.Fprintln(os.Stdout)
-			fmt.Fprintln(os.Stdout, "---")
+			// Clear screen and move cursor to home for in-place refresh.
+			fmt.Fprint(os.Stdout, "\033[2J\033[H")
 		}
 		first = false
 		if err := runMetricsOnce(ctx, cfg, format, withCost); err != nil {
@@ -682,6 +685,88 @@ func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Con
 	}
 
 	return nil
+}
+
+func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config) error {
+	fmt.Fprintf(os.Stdout, "%s  %s", resp.Environment, resp.State)
+	if resp.InstanceType != "" {
+		fmt.Fprintf(os.Stdout, "  %s", resp.InstanceType)
+	}
+	if resp.ModelID != "" {
+		fmt.Fprintf(os.Stdout, "  %s", resp.ModelID)
+	}
+	fmt.Fprintln(os.Stdout)
+
+	if resp.State != "running" {
+		return nil
+	}
+
+	if resp.CPU != nil {
+		renderBar("CPU", resp.CPU.Utilization)
+	}
+
+	if resp.Memory != nil {
+		pct := 0.0
+		if resp.Memory.Total > 0 {
+			pct = float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
+		}
+		renderBar("RAM", pct)
+	}
+
+	for _, g := range resp.GPUs {
+		prefix := "GPU"
+		if len(resp.GPUs) > 1 {
+			prefix = fmt.Sprintf("GPU %d", g.Index)
+		}
+		renderBar(prefix+" util", float64(g.Utilization))
+		memPct := 0.0
+		if g.MemoryTotal > 0 {
+			memPct = float64(g.MemoryUsed) / float64(g.MemoryTotal) * 100
+		}
+		renderBar(prefix+" mem", memPct)
+	}
+
+	if resp.Tokens != nil {
+		fmt.Println()
+		fmt.Printf("  running:          %d\n", resp.Tokens.Running)
+		fmt.Printf("  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
+		fmt.Printf("  generation tokens: %d\n", resp.Tokens.GenerationTokens)
+		fmt.Printf("  requests:         %d\n", resp.Tokens.Requests)
+	}
+
+	if len(resp.Errors) > 0 {
+		fmt.Fprintln(os.Stderr, "metric collection errors:")
+		for _, e := range resp.Errors {
+			fmt.Fprintf(os.Stderr, "  - %s\n", e)
+		}
+	}
+
+	return nil
+}
+
+func renderBar(label string, pct float64) {
+	const width = 25
+	colour := "\033[92m"
+	if pct > 90 {
+		colour = "\033[31m"
+	} else if pct >= 80 {
+		colour = "\033[33m"
+	}
+	filled := int(pct / 100.0 * float64(width))
+	if filled > width {
+		filled = width
+	}
+	empty := width - filled
+	fmt.Fprintf(os.Stdout, "  %-9s ", label)
+	fmt.Fprintf(os.Stdout, "%s", colour)
+	for i := 0; i < filled; i++ {
+		fmt.Fprint(os.Stdout, "█")
+	}
+	fmt.Fprintf(os.Stdout, "\033[0m")
+	for i := 0; i < empty; i++ {
+		fmt.Fprint(os.Stdout, "░")
+	}
+	fmt.Fprintf(os.Stdout, " %.0f%%\n", pct)
 }
 
 func formatDuration(seconds int) string {

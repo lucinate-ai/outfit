@@ -399,7 +399,7 @@ func TestRemoteMetrics_Running(t *testing.T) {
 	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
 
 	out := captureStdout(t, func() {
-		if err := cmdRemoteMetrics(nil); err != nil {
+		if err := cmdRemoteMetrics([]string{"--format=table"}); err != nil {
 			t.Errorf("cmdRemoteMetrics: %v", err)
 		}
 	})
@@ -443,7 +443,7 @@ func TestRemoteMetrics_Stopped(t *testing.T) {
 	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
 
 	out := captureStdout(t, func() {
-		if err := cmdRemoteMetrics(nil); err != nil {
+		if err := cmdRemoteMetrics([]string{"--format=table"}); err != nil {
 			t.Errorf("cmdRemoteMetrics: %v", err)
 		}
 	})
@@ -505,8 +505,8 @@ func TestRemoteMetrics_DefaultFormat(t *testing.T) {
 			t.Errorf("cmdRemoteMetrics: %v", err)
 		}
 	})
-	if !strings.Contains(out, "environment:  dev") || !strings.Contains(out, "state:        running") {
-		t.Errorf("default format should be table, got:\n%s", out)
+	if !strings.Contains(out, "dev") || !strings.Contains(out, "running") {
+		t.Errorf("default format should be bar, got:\n%s", out)
 	}
 }
 
@@ -588,6 +588,89 @@ func TestRemoteMetrics_InvalidFormat(t *testing.T) {
 	err := cmdRemoteMetrics([]string{"--format=csv"})
 	if err == nil || !strings.Contains(err.Error(), "format") {
 		t.Errorf("expected format error, got %v", err)
+	}
+}
+
+func TestRemoteMetrics_BarFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceType": "g5.2xlarge",
+			"modelId": "llama-3.1-8b",
+			"uptimeSeconds": 300,
+			"gpus": [
+				{"index": 0, "name": "A10G", "utilization": 85, "memoryUsed": 16106127360, "memoryTotal": 24297466368, "temperature": 65}
+			],
+			"cpu": {"utilization": 45.5},
+			"memory": {"total": 33145275904, "used": 12884901888},
+			"tokens": {"running": 2, "promptTokens": 1500, "generationTokens": 8200, "requests": 120}
+		}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		err := cmdRemoteMetrics([]string{"--format=bar"})
+		if err != nil {
+			t.Errorf("bar format failed: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "dev") || !strings.Contains(out, "running") {
+		t.Errorf("bar output missing header:\n%s", out)
+	}
+	if !strings.Contains(out, "CPU") {
+		t.Errorf("bar output missing CPU bar:\n%s", out)
+	}
+	if !strings.Contains(out, "RAM") {
+		t.Errorf("bar output missing RAM bar:\n%s", out)
+	}
+	if !strings.Contains(out, "GPU util") {
+		t.Errorf("bar output missing GPU util bar:\n%s", out)
+	}
+	if !strings.Contains(out, "GPU mem") {
+		t.Errorf("bar output missing GPU mem bar:\n%s", out)
+	}
+	if !strings.Contains(out, "85%") {
+		t.Errorf("bar output missing GPU utilization percentage:\n%s", out)
+	}
+	if !strings.Contains(out, "running:") {
+		t.Errorf("bar output missing token stats:\n%s", out)
+	}
+}
+
+func TestRemoteMetrics_BarFormatStopped(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "stopped",
+			"instanceType": "g5.2xlarge"
+		}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		err := cmdRemoteMetrics([]string{"--format=bar"})
+		if err != nil {
+			t.Errorf("bar format failed: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "stopped") {
+		t.Errorf("bar output should show stopped state:\n%s", out)
+	}
+	if strings.Contains(out, "CPU") {
+		t.Errorf("bar output should not show bars for stopped state:\n%s", out)
 	}
 }
 
@@ -680,7 +763,7 @@ func TestRemoteMetrics_WatchMode(t *testing.T) {
 	defer func() { metricsWatchInterval = oldInterval }()
 
 	out := captureStdout(t, func() {
-		err := cmdRemoteMetrics([]string{"--watch"})
+		err := cmdRemoteMetrics([]string{"--watch", "--format=table"})
 		// Expects error from the 3rd call.
 		if err == nil {
 			t.Error("watch should exit with error when server fails")
@@ -690,12 +773,10 @@ func TestRemoteMetrics_WatchMode(t *testing.T) {
 	if callCount < 3 {
 		t.Errorf("watch should have polled at least 3 times, got %d calls", callCount)
 	}
-	if !strings.Contains(out, "environment:  dev") {
-		t.Errorf("watch output missing environment:\n%s", out)
-	}
-	// Should see separator between outputs.
-	if !strings.Contains(out, "---") {
-		t.Errorf("watch output should contain separator between refreshes:\n%s", out)
+	// Should see the metrics output multiple times (watch polls repeatedly).
+	count := strings.Count(out, "environment:  dev")
+	if count < 2 {
+		t.Errorf("watch should have produced at least 2 outputs, got %d:\n%s", count, out)
 	}
 }
 
@@ -722,7 +803,7 @@ func TestRemoteMetrics_WatchShortFlag(t *testing.T) {
 	defer func() { metricsWatchInterval = oldInterval }()
 
 	out := captureStdout(t, func() {
-		err := cmdRemoteMetrics([]string{"-w"})
+		err := cmdRemoteMetrics([]string{"-w", "--format=table"})
 		if err == nil {
 			t.Error("-w should exit with error when server fails")
 		}
@@ -754,7 +835,7 @@ func TestRemoteMetrics_MultiGPU(t *testing.T) {
 	t.Setenv("OUTFIT_REMOTE_STATS_URL", server.URL)
 
 	out := captureStdout(t, func() {
-		if err := cmdRemoteMetrics(nil); err != nil {
+		if err := cmdRemoteMetrics([]string{"--format=table"}); err != nil {
 			t.Errorf("cmdRemoteMetrics: %v", err)
 		}
 	})
