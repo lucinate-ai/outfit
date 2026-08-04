@@ -247,6 +247,45 @@ describe('LlmStack (shared layer)', () => {
     sharedTemplate({ hfToken: 'hf_abc' }).resourceCountIs('AWS::SecretsManager::Secret', 1);
   });
 
+  it('pre-creates per-engine and boot log groups with the configured retention', () => {
+    template.resourceCountIs('AWS::Logs::LogGroup', 3);
+    for (const name of ['/cloud-vm-llm/llamacpp', '/cloud-vm-llm/vllm', '/cloud-vm-llm/boot']) {
+      template.hasResourceProperties('AWS::Logs::LogGroup', {
+        LogGroupName: name,
+        RetentionInDays: 1,
+      });
+    }
+    // Ephemeral logs — the groups are destroyed with the stack, not retained.
+    for (const g of Object.values(template.findResources('AWS::Logs::LogGroup'))) {
+      expect(g.DeletionPolicy).toBe('Delete');
+    }
+  });
+
+  it('honours a logRetentionDays override', () => {
+    sharedTemplate({ logRetentionDays: 7 }).hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/cloud-vm-llm/boot',
+      RetentionInDays: 7,
+    });
+  });
+
+  it('grants the instance role scoped log shipping — stream + put, never CreateLogGroup', () => {
+    const actions = allPolicyActions(template);
+    expect(actions).toContain('logs:CreateLogStream');
+    expect(actions).toContain('logs:PutLogEvents');
+    expect(actions).not.toContain('logs:CreateLogGroup');
+  });
+
+  it('passes the engine and boot log group names to the start Lambda', () => {
+    const fns = template.findResources('AWS::Lambda::Function');
+    const start = Object.values(fns).find((f) =>
+      String(f.Properties.Description).includes('Launches an environment instance'),
+    );
+    const env = start!.Properties.Environment.Variables;
+    expect(env.LLAMACPP_LOG_GROUP).toBeDefined();
+    expect(env.VLLM_LOG_GROUP).toBeDefined();
+    expect(env.BOOT_LOG_GROUP).toBeDefined();
+  });
+
   it('outputs the discovery values and no per-environment address', () => {
     for (const name of [
       'OutfitRemoteConfig',
@@ -330,6 +369,21 @@ describe('ImageStack', () => {
 
   it('bakes no secret and no model into the AMI (model-agnostic)', () => {
     template.resourceCountIs('AWS::SecretsManager::Secret', 0);
+  });
+
+  it('bakes the CloudWatch agent and the engine-log rotation into every runner', () => {
+    const components = Object.values(template.findResources('AWS::ImageBuilder::Component'));
+    expect(components.length).toBe(2);
+    for (const c of components) {
+      const data = c.Properties.Data as string;
+      expect(data).toContain('amazon-cloudwatch-agent.deb');
+      // The rotation is size-triggered and copytruncate (the engine holds the
+      // append fd); only the engine log dir is rotated, not the boot log.
+      expect(data).toContain('/var/log/llm/*.log');
+      expect(data).toContain('copytruncate');
+      expect(data).toContain('llm-logrotate.timer');
+      expect(data).not.toContain('cloud-init-output.log');
+    }
   });
 });
 

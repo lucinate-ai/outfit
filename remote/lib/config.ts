@@ -62,6 +62,12 @@ export interface LlmConfig {
   builderInstanceType: string;
   /** Root volume size (GB) of the baked AMI — fits the OS + driver + runner. */
   imageVolumeGb: number;
+  /**
+   * How long engine and boot logs are kept in CloudWatch. Short by default:
+   * these logs exist to catch a short-lived instance's crash, not for audit,
+   * so the window is small to bound cost.
+   */
+  logRetentionDays: number;
 }
 
 const DEFAULTS = {
@@ -89,6 +95,7 @@ const DEFAULTS = {
   // S3 at boot. The snapshot only copies used blocks (~20 GB), so this does
   // not slow the bake.
   imageVolumeGb: 80,
+  logRetentionDays: 1,
 } as const;
 
 function contextString(app: App, key: string, fallback: string): string {
@@ -168,5 +175,6 @@ export function loadConfig(
     availabilityZones: contextList(app, 'availabilityZones', DEFAULTS.availabilityZones),
     builderInstanceType: contextString(app, 'builderInstanceType', DEFAULTS.builderInstanceType),
     imageVolumeGb: contextNumber(app, 'imageVolumeGb', DEFAULTS.imageVolumeGb),
+    logRetentionDays: contextNumber(app, 'logRetentionDays', DEFAULTS.logRetentionDays),
   };
 }

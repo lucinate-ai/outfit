@@ -15,7 +15,7 @@ import {
   sleep,
   writeState,
 } from '../shared/aws';
-import { buildServeCommand, type DeployConfig } from '../shared/deploy-config';
+import { buildServeCommand, type DeployConfig, type Runner } from '../shared/deploy-config';
 import {
   baseUrlFor,
   deployConfigParam,
@@ -39,6 +39,11 @@ const SUBNET_IDS = requireEnv('SUBNET_IDS').split(',');
 const INSTANCE_PROFILE_ARN = requireEnv('INSTANCE_PROFILE_ARN');
 const WEIGHTS_BUCKET = requireEnv('WEIGHTS_BUCKET');
 const REGION = requireEnv('AWS_REGION');
+const BOOT_LOG_GROUP = requireEnv('BOOT_LOG_GROUP');
+const ENGINE_LOG_GROUP = { llamacpp: requireEnv('LLAMACPP_LOG_GROUP'), vllm: requireEnv('VLLM_LOG_GROUP') };
+// Where each engine's unit writes its stdout/stderr (tailed by the CloudWatch
+// agent). llama.cpp's binary is `llama-server`; vLLM's log is named for it.
+const ENGINE_LOG_FILE = { llamacpp: '/var/log/llm/llama-server.log', vllm: '/var/log/llm/vllm.log' };
 
 const DEADLINE_MARGIN_MS = 20_000;
 const POLL_MS = 5_000;
@@ -265,13 +270,53 @@ async function launchAcrossAzs(
   };
 }
 
+/**
+ * CloudWatch agent config for one instance: tail the engine log into its
+ * per-engine group and the boot log into the shared boot group, both on a
+ * `<env>/<instance-id>` stream ({instance_id} is resolved by the agent).
+ * run_as_user root so it can read both root-owned files; retention_in_days -1
+ * leaves retention to the CDK-managed group (and avoids needing
+ * logs:PutRetentionPolicy).
+ */
+function cloudwatchAgentConfig(env: string, runner: Runner): string {
+  const stream = `${env}/{instance_id}`;
+  return JSON.stringify(
+    {
+      agent: { region: REGION, run_as_user: 'root' },
+      logs: {
+        logs_collected: {
+          files: {
+            collect_list: [
+              {
+                file_path: ENGINE_LOG_FILE[runner],
+                log_group_name: ENGINE_LOG_GROUP[runner],
+                log_stream_name: stream,
+                retention_in_days: -1,
+              },
+              {
+                file_path: '/var/log/cloud-init-output.log',
+                log_group_name: BOOT_LOG_GROUP,
+                log_stream_name: stream,
+                retention_in_days: -1,
+              },
+            ],
+          },
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
+
 function buildUserData(env: string, cfg: DeployConfig): string {
   const modelDir = '/opt/llm/model';
   const serveCommand = buildServeCommand(cfg, { modelDir, port: Number(VLLM_PORT) });
   const runnerUnit = cfg.runner === 'vllm' ? vllmUnit(serveCommand) : llamacppUnit(serveCommand);
-  // Common boot: log the GPU, add swap for the load spike, sync the weights
-  // from S3, fetch the environment's API key. Then the runner-specific env
-  // file + systemd unit take over.
+  const cwAgentConfig = cloudwatchAgentConfig(env, cfg.runner);
+  // Common boot: log the GPU, add swap for the load spike, start the log
+  // shipper, sync the weights from S3, fetch the environment's API key. Then
+  // the runner-specific env file + systemd unit take over.
   return `#!/bin/bash
 set -euxo pipefail
 # Log the GPU state up front so cloud-init-output.log shows whether the driver
@@ -291,9 +336,23 @@ if ! swapon --show | grep -q /swapfile; then
 fi
 free -h
 
+# Start the log shipper before the weights sync so the boot log (this script's
+# output, including an S3 pull failure) is captured, and so the engine log is
+# tailed from the moment its unit starts. The config is written per boot because
+# its stream carries the environment name; {instance_id} is resolved by the
+# agent. The engine log directory is baked into the AMI, but ensure it exists.
+mkdir -p /var/log/llm
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<'CWCONFIG'
+${cwAgentConfig}
+CWCONFIG
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s \\
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json || echo "CW_AGENT_START_FAILED"
+
 MODEL_DIR=${modelDir}
 mkdir -p "$MODEL_DIR"
-aws s3 sync "s3://${WEIGHTS_BUCKET}/${cfg.weightsPrefix}" "$MODEL_DIR/" --region '${REGION}'
+# --no-progress: without a TTY the sync writes a "Completed … MiB" line per
+# chunk, which would flood the boot log; completion and errors still print.
+aws s3 sync "s3://${WEIGHTS_BUCKET}/${cfg.weightsPrefix}" "$MODEL_DIR/" --region '${REGION}' --no-progress
 
 API_KEY=$(aws secretsmanager get-secret-value --secret-id 'cloud-vm-llm/${env}/api-key' --region '${REGION}' --query SecretString --output text)
 umask 077
@@ -327,6 +386,10 @@ Wants=network-online.target
 [Service]
 EnvironmentFile=/etc/vllm.env
 ExecStart=${serveCommand}
+# Log to a file the CloudWatch agent tails (not journald), so the log survives
+# instance termination. logrotate bounds this file (see the baked AMI config).
+StandardOutput=append:${ENGINE_LOG_FILE.vllm}
+StandardError=append:${ENGINE_LOG_FILE.vllm}
 Restart=on-failure
 RestartSec=5
 [Install]
@@ -350,6 +413,10 @@ After=network-online.target
 Wants=network-online.target
 [Service]
 ExecStart=${serveCommand}
+# Log to a file the CloudWatch agent tails (not journald), so the log survives
+# instance termination. logrotate bounds this file (see the baked AMI config).
+StandardOutput=append:${ENGINE_LOG_FILE.llamacpp}
+StandardError=append:${ENGINE_LOG_FILE.llamacpp}
 Restart=on-failure
 RestartSec=5
 [Install]
