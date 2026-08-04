@@ -42,8 +42,10 @@ const packageManagerEnv = "OUTFIT_REMOTE_PACKAGE_MANAGER"
 
 // packageManager shapes the argv for the two things bootstrap asks of a Node
 // package manager: installing dependencies and running a package.json script.
-// pnpm forwards script arguments directly (pnpm bake llamacpp); npm needs a
-// `run` and a `--` separator before them (npm run bake -- llamacpp).
+// Both invoke scripts via `run` so a script name never collides with a builtin
+// subcommand (pnpm deploy is pnpm's own workspace command, not the deploy
+// script). pnpm forwards script arguments directly (pnpm run bake llamacpp);
+// npm needs a `--` separator before them (npm run bake -- llamacpp).
 type packageManager struct {
 	name    string
 	install []string
@@ -64,7 +66,7 @@ func (pm packageManager) script(name string, args ...string) []string {
 		}
 		return argv
 	}
-	return append([]string{"pnpm", name}, args...)
+	return append([]string{"pnpm", "run", name}, args...)
 }
 
 // managerByName maps a validated name to its packageManager, defaulting to the
