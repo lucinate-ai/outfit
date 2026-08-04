@@ -22,9 +22,8 @@ const defaultSourceRef = "main"
 var gitDescribeSuffix = regexp.MustCompile(`-\d+-g[0-9a-f]+$`)
 
 // ResolveRef picks the ref of the remote/ sources to download so they match the
-// running binary. An explicit override wins; a clean release tag is used
-// verbatim; a "dev", dirty, or mid-history build falls back to the default
-// branch.
+// running binary. An explicit override wins; a clean release maps to its release
+// tag; a "dev", dirty, or mid-history build falls back to the default branch.
 func ResolveRef(version, override string) string {
 	if override != "" {
 		return override
@@ -34,6 +33,12 @@ func ResolveRef(version, override string) string {
 	}
 	if gitDescribeSuffix.MatchString(version) {
 		return defaultSourceRef
+	}
+	// Release tags carry a "v" prefix (v1.13.0). The Makefile's git-describe
+	// version keeps it, but goreleaser reports the version without it (1.13.0);
+	// add it back so the ref matches the tag either way.
+	if !strings.HasPrefix(version, "v") {
+		return "v" + version
 	}
 	return version
 }
