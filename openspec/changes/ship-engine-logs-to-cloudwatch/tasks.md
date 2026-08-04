@@ -27,8 +27,8 @@
 ## 5. Verification
 
 - [x] 5.1 `cd remote && pnpm test` (and typecheck/lint) pass; CDK synthesises without error.
-- [ ] 5.2 Bootstrap/re-bake in a test account, `deploy` + `start` an environment, and confirm engine logs appear in the engine's CloudWatch group under the `<env>/<instance-id>` stream while the instance runs.
-- [ ] 5.3 Stop/terminate the instance and confirm the shipped logs remain readable in CloudWatch afterwards.
-- [ ] 5.4 Confirm the boot log ships: `/cloud-vm-llm/boot` has the instance's stream showing the user-data steps (swap, weights sync, API-key fetch), and the sync no longer emits per-chunk progress lines.
-- [ ] 5.5 Confirm `tail -f /var/log/llm/llama-server.log` shows live engine output over SSM (the journald replacement path).
-- [ ] 5.6 Confirm rotation bounds the file: drive sustained engine output (or lower the size threshold), and verify the log file rotates, on-disk usage stays capped, and shipping continues across the rotation.
+- [x] 5.2 Bootstrap/re-bake in a test account, `deploy` + `start` an environment, and confirm engine logs appear in the engine's CloudWatch group under the `<env>/<instance-id>` stream while the instance runs.
+- [x] 5.3 Stop/terminate the instance and confirm the shipped logs remain readable in CloudWatch afterwards.
+- [x] 5.4 Confirm the boot log ships: `/cloud-vm-llm/boot` has the instance's stream showing the user-data steps (swap, weights sync, API-key fetch), and the sync no longer emits per-chunk progress lines.
+- [x] 5.5 Confirm `tail -f /var/log/llm/llama-server.log` shows live engine output over SSM (the journald replacement path).
+- [x] 5.6 Confirm rotation bounds the file: drive sustained engine output (or lower the size threshold), and verify the log file rotates, on-disk usage stays capped, and shipping continues across the rotation.
