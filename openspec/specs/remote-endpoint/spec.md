@@ -10,10 +10,13 @@ what to serve from an Outfit: the `outfit remote` command group.
 The system SHALL provide a `remote` command group with the subcommands
 `bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, and `stats`. `start`,
 `stop`, `status`, `stats` and `deploy` each take an optional Outfit path:
-`start` SHALL boot the endpoint and block until it is serving, printing the
-base URL and API key as shell exports; `stop` SHALL stop it immediately rather
-than waiting for its idle timer; `status` SHALL report instance state and
-endpoint health without side effects; `stats` SHALL report instance state,
+`start` SHALL boot the endpoint and block until it is serving, then perform a
+quick TCP probe of the inference endpoint — if the probe fails, a warning is
+printed to stderr explaining the network mismatch (see the Remote Start Probe
+specification) — and finally print the base URL and API key as shell exports;
+`stop` SHALL stop it immediately rather than waiting for its idle timer;
+`status` SHALL report instance state and endpoint health without side effects
+and SHALL NOT perform any TCP probe; `stats` SHALL report instance state,
 token usage, resource consumption, and GPU information for a running instance;
 `deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered
 remote environments (see the Remote Environments specification). `bootstrap`
@@ -26,6 +29,13 @@ subcommand SHALL fail naming the accepted ones.
 
 - **WHEN** the user runs `outfit remote start` and the endpoint reports ready
 - **THEN** the base URL and API key are printed as `export` lines
+
+#### Scenario: Starting warns when the network is not admitted
+
+- **WHEN** the user runs `outfit remote start` and the endpoint reports ready
+  but the TCP probe to the inference port fails
+- **THEN** a warning is printed to stderr with a remediation command, and the
+  command still exits 0
 
 #### Scenario: Waiting through a cold start
 

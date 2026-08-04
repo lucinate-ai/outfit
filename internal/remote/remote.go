@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -613,4 +614,28 @@ func callStats(ctx context.Context, cfg Config) (*StatsResponse, error) {
 			resp.StatusCode, hint, truncate(string(respBody), 200))
 	}
 	return out, nil
+}
+
+// ProbeTimeout is the maximum time to wait for a TCP connection when probing
+// the endpoint's reachability. A variable so tests can shorten it.
+var ProbeTimeout = 5 * time.Second
+
+// ProbeReachability performs a TCP dial to the host and port derived from a
+// base URL (e.g. "http://198.51.100.1:8000/v1" -> "198.51.100.1:8000"). It
+// returns nil if the connection succeeds within probeTimeout, or an error if
+// it cannot connect.
+func ProbeReachability(baseURL string) error {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), ProbeTimeout)
+	defer cancel()
+	d := net.Dialer{}
+	conn, err := d.DialContext(ctx, "tcp", u.Host)
+	if err != nil {
+		return err
+	}
+	conn.Close()
+	return nil
 }

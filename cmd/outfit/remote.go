@@ -373,12 +373,25 @@ func cmdRemoteStart(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	_, err = remote.Start(ctx, cfg, progress.line, progress.setState)
+	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState)
 	if err != nil {
 		return err
 	}
 	progress.close()
 	progress.line(fmt.Sprintf("ready after %s", progress.elapsed()))
+
+	// Probe the inference endpoint to check whether this network can actually
+	// reach it — the control plane (SigV4 Lambda URLs) works from anywhere,
+	// but the inference port is guarded by a security group that admits only
+	// one CIDR. A changed network means start succeeds but inference hangs.
+	if err := remote.ProbeReachability(resp.BaseURL); err != nil {
+		cidr := "<your-ip>/32"
+		if detected, detErr := detectPublicCIDRFn(context.Background()); detErr == nil {
+			cidr = detected
+		}
+		fmt.Fprintln(os.Stderr, "the endpoint is ready but not reachable from this network — its ingress admits a different address.")
+		fmt.Fprintf(os.Stderr, "Re-admit this machine with:\n  outfit remote deploy --overwrite --allowed-cidr %s\n", cidr)
+	}
 
 	if printEnv {
 		envCtx, envCancel := context.WithTimeout(context.Background(), 30*time.Second)
