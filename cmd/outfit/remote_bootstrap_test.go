@@ -104,7 +104,7 @@ func TestBootstrap_PlanOutput(t *testing.T) {
 	out := captureStderr(t, func() {
 		renderBootstrapPlan("1", "us-east-1", []string{"llamacpp", "vllm"}, "v1.10.0", "/tmp/cdk/v1.10.0", false, pnpmManager)
 	})
-	for _, want := range []string{"AWS account:  1\n", "us-east-1", "llamacpp, vllm", "Image Builder", "Cost:", "pnpm deploy\n"} {
+	for _, want := range []string{"AWS account:  1\n", "us-east-1", "llamacpp, vllm", "Image Builder", "Cost:", "pnpm run deploy\n"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plan missing %q:\n%s", want, out)
 		}
@@ -156,8 +156,8 @@ func TestBootstrap_ConfirmGate(t *testing.T) {
 			}
 		}
 		want := []string{
-			"pnpm install", "pnpm cdk bootstrap", "pnpm deploy:image",
-			"pnpm bake llamacpp", "pnpm bake vllm", "pnpm deploy",
+			"pnpm install", "pnpm run cdk bootstrap", "pnpm run deploy:image",
+			"pnpm run bake llamacpp", "pnpm run bake vllm", "pnpm run deploy",
 		}
 		if strings.Join(got, "|") != strings.Join(want, "|") {
 			t.Errorf("commands = %v, want %v", got, want)
@@ -294,8 +294,8 @@ func TestPackageManager_Script(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{pnpmManager, []string{"cdk", "bootstrap"}, []string{"pnpm", "cdk", "bootstrap"}},
-		{pnpmManager, []string{"deploy"}, []string{"pnpm", "deploy"}},
+		{pnpmManager, []string{"cdk", "bootstrap"}, []string{"pnpm", "run", "cdk", "bootstrap"}},
+		{pnpmManager, []string{"deploy"}, []string{"pnpm", "run", "deploy"}},
 		{npmManager, []string{"cdk", "bootstrap"}, []string{"npm", "run", "cdk", "--", "bootstrap"}},
 		{npmManager, []string{"deploy"}, []string{"npm", "run", "deploy"}},
 	}
