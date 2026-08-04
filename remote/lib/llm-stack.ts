@@ -6,6 +6,7 @@ import {
   aws_iam as iam,
   aws_lambda as lambda,
   aws_lambda_nodejs as nodejs,
+  aws_logs as logs,
   aws_s3 as s3,
   aws_secretsmanager as secretsmanager,
 } from 'aws-cdk-lib';
@@ -88,6 +89,32 @@ export class LlmStack extends cdk.Stack {
     const envParamArn = `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/cloud-vm-llm/*`;
     const envSecretArn = `arn:${cdk.Aws.PARTITION}:secretsmanager:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:secret:cloud-vm-llm/*`;
 
+    // Where the runtime instances ship logs: one group per engine (the engine's
+    // own stdout/stderr) and one for the boot log (the user-data script's
+    // output, which holds the pre-engine steps like the weights S3 pull). Each
+    // instance writes a stream named <env>/<instance-id>, so a terminated
+    // instance's logs outlive it and are grouped by environment. Pre-created
+    // here — not by the agent at first write — so retention and teardown are
+    // managed infrastructure. Retention is short by default (see config).
+    const logRetention = cfg.logRetentionDays as logs.RetentionDays;
+    const engineLogGroups = {
+      llamacpp: new logs.LogGroup(this, 'LlamacppLogGroup', {
+        logGroupName: '/cloud-vm-llm/llamacpp',
+        retention: logRetention,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+      vllm: new logs.LogGroup(this, 'VllmLogGroup', {
+        logGroupName: '/cloud-vm-llm/vllm',
+        retention: logRetention,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      }),
+    };
+    const bootLogGroup = new logs.LogGroup(this, 'BootLogGroup', {
+      logGroupName: '/cloud-vm-llm/boot',
+      retention: logRetention,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
     // Role assumed by every environment's runtime instance — SSM (for the
     // Lambdas' health/idle checks), read its environment's API-key secret,
     // and read the weights.
@@ -101,6 +128,20 @@ export class LlmStack extends cdk.Stack {
       new iam.PolicyStatement({
         actions: ['secretsmanager:GetSecretValue'],
         resources: [envSecretArn],
+      }),
+    );
+    // Just what the CloudWatch agent needs to ship logs — create a stream and
+    // put events into the three pre-created groups. No logs:CreateLogGroup:
+    // the groups exist already, and scoping to these ARNs keeps the grant
+    // narrower than the CloudWatchAgentServerPolicy managed policy would.
+    instanceRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+        resources: [
+          engineLogGroups.llamacpp.logGroupArn,
+          engineLogGroups.vllm.logGroupArn,
+          bootLogGroup.logGroupArn,
+        ],
       }),
     );
     // Broad over the whole models/ tree: the deploy-config chooses the prefix
@@ -177,6 +218,11 @@ export class LlmStack extends cdk.Stack {
         SUBNET_IDS: vpc.publicSubnets.map((s) => s.subnetId).join(','),
         INSTANCE_PROFILE_ARN: instanceProfile.instanceProfileArn,
         WEIGHTS_BUCKET: weightsBucket.bucketName,
+        // Log groups the instance's CloudWatch agent ships to. The group is
+        // fixed; the stream (<env>/<instance-id>) is filled in at boot.
+        LLAMACPP_LOG_GROUP: engineLogGroups.llamacpp.logGroupName,
+        VLLM_LOG_GROUP: engineLogGroups.vllm.logGroupName,
+        BOOT_LOG_GROUP: bootLogGroup.logGroupName,
         // The environment's EIP, security group, API key and deploy-config are
         // all found at wake by the environment name — not baked into the env.
       },

@@ -28,7 +28,7 @@ const AMI_ROOT_DEVICE = '/dev/sda1';
 
 // Per-runner recipe/component version. Image Builder treats a version as
 // immutable, so bump a runner's version to force a fresh AMI for just it.
-const RUNNER_VERSION = { vllm: '3.0.0', llamacpp: '3.0.1' } as const;
+const RUNNER_VERSION = { vllm: '3.1.0', llamacpp: '3.1.0' } as const;
 
 /**
  * Bakes a slim, model-agnostic AMI **per runner** — vLLM (a `uv` venv) and
@@ -193,11 +193,56 @@ function commonPreamble(): string {
               dpkg -i /tmp/cuda-keyring.deb
               apt-get update
               apt-get install -y {{ NvidiaDriverPackage }}
-              dkms status | grep -i nvidia`;
+              dkms status | grep -i nvidia
+
+              # CloudWatch agent — ships the engine and boot logs to CloudWatch,
+              # so a crash on an ephemeral instance survives its termination.
+              # Baked here (avoids an install on every cold start); its config
+              # carries the environment name, so it is written and started at
+              # boot, not enabled here.
+              curl -fsSL https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -o /tmp/amazon-cloudwatch-agent.deb
+              dpkg -i -E /tmp/amazon-cloudwatch-agent.deb
+              test -x /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+
+              # Bound the engine log file on disk: the CloudWatch agent only
+              # tails it, so without rotation a crash loop could fill the root
+              # volume. copytruncate because the engine holds the file open in
+              # append mode; a size trigger on a 15-min timer (not the daily
+              # default) so a chatty engine can't outrun it. The boot log is
+              # deliberately excluded — it is written once and stays small.
+              apt-get install -y logrotate
+              mkdir -p /etc/llm /var/log/llm
+              cat >/etc/llm/logrotate.conf <<'LOGROTATE'
+              /var/log/llm/*.log {
+                  size 200M
+                  rotate 2
+                  compress
+                  missingok
+                  notifempty
+                  copytruncate
+              }
+              LOGROTATE
+              cat >/etc/systemd/system/llm-logrotate.service <<'UNIT'
+              [Unit]
+              Description=Rotate llm engine logs
+              [Service]
+              Type=oneshot
+              ExecStart=/usr/sbin/logrotate /etc/llm/logrotate.conf
+              UNIT
+              cat >/etc/systemd/system/llm-logrotate.timer <<'UNIT'
+              [Unit]
+              Description=Rotate llm engine logs every 15 minutes
+              [Timer]
+              OnBootSec=15min
+              OnUnitActiveSec=15min
+              [Install]
+              WantedBy=timers.target
+              UNIT
+              systemctl enable llm-logrotate.timer`;
 }
 
 const CLEANUP = `              apt-get clean
-              rm -rf /var/lib/apt/lists/* /tmp/aws /tmp/awscliv2.zip /tmp/cuda-keyring.deb
+              rm -rf /var/lib/apt/lists/* /tmp/aws /tmp/awscliv2.zip /tmp/cuda-keyring.deb /tmp/amazon-cloudwatch-agent.deb
               echo "bake complete"`;
 
 /** vLLM AMI: the driver + a vLLM venv via uv (no Docker, no model). */

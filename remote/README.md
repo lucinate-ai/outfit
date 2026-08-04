@@ -213,9 +213,9 @@ request after a cold start also pays a one-off warm-up (~30 s); steady-state
 decode is around 28 tokens/s. Watch a wake:
 
 ```sh
-pnpm console                            # SSM shell onto the running instance
-sudo journalctl -u llama-server -f      # engine logs (or -u vllm for vLLM)
-tail -f /var/log/cloud-init-output.log  # boot: s3 sync progress
+pnpm console                                 # SSM shell onto the running instance
+tail -f /var/log/llm/llama-server.log        # engine logs (or vllm.log for vLLM)
+tail -f /var/log/cloud-init-output.log       # boot: s3 sync progress
 ```
 
 ## Daily use
@@ -293,9 +293,12 @@ coding a day lands around $90/month. Full breakdown in
 ## Operations
 
 - **Logs**: `pnpm console` (an SSM shell onto the running instance) then
-  `sudo journalctl -u llama-server -f` or `tail -f /var/log/cloud-init-output.log`
-  (boot / S3 sync). Lambda decisions (launch AZ, idle/terminate, deploys) are in
-  the three Lambdas' CloudWatch log groups.
+  `tail -f /var/log/llm/llama-server.log` (the engine; `vllm.log` for vLLM) or
+  `tail -f /var/log/cloud-init-output.log` (boot / S3 sync). The engine log and
+  the boot log are also shipped to CloudWatch — groups `/cloud-vm-llm/<engine>`
+  and `/cloud-vm-llm/boot`, stream `<env>/<instance-id>` — so they survive the
+  instance's termination. Lambda decisions (launch AZ, idle/terminate, deploys)
+  are in the three Lambdas' CloudWatch log groups.
 - **Changing the model**: edit the `Outfit`/preset and run `outfit remote
   deploy`. It seeds the new weights if needed. No bake, no redeploy.
 - **Changing the engine version or the driver**: update `llamacppRelease` /
@@ -318,10 +321,10 @@ coding a day lands around $90/month. Full breakdown in
 
 | Want to know | Command |
 |---|---|
-| Follow the engine's logs | `sudo journalctl -u llama-server -f` |
-| Why it won't start | `sudo journalctl -u llama-server --no-pager \| tail -50` |
+| Follow the engine's logs | `tail -f /var/log/llm/llama-server.log` |
+| Why it won't start | `tail -50 /var/log/llm/llama-server.log` (or the boot log below for a pre-engine failure) |
 | Is it up? | `systemctl is-active llama-server` · `ss -ltn \| grep :8000` |
-| Is MTP actually working | `journalctl -u llama-server \| grep 'draft acceptance'` |
+| Is MTP actually working | `grep 'draft acceptance' /var/log/llm/llama-server.log` |
 | Boot / S3-sync progress | `tail -f /var/log/cloud-init-output.log` |
 | Weights pulled so far | `du -sh /opt/llm/model` |
 | GPU + driver | `nvidia-smi` |
@@ -390,7 +393,8 @@ deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
   `aws s3 ls s3://<bucket>/models/<runner>/<model>/`.
 - **Quota errors on launch**: see the GPU quota warning above.
 - **`start` times out repeatedly**: `pnpm console` onto the instance and read
-  `sudo journalctl -u llama-server --no-pager | tail -50`. Known startup
+  `tail -50 /var/log/llm/llama-server.log` (or `/cloud-vm-llm/llamacpp` in
+  CloudWatch if the instance is already gone). Known startup
   crashes, all handled for the defaults but reachable after a bump:
   - `libcudart.so.12: cannot open shared object` — the prebuilt llama.cpp
     tarball bundles only its own libraries, not the CUDA runtime; the AMI
