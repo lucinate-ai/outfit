@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -727,5 +729,51 @@ func TestLoadConfig_EnvURLOverride(t *testing.T) {
 	}
 	if cfg.EnvURL != "https://new-env/" {
 		t.Errorf("env should override env URL, got %q", cfg.EnvURL)
+	}
+}
+
+func TestProbeReachability_Success(t *testing.T) {
+	// Listen on a local address to simulate a reachable endpoint.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	// Accept and close connections so the probe doesn't hang.
+	go func() {
+		c, err := l.Accept()
+		if err == nil {
+			c.Close()
+		}
+	}()
+	defer l.Close()
+
+	if err := ProbeReachability(fmt.Sprintf("http://127.0.0.1:%d/v1", port)); err != nil {
+		t.Errorf("probe should succeed on a listening port, got %v", err)
+	}
+}
+
+func TestProbeReachability_Refused(t *testing.T) {
+	origTimeout := ProbeTimeout
+	ProbeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { ProbeTimeout = origTimeout })
+
+	// Pick a port that nothing is listening on.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close() // nothing listening now
+
+	if err := ProbeReachability(fmt.Sprintf("http://127.0.0.1:%d/v1", port)); err == nil {
+		t.Error("probe should fail on a closed port")
+	}
+}
+
+func TestProbeReachability_BadURL(t *testing.T) {
+	err := ProbeReachability("://not-a-url")
+	if err == nil {
+		t.Error("probe should fail on an unparseable URL")
 	}
 }

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -815,5 +818,118 @@ func TestRemoteMetrics_JsonWithErrors(t *testing.T) {
 	errors, ok := result["errors"].([]any)
 	if !ok || len(errors) == 0 {
 		t.Errorf("expected errors in JSON output:\n%s", out)
+	}
+}
+
+// The start probe runs after the endpoint is ready. When the probe connects,
+// no warning is printed.
+func TestRemoteStart_ProbeSucceedsNoWarning(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	// Create a TCP listener to simulate a reachable endpoint.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	defer l.Close()
+
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d/v1", port)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"state":"ready","base_url":"%s","api_key":"sk-test"}`, baseURL)))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	stderr := captureStderr(t, func() {
+		if err := cmdRemoteStart(nil); err != nil {
+			t.Errorf("cmdRemoteStart: %v", err)
+		}
+	})
+	if strings.Contains(stderr, "not reachable") {
+		t.Errorf("should not warn when probe succeeds, got:\n%s", stderr)
+	}
+}
+
+// When the probe fails, start warns but still exits 0.
+func TestRemoteStart_ProbeFailsWarns(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	origDetect := detectPublicCIDRFn
+	detectPublicCIDRFn = func(context.Context) (string, error) { return "203.0.113.5/32", nil }
+	t.Cleanup(func() { detectPublicCIDRFn = origDetect })
+
+	origProbe := remote.ProbeTimeout
+	remote.ProbeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { remote.ProbeTimeout = origProbe })
+
+	baseURL := "http://192.0.2.1:8000/v1" // unreachable
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"state":"ready","base_url":"%s","api_key":"sk-test"}`, baseURL)))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	errOut := captureStderr(t, func() {
+		err := cmdRemoteStart(nil)
+		if err != nil {
+			t.Fatalf("start should exit 0 after a probe warning, got %v", err)
+		}
+	})
+
+	if !strings.Contains(errOut, "not reachable from this network") {
+		t.Errorf("expected a reachability warning, got:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "203.0.113.5/32") {
+		t.Errorf("expected the detected CIDR in the hint, got:\n%s", errOut)
+	}
+}
+
+// When the probe fails and IP detection also fails, the hint uses a placeholder.
+func TestRemoteStart_ProbeFailsIPDetectFails(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	origDetect := detectPublicCIDRFn
+	detectPublicCIDRFn = func(context.Context) (string, error) { return "", fmt.Errorf("network error") }
+	t.Cleanup(func() { detectPublicCIDRFn = origDetect })
+
+	origProbe := remote.ProbeTimeout
+	remote.ProbeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { remote.ProbeTimeout = origProbe })
+
+	baseURL := "http://192.0.2.1:8000/v1"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"state":"ready","base_url":"%s","api_key":"sk-test"}`, baseURL)))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	errOut := captureStderr(t, func() {
+		err := cmdRemoteStart(nil)
+		if err != nil {
+			t.Fatalf("start should exit 0 even when probe and IP detection both fail, got %v", err)
+		}
+	})
+
+	if !strings.Contains(errOut, "not reachable from this network") {
+		t.Errorf("expected a reachability warning, got:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "<your-ip>/32") {
+		t.Errorf("expected the placeholder CIDR, got:\n%s", errOut)
 	}
 }
