@@ -378,12 +378,36 @@ describe('ImageStack', () => {
       const data = c.Properties.Data as string;
       expect(data).toContain('amazon-cloudwatch-agent.deb');
       // The rotation is size-triggered and copytruncate (the engine holds the
-      // append fd); only the engine log dir is rotated, not the boot log.
-      expect(data).toContain('/var/log/llm/*.log');
+      // append fd); only the daemon's engine log is rotated, not the boot log.
+      expect(data).toContain('/root/.config/outfit/daemon/engine.log');
       expect(data).toContain('copytruncate');
       expect(data).toContain('llm-logrotate.timer');
       expect(data).not.toContain('cloud-init-output.log');
     }
+  });
+
+  it('bakes outfit and the crash-nudge timer into every runner', () => {
+    const components = Object.values(template.findResources('AWS::ImageBuilder::Component'));
+    for (const c of components) {
+      const data = c.Properties.Data as string;
+      // The pinned release, checksum-verified, installed as /usr/local/bin/outfit.
+      expect(data).toContain('OutfitVersion');
+      expect(data).toContain('outfit_linux_amd64.tar.gz');
+      expect(data).toContain('sha256sum -c');
+      expect(data).toContain('install -m 0755 /tmp/outfit-dl/outfit /usr/local/bin/outfit');
+      // The nudge acts only on a crashed engine.
+      expect(data).toContain('outfit-nudge.timer');
+      expect(data).toContain('"state":"crashed"');
+    }
+  });
+
+  it('puts the vllm venv entrypoint on the PATH for the daemon', () => {
+    const components = Object.values(template.findResources('AWS::ImageBuilder::Component'));
+    const vllm = components.find((c) => (c.Properties.Data as string).includes('VllmVersion'));
+    expect(vllm).toBeDefined();
+    expect(vllm!.Properties.Data as string).toContain(
+      'ln -sf /opt/llm/venv/bin/vllm /usr/local/bin/vllm',
+    );
   });
 });
 

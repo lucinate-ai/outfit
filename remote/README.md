@@ -214,7 +214,7 @@ decode is around 28 tokens/s. Watch a wake:
 
 ```sh
 pnpm console                                 # SSM shell onto the running instance
-tail -f /var/log/llm/llama-server.log        # engine logs (or vllm.log for vLLM)
+tail -f /root/.config/outfit/daemon/engine.log   # engine logs (both runners)
 tail -f /var/log/cloud-init-output.log       # boot: s3 sync progress
 ```
 
@@ -293,7 +293,7 @@ coding a day lands around $90/month. Full breakdown in
 ## Operations
 
 - **Logs**: `pnpm console` (an SSM shell onto the running instance) then
-  `tail -f /var/log/llm/llama-server.log` (the engine; `vllm.log` for vLLM) or
+  `tail -f /root/.config/outfit/daemon/engine.log` (the engine, both runners) or
   `tail -f /var/log/cloud-init-output.log` (boot / S3 sync). The engine log and
   the boot log are also shipped to CloudWatch — groups `/cloud-vm-llm/<engine>`
   and `/cloud-vm-llm/boot`, stream `<env>/<instance-id>` — so they survive the
@@ -321,16 +321,19 @@ coding a day lands around $90/month. Full breakdown in
 
 | Want to know | Command |
 |---|---|
-| Follow the engine's logs | `tail -f /var/log/llm/llama-server.log` |
-| Why it won't start | `tail -50 /var/log/llm/llama-server.log` (or the boot log below for a pre-engine failure) |
-| Is it up? | `systemctl is-active llama-server` · `ss -ltn \| grep :8000` |
-| Is MTP actually working | `grep 'draft acceptance' /var/log/llm/llama-server.log` |
+| Engine state (idle/running/stopped/crashed) | `curl -s 127.0.0.1:4242/v1/status` |
+| Engine + host metrics | `curl -s 127.0.0.1:4242/v1/metrics` |
+| Follow the engine's logs | `tail -f /root/.config/outfit/daemon/engine.log` |
+| Why it won't start | `tail -50 /root/.config/outfit/daemon/engine.log` (or the boot log below for a pre-engine failure) |
+| Is it up? | `systemctl is-active outfit-daemon` · `ss -ltn \| grep :8000` |
+| Is MTP actually working | `grep 'draft acceptance' /root/.config/outfit/daemon/engine.log` |
 | Boot / S3-sync progress | `tail -f /var/log/cloud-init-output.log` |
 | Weights pulled so far | `du -sh /opt/llm/model` |
 | GPU + driver | `nvidia-smi` |
 | RAM + swap | `free -h` |
 
-(For a vLLM deployment the unit is `vllm` rather than `llama-server`.)
+(Both runners run under the same `outfit-daemon` unit: the baked `outfit`
+binary supervises the engine and serves its control API on loopback `:4242`.)
 
 From your own machine, no shell needed (the EIP is `<endpoint>`):
 
@@ -393,7 +396,7 @@ deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
   `aws s3 ls s3://<bucket>/models/<runner>/<model>/`.
 - **Quota errors on launch**: see the GPU quota warning above.
 - **`start` times out repeatedly**: `pnpm console` onto the instance and read
-  `tail -50 /var/log/llm/llama-server.log` (or `/cloud-vm-llm/llamacpp` in
+  `tail -50 /root/.config/outfit/daemon/engine.log` (or `/cloud-vm-llm/llamacpp` in
   CloudWatch if the instance is already gone). Known startup
   crashes, all handled for the defaults but reachable after a bump:
   - `libcudart.so.12: cannot open shared object` — the prebuilt llama.cpp

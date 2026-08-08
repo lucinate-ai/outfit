@@ -1,82 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import {
-  decideIdle,
-  metricsGrepPattern,
-  parseMetrics,
-  type IdleDecisionInput,
-} from '../lambda/shared/idle';
+import { decideIdle, metricsFromDaemon, type IdleDecisionInput } from '../lambda/shared/idle';
 
-const SCRAPE = `vllm:num_requests_running{model_name="Qwen/Qwen3.6-27B-FP8"} 0.0
-vllm:num_requests_waiting{model_name="Qwen/Qwen3.6-27B-FP8"} 0.0
-vllm:prompt_tokens_total{model_name="Qwen/Qwen3.6-27B-FP8"} 12345.0
-vllm:generation_tokens_total{model_name="Qwen/Qwen3.6-27B-FP8"} 6789.0
-vllm:request_success_total{model_name="Qwen/Qwen3.6-27B-FP8",finished_reason="stop"} 42.0`;
-
-// Real names as observed on llama-server /metrics for Qwen3.6-27B.
-const LLAMACPP_SCRAPE = `llamacpp:requests_processing 0
-llamacpp:requests_deferred 0
-llamacpp:prompt_tokens_total 5000
-llamacpp:tokens_predicted_total 2500
-llamacpp:n_decode_total 2500
-llamacpp:n_busy_slots_per_decode 1`;
-
-describe('parseMetrics', () => {
-  it('sums running and counter metrics from a vllm scrape', () => {
-    const result = parseMetrics(SCRAPE, 'vllm');
-    expect(result).toEqual({ ok: true, running: 0, counter: 12345 + 6789 + 42 });
+describe('metricsFromDaemon', () => {
+  it('lifts the idle signals out of a daemon tokens object', () => {
+    expect(
+      metricsFromDaemon({ running: 3, counter: 6020 }),
+    ).toEqual({ ok: true, running: 3, counter: 6020 });
   });
 
-  it('reports in-flight vllm requests', () => {
-    const result = parseMetrics(
-      'vllm:num_requests_running{model_name="m"} 2.0\nvllm:num_requests_waiting{model_name="m"} 1.0',
-      'vllm',
-    );
-    expect(result).toEqual({ ok: true, running: 3, counter: 0 });
-  });
-
-  it('sums running and counter metrics from a llamacpp scrape', () => {
-    const result = parseMetrics(LLAMACPP_SCRAPE, 'llamacpp');
-    // Ignores n_busy_slots_per_decode (not an activity metric).
-    expect(result).toEqual({ ok: true, running: 0, counter: 5000 + 2500 + 2500 });
-  });
-
-  it('reports in-flight llamacpp requests', () => {
-    const result = parseMetrics(
-      'llamacpp:requests_processing 1\nllamacpp:requests_deferred 2',
-      'llamacpp',
-    );
-    expect(result).toEqual({ ok: true, running: 3, counter: 0 });
-  });
-
-  it('does not match the other runner’s metrics', () => {
-    expect(parseMetrics(SCRAPE, 'llamacpp')).toEqual({ ok: false });
-    expect(parseMetrics(LLAMACPP_SCRAPE, 'vllm')).toEqual({ ok: false });
-  });
-
-  it('fails on SCRAPE_FAILED marker', () => {
-    expect(parseMetrics('SCRAPE_FAILED', 'vllm')).toEqual({ ok: false });
-    expect(parseMetrics('SCRAPE_FAILED', 'llamacpp')).toEqual({ ok: false });
-  });
-
-  it('fails on empty output', () => {
-    expect(parseMetrics('', 'vllm')).toEqual({ ok: false });
-  });
-
-  it('fails when no recognisable metrics are present', () => {
-    expect(parseMetrics('python_gc_objects_collected_total{generation="0"} 6.0', 'vllm')).toEqual({
-      ok: false,
-    });
-  });
-});
-
-describe('metricsGrepPattern', () => {
-  it('scopes the grep to the runner prefix and its metric names', () => {
-    expect(metricsGrepPattern('vllm')).toBe(
-      '^vllm:(num_requests_running|num_requests_waiting|prompt_tokens_total|generation_tokens_total|request_success_total)',
-    );
-    expect(metricsGrepPattern('llamacpp')).toBe(
-      '^llamacpp:(requests_processing|requests_deferred|prompt_tokens_total|tokens_predicted_total|n_decode_total)',
-    );
+  it('reads a missing tokens object as no activity observed', () => {
+    expect(metricsFromDaemon(undefined)).toEqual({ ok: false });
   });
 });
 

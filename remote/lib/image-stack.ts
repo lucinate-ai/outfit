@@ -28,7 +28,7 @@ const AMI_ROOT_DEVICE = '/dev/sda1';
 
 // Per-runner recipe/component version. Image Builder treats a version as
 // immutable, so bump a runner's version to force a fresh AMI for just it.
-const RUNNER_VERSION = { vllm: '3.1.0', llamacpp: '3.1.0' } as const;
+const RUNNER_VERSION = { vllm: '3.2.0', llamacpp: '3.2.0' } as const;
 
 /**
  * Bakes a slim, model-agnostic AMI **per runner** — vLLM (a `uv` venv) and
@@ -81,17 +81,18 @@ export class ImageStack extends cdk.Stack {
 
     const parentImage = ssm.StringParameter.valueForStringParameter(this, UBUNTU_SSM_PARAMETER);
     const nvidiaParam = { name: 'NvidiaDriverPackage', value: [cfg.nvidiaDriverPackage] };
+    const outfitParam = { name: 'OutfitVersion', value: [cfg.outfitVersion] };
 
     const runnerBuilds = [
       {
         runner: 'vllm',
         data: vllmComponentDoc(),
-        parameters: [{ name: 'VllmVersion', value: [cfg.vllmVersion] }, nvidiaParam],
+        parameters: [{ name: 'VllmVersion', value: [cfg.vllmVersion] }, nvidiaParam, outfitParam],
       },
       {
         runner: 'llamacpp',
         data: llamacppComponentDoc(),
-        parameters: [{ name: 'LlamacppRelease', value: [cfg.llamacppRelease] }, nvidiaParam],
+        parameters: [{ name: 'LlamacppRelease', value: [cfg.llamacppRelease] }, nvidiaParam, outfitParam],
       },
     ];
 
@@ -213,7 +214,7 @@ function commonPreamble(): string {
               apt-get install -y logrotate
               mkdir -p /etc/llm /var/log/llm
               cat >/etc/llm/logrotate.conf <<'LOGROTATE'
-              /var/log/llm/*.log {
+              /root/.config/outfit/daemon/engine.log {
                   size 200M
                   rotate 2
                   compress
@@ -238,7 +239,50 @@ function commonPreamble(): string {
               [Install]
               WantedBy=timers.target
               UNIT
-              systemctl enable llm-logrotate.timer`;
+              systemctl enable llm-logrotate.timer
+
+              # outfit itself — the daemon that hosts the engine and answers the
+              # control Lambdas over its loopback API. A pinned release,
+              # checksum-verified against the release's own manifest.
+              OUTFIT_VERSION='{{ OutfitVersion }}'
+              OUTFIT_URL="https://github.com/lucinate-ai/outfit/releases/download/v$OUTFIT_VERSION"
+              mkdir -p /tmp/outfit-dl
+              curl -fsSL "$OUTFIT_URL/outfit_linux_amd64.tar.gz" -o /tmp/outfit-dl/outfit_linux_amd64.tar.gz
+              curl -fsSL "$OUTFIT_URL/checksums.txt" -o /tmp/outfit-dl/checksums.txt
+              (cd /tmp/outfit-dl && grep ' outfit_linux_amd64.tar.gz$' checksums.txt | sha256sum -c -)
+              tar -xzf /tmp/outfit-dl/outfit_linux_amd64.tar.gz -C /tmp/outfit-dl
+              install -m 0755 /tmp/outfit-dl/outfit /usr/local/bin/outfit
+              /usr/local/bin/outfit version
+              rm -rf /tmp/outfit-dl
+
+              # Crash nudge: the daemon reports a crashed engine but never
+              # restarts it (that is outfit's contract), so a baked timer asks
+              # for a start when — and only when — status says crashed. A
+              # deliberate stop stays stopped. Enabled by the boot script once
+              # the daemon's unit exists.
+              cat >/usr/local/bin/outfit-nudge <<'SCRIPT'
+              #!/bin/sh
+              # Only a crashed engine is nudged; a deliberate stop stays stopped.
+              curl -s --max-time 5 http://127.0.0.1:4242/v1/status | grep -q '"state":"crashed"' || exit 0
+              curl -s --max-time 15 -X POST http://127.0.0.1:4242/v1/start
+              SCRIPT
+              chmod 0755 /usr/local/bin/outfit-nudge
+              cat >/etc/systemd/system/outfit-nudge.service <<'UNIT'
+              [Unit]
+              Description=Restart a crashed engine via the outfit daemon
+              [Service]
+              Type=oneshot
+              ExecStart=/usr/local/bin/outfit-nudge
+              UNIT
+              cat >/etc/systemd/system/outfit-nudge.timer <<'UNIT'
+              [Unit]
+              Description=Check for a crashed engine every 30 seconds
+              [Timer]
+              OnBootSec=2min
+              OnUnitActiveSec=30s
+              [Install]
+              WantedBy=timers.target
+              UNIT`;
 }
 
 const CLEANUP = `              apt-get clean
@@ -254,6 +298,8 @@ parameters:
   - VllmVersion:
       type: string
   - NvidiaDriverPackage:
+      type: string
+  - OutfitVersion:
       type: string
 phases:
   - name: build
@@ -277,6 +323,9 @@ ${commonPreamble()}
               # Verify via package metadata — do NOT run "vllm --version", which
               # probes for a GPU and fails on the CPU-only builder.
               /opt/llm/venv/bin/python -c "import importlib.metadata as m; print('vllm', m.version('vllm'))"
+              # The daemon launches the engine as plain "vllm" — put the venv's
+              # entrypoint on the PATH so no venv path leaks into outfit.
+              ln -sf /opt/llm/venv/bin/vllm /usr/local/bin/vllm
 
 ${CLEANUP}
 `;
@@ -295,6 +344,8 @@ parameters:
   - LlamacppRelease:
       type: string
   - NvidiaDriverPackage:
+      type: string
+  - OutfitVersion:
       type: string
 phases:
   - name: build

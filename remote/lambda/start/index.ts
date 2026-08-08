@@ -15,7 +15,7 @@ import {
   sleep,
   writeState,
 } from '../shared/aws';
-import { buildServeCommand, type DeployConfig, type Runner } from '../shared/deploy-config';
+import { type DeployConfig, logGroupEnvVar, type Runner, RUNNERS } from '../shared/deploy-config';
 import {
   baseUrlFor,
   deployConfigParam,
@@ -27,10 +27,11 @@ import {
   readEnvApiKey,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
+import { runnerSpec } from '../runners';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
-const VLLM_PORT = requireEnv('VLLM_PORT');
+const ENGINE_PORT = requireEnv('ENGINE_PORT');
 const AMI_ROLE_TAG_KEY = requireEnv('AMI_ROLE_TAG_KEY');
 const AMI_ROLE_TAG_VALUE = requireEnv('AMI_ROLE_TAG_VALUE');
 const AMI_RUNNER_TAG_KEY = requireEnv('AMI_RUNNER_TAG_KEY');
@@ -40,10 +41,13 @@ const INSTANCE_PROFILE_ARN = requireEnv('INSTANCE_PROFILE_ARN');
 const WEIGHTS_BUCKET = requireEnv('WEIGHTS_BUCKET');
 const REGION = requireEnv('AWS_REGION');
 const BOOT_LOG_GROUP = requireEnv('BOOT_LOG_GROUP');
-const ENGINE_LOG_GROUP = { llamacpp: requireEnv('LLAMACPP_LOG_GROUP'), vllm: requireEnv('VLLM_LOG_GROUP') };
-// Where each engine's unit writes its stdout/stderr (tailed by the CloudWatch
-// agent). llama.cpp's binary is `llama-server`; vLLM's log is named for it.
-const ENGINE_LOG_FILE = { llamacpp: '/var/log/llm/llama-server.log', vllm: '/var/log/llm/vllm.log' };
+const ENGINE_LOG_GROUP = Object.fromEntries(
+  RUNNERS.map((r) => [r, requireEnv(logGroupEnvVar(r))]),
+) as Record<Runner, string>;
+// Where the outfit daemon writes the engine's stdout/stderr (tailed by the
+// CloudWatch agent): the daemon's stable engine-log path, root's config home
+// since the daemon runs as root.
+const ENGINE_LOG_FILE = '/root/.config/outfit/daemon/engine.log';
 
 const DEADLINE_MARGIN_MS = 20_000;
 const POLL_MS = 5_000;
@@ -51,7 +55,7 @@ const HEALTH_POLL_MS = 10_000;
 const TERMINAL_STATES = new Set(['shutting-down', 'terminated', 'stopping', 'stopped']);
 
 const HEALTH_COMMAND =
-  `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${VLLM_PORT}/health || true`;
+  `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${ENGINE_PORT}/health || true`;
 
 /** Narrow instance discovery to one environment's instance. */
 function envFilter(env: string) {
@@ -78,7 +82,7 @@ export async function handler(
 /** GET — report one environment's state without side effects. */
 async function status(env: string): Promise<LambdaFunctionURLResult> {
   const eip = await findEnvEip(env);
-  const baseUrl = eip ? baseUrlFor(eip.publicIp, VLLM_PORT) : '';
+  const baseUrl = eip ? baseUrlFor(eip.publicIp, ENGINE_PORT) : '';
   const instance = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   if (!instance || instance.state !== 'running') {
     return jsonResponse(200, {
@@ -128,7 +132,7 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
       retry_after_seconds: 300,
     });
   }
-  const baseUrl = baseUrlFor(eip.publicIp, VLLM_PORT);
+  const baseUrl = baseUrlFor(eip.publicIp, ENGINE_PORT);
 
   const existing = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   let instanceId: string;
@@ -216,7 +220,7 @@ async function launchAcrossAzs(
       }),
     };
   }
-  const userData = buildUserData(env, deployConfig);
+  const userData = buildInferenceUserData(env, deployConfig);
   const tried: string[] = [];
   for (const subnetId of SUBNET_IDS) {
     try {
@@ -288,7 +292,7 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
           files: {
             collect_list: [
               {
-                file_path: ENGINE_LOG_FILE[runner],
+                file_path: ENGINE_LOG_FILE,
                 log_group_name: ENGINE_LOG_GROUP[runner],
                 log_stream_name: stream,
                 retention_in_days: -1,
@@ -309,14 +313,15 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
   );
 }
 
-function buildUserData(env: string, cfg: DeployConfig): string {
+/** Exported for tests: the boot script is pure string-building. The seed twin is shared/seed.ts's buildSeedUserData. */
+export function buildInferenceUserData(env: string, cfg: DeployConfig): string {
   const modelDir = '/opt/llm/model';
-  const serveCommand = buildServeCommand(cfg, { modelDir, port: Number(VLLM_PORT) });
-  const runnerUnit = cfg.runner === 'vllm' ? vllmUnit(serveCommand) : llamacppUnit(serveCommand);
+  const runnerUnit = runnerSpec(cfg.runner).daemonBoot(cfg, modelDir, Number(ENGINE_PORT));
   const cwAgentConfig = cloudwatchAgentConfig(env, cfg.runner);
   // Common boot: log the GPU, add swap for the load spike, start the log
   // shipper, sync the weights from S3, fetch the environment's API key. Then
-  // the runner-specific env file + systemd unit take over.
+  // the daemon takes over: its deploy config is written, its unit enabled,
+  // and the engine's first start requested over the control API.
   return `#!/bin/bash
 set -euxo pipefail
 # Log the GPU state up front so cloud-init-output.log shows whether the driver
@@ -359,72 +364,6 @@ umask 077
 
 ${runnerUnit}
 `;
-}
-
-/** vLLM: env file (API key, offline, native sampler) plus its systemd unit. */
-function vllmUnit(serveCommand: string): string {
-  return `# Python dev headers: Triton JIT-compiles a CUDA stub against Python.h on the
-# first model load (Qwen3.6's linear-attention path); baked into recipe 2.0.3+,
-# this is a safety net for instances off an older AMI and a no-op once present.
-if [ ! -f /usr/include/python3.12/Python.h ]; then
-  apt-get update && apt-get install -y python3.12-dev
-fi
-
-cat >/etc/vllm.env <<ENVFILE
-VLLM_API_KEY=$API_KEY
-HF_HUB_OFFLINE=1
-# Native Torch sampler, not FlashInfer's — FlashInfer JIT-needs nvcc, which the
-# slim AMI (driver + CUDA runtime only, no toolkit) does not ship.
-VLLM_USE_FLASHINFER_SAMPLER=0
-ENVFILE
-
-cat >/etc/systemd/system/vllm.service <<'UNIT'
-[Unit]
-Description=vLLM server
-After=network-online.target
-Wants=network-online.target
-[Service]
-EnvironmentFile=/etc/vllm.env
-ExecStart=${serveCommand}
-# Log to a file the CloudWatch agent tails (not journald), so the log survives
-# instance termination. logrotate bounds this file (see the baked AMI config).
-StandardOutput=append:${ENGINE_LOG_FILE.vllm}
-StandardError=append:${ENGINE_LOG_FILE.vllm}
-Restart=on-failure
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now vllm.service`;
-}
-
-/** llama.cpp: the API key in a root-only file (--api-key-file) plus its unit. */
-function llamacppUnit(serveCommand: string): string {
-  return `mkdir -p /etc/llm
-printf '%s' "$API_KEY" >/etc/llm/api-key
-chmod 600 /etc/llm/api-key
-
-cat >/etc/systemd/system/llama-server.service <<'UNIT'
-[Unit]
-Description=llama.cpp server
-After=network-online.target
-Wants=network-online.target
-[Service]
-ExecStart=${serveCommand}
-# Log to a file the CloudWatch agent tails (not journald), so the log survives
-# instance termination. logrotate bounds this file (see the baked AMI config).
-StandardOutput=append:${ENGINE_LOG_FILE.llamacpp}
-StandardError=append:${ENGINE_LOG_FILE.llamacpp}
-Restart=on-failure
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now llama-server.service`;
 }
 
 async function checkHealth(instanceId: string): Promise<boolean> {

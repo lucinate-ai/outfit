@@ -27,6 +27,15 @@ export function isRunner(value: unknown): value is Runner {
 }
 
 /**
+ * The environment variable carrying one runner's CloudWatch log-group name —
+ * the naming convention the CDK stack writes and the start Lambda reads, so
+ * both sides follow `RUNNERS` with no per-runner wiring.
+ */
+export function logGroupEnvVar(runner: Runner): string {
+  return `${runner.toUpperCase()}_LOG_GROUP`;
+}
+
+/**
  * Where a model's weights live under the weights bucket. Derived here rather
  * than sent on the wire so callers (outfit) never need to know the S3 layout —
  * runner + modelId + quant fully determine it, which also means the same model
@@ -110,58 +119,4 @@ function requireString(obj: Record<string, unknown>, key: string): string {
     throw new Error(`deploy-config.${key} must be a non-empty string`);
   }
   return value;
-}
-
-/**
- * Build the serve command for a runner. Kept pure (no I/O) so it is unit
- * tested; the Lambda drops the returned argv into a systemd ExecStart. The
- * weights are already synced to `modelDir`; the API key is passed by reference
- * (env file / file) rather than value so it never lands in `ps`.
- */
-export function buildServeCommand(cfg: DeployConfig, opts: { modelDir: string; port: number }): string {
-  const { modelDir, port } = opts;
-  if (cfg.runner === 'vllm') {
-    return [
-      '/opt/llm/venv/bin/vllm',
-      'serve',
-      modelDir,
-      '--served-model-name',
-      quote(cfg.servedModelName),
-      '--host',
-      '0.0.0.0',
-      '--port',
-      String(port),
-      '--max-model-len',
-      String(cfg.contextSize),
-      '--gpu-memory-utilization',
-      '0.92',
-      ...cfg.serveArgs,
-    ].join(' ');
-  }
-  // llamacpp: the GGUF is a single file synced into modelDir. llama-server
-  // reads the API key from a root-only file (--api-key-file) so it is not
-  // visible in the process list. --metrics is forced on (not left to the
-  // Outfit) because the idle scrape depends on the /metrics endpoint — without
-  // it the scrape 404s and a healthy box reads as idle and self-terminates.
-  return [
-    'llama-server',
-    '--model',
-    `${modelDir}/model.gguf`,
-    '--host',
-    '0.0.0.0',
-    '--port',
-    String(port),
-    '--api-key-file',
-    '/etc/llm/api-key',
-    '--ctx-size',
-    String(cfg.contextSize),
-    '--metrics',
-    '--alias',
-    quote(cfg.servedModelName),
-    ...cfg.serveArgs,
-  ].join(' ');
-}
-
-function quote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
 }

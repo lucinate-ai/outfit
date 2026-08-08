@@ -33,6 +33,14 @@ export interface LlmConfig {
    */
   llamacppRelease: string;
   /**
+   * Pinned outfit release baked into every runtime AMI (its GitHub release's
+   * linux_amd64 artefact, checksum-verified). The instance's engine runs
+   * under `outfit daemon`, so this must be a release that ships the daemon;
+   * a bake against an unpublished version fails loudly at download rather
+   * than producing a daemon-less AMI.
+   */
+  outfitVersion: string;
+  /**
    * NVIDIA driver package installed in the AMI. The host needs only the driver
    * — vLLM's torch wheels bring CUDA — so this is the "-server-open" headless
    * driver (open kernel modules, required for Ada/L40S), not the CUDA toolkit.
@@ -47,7 +55,8 @@ export interface LlmConfig {
    * even if requests are still flowing.
    */
   maxRuntimeMinutes: number;
-  vllmPort: number;
+  /** The port every runner's engine serves on — one port so the EIP, security group, and health check stay runner-neutral. */
+  enginePort: number;
   /**
    * AZs the start Lambda tries, in order, when launching an instance — the
    * g6e-capable zones. It launches into the first with capacity, so this
@@ -81,6 +90,9 @@ const DEFAULTS = {
   // ai-dock/llama.cpp-cuda release with CUDA 12.8; pin a specific build for
   // reproducible bakes. Must post-date the MTP merge (PR #22673).
   llamacppRelease: 'b10107',
+  // The first release shipping `outfit daemon`. Until it is published a bake
+  // 404s at download — publish the release, then bake.
+  outfitVersion: '1.15.0',
   nvidiaDriverPackage: 'nvidia-driver-570-server-open',
   idleThresholdMinutes: 15,
   // Must exceed the whole cold start (S3 sync ~4 min + weight/CUDA load), or
@@ -88,7 +100,7 @@ const DEFAULTS = {
   // while the server is still loading, which reads as "idle").
   gracePeriodMinutes: 30,
   maxRuntimeMinutes: 240,
-  vllmPort: 8000,
+  enginePort: 8000,
   availabilityZones: ['us-east-1b', 'us-east-1c', 'us-east-1d', 'us-east-1e'],
   builderInstanceType: 'm5.xlarge',
   // Big enough for the OS + driver + runner AND the ~30 GB model synced from
@@ -167,11 +179,12 @@ export function loadConfig(
     instanceType: contextString(app, 'instanceType', DEFAULTS.instanceType),
     vllmVersion: contextString(app, 'vllmVersion', DEFAULTS.vllmVersion),
     llamacppRelease: contextString(app, 'llamacppRelease', DEFAULTS.llamacppRelease),
+    outfitVersion: contextString(app, 'outfitVersion', DEFAULTS.outfitVersion),
     nvidiaDriverPackage: contextString(app, 'nvidiaDriverPackage', DEFAULTS.nvidiaDriverPackage),
     idleThresholdMinutes: contextNumber(app, 'idleThresholdMinutes', DEFAULTS.idleThresholdMinutes),
     gracePeriodMinutes: contextNumber(app, 'gracePeriodMinutes', DEFAULTS.gracePeriodMinutes),
     maxRuntimeMinutes: contextNumber(app, 'maxRuntimeMinutes', DEFAULTS.maxRuntimeMinutes),
-    vllmPort: DEFAULTS.vllmPort,
+    enginePort: DEFAULTS.enginePort,
     availabilityZones: contextList(app, 'availabilityZones', DEFAULTS.availabilityZones),
     builderInstanceType: contextString(app, 'builderInstanceType', DEFAULTS.builderInstanceType),
     imageVolumeGb: contextNumber(app, 'imageVolumeGb', DEFAULTS.imageVolumeGb),

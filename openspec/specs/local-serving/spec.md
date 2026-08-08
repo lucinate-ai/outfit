@@ -7,9 +7,7 @@ describes — from the Outfit's own instructions, or from a llama.cpp preset
 `.ini` it points at — so the same file that dresses the harness can also start
 the server behind it. `serve` is harness-agnostic and never touches harness
 config.
-
 ## Requirements
-
 ### Requirement: Serve basics
 
 `outfit serve [path]` SHALL read an Outfit (default `./Outfit`, aliases and
@@ -33,10 +31,12 @@ rather than a raw exec error.
 
 `outfit serve` SHALL launch the inference engine the Outfit's `PROVIDER` names,
 the local counterpart of the runner `outfit remote deploy` selects from the same
-instruction. `llamacpp` SHALL run `llama-server`; `omlx` SHALL run the oMLX CLI.
-There SHALL be no default: a `PROVIDER` that is not a self-hosted engine SHALL
-fail, naming the providers that can be served, rather than launching an engine
-the Outfit did not ask for.
+instruction. `llamacpp` SHALL run `llama-server`; `omlx` SHALL run the oMLX CLI;
+`vllm` SHALL run `vllm serve`, with the model passed as its positional
+argument, the served name as `--served-model-name`, and the context window as
+`--max-model-len`. There SHALL be no default: a `PROVIDER` that is not a
+self-hosted engine SHALL fail, naming the providers that can be served, rather
+than launching an engine the Outfit did not ask for.
 
 An engine whose executable is normally installed outside the `PATH` SHALL also be
 looked for at its conventional install location, so a user who has never put it
@@ -46,6 +46,12 @@ on their `PATH` can still serve.
 
 - **WHEN** the Outfit says `PROVIDER omlx`
 - **THEN** the printed command runs the oMLX CLI, not `llama-server`
+
+#### Scenario: vLLM is servable
+
+- **WHEN** the Outfit says `PROVIDER vllm` with a `MODEL`
+- **THEN** the printed command runs `vllm serve` with that model as the
+  positional argument
 
 #### Scenario: A provider that is not a local engine
 
@@ -177,3 +183,24 @@ process. Configuring authentication on the server is the engine's own concern.
 
 - **WHEN** the provider's API key variable is set in the environment
 - **THEN** neither the printed command nor the launched process carries the key
+
+### Requirement: Control API flag
+
+`outfit serve` SHALL accept `-a`/`--api` to expose the control API over the
+foreground engine, as defined by the `daemon-api` capability. Serve SHALL
+remain a foreground command with no daemon flag — long-lived supervision is
+`outfit daemon`'s job. Without `--api`, serve's foreground stdio-forwarded
+behaviour SHALL be unchanged.
+
+#### Scenario: Plain serve is unchanged
+
+- **WHEN** the user runs `outfit serve` without `--api`
+- **THEN** the engine runs in the foreground with stdio forwarded, exactly as
+  before
+
+#### Scenario: Serve with the API stays foreground
+
+- **WHEN** the user runs `outfit serve -a`
+- **THEN** the engine runs in the foreground with the control API listening
+  beside it
+

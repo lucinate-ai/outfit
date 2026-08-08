@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildServeCommand,
   parseDeployConfig,
   UNCONFIGURED_DEPLOY_CONFIG,
   weightsPrefixFor,
@@ -98,31 +97,5 @@ describe('parseDeployConfig', () => {
 
   it('rejects non-string serveArgs', () => {
     expect(() => parseDeployConfig(JSON.stringify({ ...VLLM, serveArgs: [1, 2] }))).toThrow(/serveArgs/);
-  });
-});
-
-describe('buildServeCommand', () => {
-  const opts = { modelDir: '/opt/llm/model', port: 8000 };
-
-  it('builds the vllm serve command with its args', () => {
-    const cmd = buildServeCommand(VLLM, opts);
-    expect(cmd).toContain('/opt/llm/venv/bin/vllm serve /opt/llm/model');
-    expect(cmd).toContain("--served-model-name 'Qwen/Qwen3.6-27B-FP8'");
-    expect(cmd).toContain('--max-model-len 32768');
-    expect(cmd).toContain('--gpu-memory-utilization 0.92');
-    expect(cmd).toContain('--enforce-eager --tool-call-parser qwen3_coder');
-    expect(cmd).not.toContain('llama-server');
-  });
-
-  it('builds the llama-server command with the gguf and its args', () => {
-    const cmd = buildServeCommand(LLAMACPP, opts);
-    expect(cmd).toContain('llama-server --model /opt/llm/model/model.gguf');
-    expect(cmd).toContain('--ctx-size 131072');
-    expect(cmd).toContain('--api-key-file /etc/llm/api-key');
-    expect(cmd).toContain("--alias 'qwen3.6-27b'");
-    // --metrics is forced on so the idle scrape can read /metrics.
-    expect(cmd).toContain('--metrics');
-    expect(cmd).toContain('-ngl 99 -fa on --spec-type mtp --jinja');
-    expect(cmd).not.toContain('vllm serve');
   });
 });

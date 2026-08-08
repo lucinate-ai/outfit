@@ -1,186 +1,78 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildTokenStats,
-  metricsCurlCommand,
-  NVIDIA_SMI_CMD,
-  parseCpuStat,
-  parseGpuStats,
-  parseMemoryStat,
-  VMSTAT_CMD,
-  FREE_CMD,
-  type GpuStat,
-  type MemoryStat,
-} from '../lambda/shared/stats';
-import { parseMetrics } from '../lambda/shared/idle';
+  DAEMON_METRICS_CMD,
+  DAEMON_UNREACHABLE,
+  parseDaemonMetrics,
+} from '../lambda/shared/daemon';
 
-describe('parseGpuStats', () => {
-  it('parses a single GPU and converts MiB to bytes', () => {
-    const gpus = parseGpuStats('0, NVIDIA L40S, 12, 8192, 46080, 42');
-    expect(gpus).toHaveLength(1);
-    expect(gpus[0]).toEqual<GpuStat>({
+// A representative /v1/metrics reply from the on-instance outfit daemon —
+// the Go side's metrics.Stats shape.
+const daemonReply = JSON.stringify({
+  state: 'running',
+  runner: 'llamacpp',
+  modelId: '/opt/llm/model/model.gguf',
+  uptimeSeconds: 123,
+  tokens: { running: 2, counter: 6020, promptTokens: 4096, generationTokens: 1024, requests: 17 },
+  gpus: [
+    {
       index: 0,
       name: 'NVIDIA L40S',
       utilization: 12,
-      memoryUsed: 8192 * 1024 * 1024,
-      memoryTotal: 46080 * 1024 * 1024,
+      memoryUsed: 8589934592,
+      memoryTotal: 48318382080,
       temperature: 42,
+    },
+  ],
+  cpu: { utilization: 30 },
+  memory: { total: 33020416512, used: 4294967296 },
+});
+
+describe('parseDaemonMetrics', () => {
+  it('parses a daemon metrics reply', () => {
+    const parsed = parseDaemonMetrics(daemonReply);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.state).toBe('running');
+    expect(parsed!.tokens).toEqual({
+      running: 2,
+      counter: 6020,
+      promptTokens: 4096,
+      generationTokens: 1024,
+      requests: 17,
     });
+    expect(parsed!.gpus).toHaveLength(1);
+    expect(parsed!.gpus![0].memoryTotal).toBe(48318382080);
+    expect(parsed!.cpu!.utilization).toBe(30);
+    expect(parsed!.memory!.used).toBe(4294967296);
   });
 
-  it('parses multiple GPUs', () => {
-    const stdout = [
-      '0, NVIDIA L40S, 12, 8192, 46080, 42',
-      '1, NVIDIA L40S, 8, 4096, 46080, 38',
-    ].join('\n');
-    const gpus = parseGpuStats(stdout);
-    expect(gpus).toHaveLength(2);
-    expect(gpus[0].index).toBe(0);
-    expect(gpus[1].index).toBe(1);
-    expect(gpus[1].utilization).toBe(8);
+  it('parses a reply with omitted stats (absent sources stay absent)', () => {
+    const parsed = parseDaemonMetrics(JSON.stringify({ state: 'running' }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.tokens).toBeUndefined();
+    expect(parsed!.gpus).toBeUndefined();
   });
 
-  it('returns empty array for empty input', () => {
-    expect(parseGpuStats('')).toEqual([]);
+  it('returns null for the unreachable marker', () => {
+    expect(parseDaemonMetrics(`${DAEMON_UNREACHABLE}\n`)).toBeNull();
   });
 
-  it('skips malformed lines', () => {
-    const gpus = parseGpuStats('bad line\n0, NVIDIA L40S, 12, 8589934592, 48318382080, 42');
-    expect(gpus).toHaveLength(1);
-    expect(gpus[0].index).toBe(0);
+  it('returns null for empty output', () => {
+    expect(parseDaemonMetrics('')).toBeNull();
   });
 
-  it('handles GPU with special chars in name', () => {
-    const gpus = parseGpuStats('0, NVIDIA A100-SXM4-80GB, 95, 40000000000, 81504000000, 72');
-    expect(gpus).toHaveLength(1);
-    expect(gpus[0].name).toBe('NVIDIA A100-SXM4-80GB');
-  });
-});
-
-describe('parseCpuStat', () => {
-  it('parses a vmstat line', () => {
-    // Standard vmstat output: r b swpd free buff cache si so bi bo in cs us sy id wa st
-    const stdout = '0 0 0 8589934592 1073741824 16106127360 0 0 1024 2048 1500 3000 25 10 60 3 2';
-    const cpu = parseCpuStat(stdout);
-    expect(cpu).not.toBeNull();
-    expect(cpu!.utilization).toBe(40); // 100 - 60(idle)
+  it('returns null for non-JSON output', () => {
+    expect(parseDaemonMetrics('curl: (7) Failed to connect')).toBeNull();
   });
 
-  it('handles multi-line vmstat output', () => {
-    const stdout = [
-      'procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----',
-      ' r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st',
-      ' 0 0 0 8000000000 1000000000 15000000000 0 0 512 1024 1000 2000 20 5 70 3 2',
-      ' 1 0 0 7500000000 1000000000 15000000000 0 0 1024 2048 1500 3000 30 15 50 3 2',
-    ].join('\n');
-    const cpu = parseCpuStat(stdout);
-    expect(cpu).not.toBeNull();
-    expect(cpu!.utilization).toBe(50); // 100 - 50(idle)
-  });
-
-  it('returns null for empty input', () => {
-    expect(parseCpuStat('')).toBeNull();
-  });
-
-  it('returns null for short lines', () => {
-    expect(parseCpuStat('0 0 0')).toBeNull();
+  it('returns null for JSON that is not a daemon reply', () => {
+    expect(parseDaemonMetrics('42')).toBeNull();
+    expect(parseDaemonMetrics('{"error":"missing bearer token"}')).toBeNull();
   });
 });
 
-describe('parseMemoryStat', () => {
-  it('parses a free -b line', () => {
-    const stdout = [
-      '               total        used        free      shared  buff/cache   available',
-      'Mem:   33020416512   4294967296  12884901888   536870912  15840547328  26424576512',
-      'Swap:   17179869184          0  17179869184',
-    ].join('\n');
-    const mem = parseMemoryStat(stdout);
-    expect(mem).not.toBeNull();
-    expect(mem!).toEqual<MemoryStat>({
-      total: 33020416512,
-      used: 4294967296,
-    });
-  });
-
-  it('returns null for empty input', () => {
-    expect(parseMemoryStat('')).toBeNull();
-  });
-
-  it('returns null when Mem line is missing', () => {
-    expect(parseMemoryStat('Swap:   17179869184          0  17179869184')).toBeNull();
-  });
-});
-
-describe('buildTokenStats', () => {
-  const VLLM_SCRAPE = [
-    'vllm:num_requests_running{model_name="m"} 2.0',
-    'vllm:num_requests_waiting{model_name="m"} 1.0',
-    'vllm:prompt_tokens_total{model_name="m"} 1000.0',
-    'vllm:generation_tokens_total{model_name="m"} 500.0',
-    'vllm:request_success_total{model_name="m",finished_reason="stop"} 10.0',
-  ].join('\n');
-
-  const LLAMACPP_SCRAPE = [
-    'llamacpp:requests_processing 1',
-    'llamacpp:requests_deferred 0',
-    'llamacpp:prompt_tokens_total 2000',
-    'llamacpp:tokens_predicted_total 800',
-    'llamacpp:n_decode_total 400',
-  ].join('\n');
-
-  it('builds vllm token stats', () => {
-    const metrics = parseMetrics(VLLM_SCRAPE, 'vllm');
-    const stats = buildTokenStats(metrics, VLLM_SCRAPE, 'vllm');
-    expect(stats).not.toBeNull();
-    expect(stats!.running).toBe(3); // 2 running + 1 waiting
-    expect(stats!.promptTokens).toBe(1000);
-    expect(stats!.generationTokens).toBe(500);
-    expect(stats!.requests).toBe(10);
-  });
-
-  it('builds llamacpp token stats', () => {
-    const metrics = parseMetrics(LLAMACPP_SCRAPE, 'llamacpp');
-    const stats = buildTokenStats(metrics, LLAMACPP_SCRAPE, 'llamacpp');
-    expect(stats).not.toBeNull();
-    expect(stats!.running).toBe(1);
-    expect(stats!.promptTokens).toBe(2000);
-    expect(stats!.generationTokens).toBe(800);
-    expect(stats!.requests).toBe(0); // llamacpp has no request_success_total
-  });
-
-  it('returns null for failed metrics', () => {
-    const stats = buildTokenStats({ ok: false }, '', 'vllm');
-    expect(stats).toBeNull();
-  });
-});
-
-describe('metricsCurlCommand', () => {
-  it('reads API key from file for llamacpp', () => {
-    const cmd = metricsCurlCommand('llamacpp', 8000);
-    expect(cmd).toContain('-H "Authorization: Bearer $(cat /etc/llm/api-key)"');
-    expect(cmd).toContain('localhost:8000/metrics');
-    expect(cmd).toContain('llamacpp:');
-  });
-
-  it('omits auth header for vllm', () => {
-    const cmd = metricsCurlCommand('vllm', 8000);
-    expect(cmd).not.toContain('Authorization');
-    expect(cmd).toContain('localhost:8000/metrics');
-    expect(cmd).toContain('vllm:');
-  });
-});
-
-describe('commands', () => {
-  it('has the expected nvidia-smi command', () => {
-    expect(NVIDIA_SMI_CMD).toContain('--query-gpu=');
-    expect(NVIDIA_SMI_CMD).toContain('utilization.gpu');
-    expect(NVIDIA_SMI_CMD).toContain('--format=csv,noheader,nounits');
-  });
-
-  it('has the expected vmstat command', () => {
-    expect(VMSTAT_CMD).toBe('vmstat 1 2 | tail -1');
-  });
-
-  it('has the expected free command', () => {
-    expect(FREE_CMD).toBe('free -b');
+describe('DAEMON_METRICS_CMD', () => {
+  it('curls the loopback daemon and marks failure', () => {
+    expect(DAEMON_METRICS_CMD).toContain('http://127.0.0.1:4242/v1/metrics');
+    expect(DAEMON_METRICS_CMD).toContain(DAEMON_UNREACHABLE);
   });
 });

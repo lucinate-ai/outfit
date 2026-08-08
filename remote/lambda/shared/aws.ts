@@ -61,6 +61,8 @@ function parseRetainUntil(tags?: { Key?: string; Value?: string }[]): Date | und
 export interface InstanceInfo {
   instanceId: string;
   state: string;
+  /** EC2 instance type (e.g. g6e.xlarge), for the stats reply and cost estimation. */
+  instanceType?: string;
   launchTime?: Date;
   /** Parsed from the Retain-Until tag, if present and a valid datetime. */
   retainUntil?: Date;
@@ -110,6 +112,7 @@ export async function findManagedInstances(
     .map((instance) => ({
       instanceId: instance.InstanceId!,
       state: instance.State?.Name ?? 'unknown',
+      instanceType: instance.InstanceType as string | undefined,
       launchTime: instance.LaunchTime,
       retainUntil: parseRetainUntil(instance.Tags),
       environment: instance.Tags?.find((t) => t.Key === 'cloud-vm-llm:env')?.Value,

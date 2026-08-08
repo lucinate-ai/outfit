@@ -16,7 +16,7 @@ import { launchSeedInstance, weightsPresent, type SeedEnv } from '../shared/seed
 
 const WEIGHTS_BUCKET = requireEnv('WEIGHTS_BUCKET');
 const VPC_ID = requireEnv('VPC_ID');
-const PORT = Number(requireEnv('VLLM_PORT'));
+const PORT = Number(requireEnv('ENGINE_PORT'));
 
 const SEED_ENV: SeedEnv = {
   region: requireEnv('AWS_REGION'),

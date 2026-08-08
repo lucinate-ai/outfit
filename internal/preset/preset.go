@@ -182,6 +182,10 @@ type Dialect struct {
 // rendering helpers use.
 var LlamaCpp = Dialect{Aliases: canonical, Boolean: boolean}
 
+// VLLM is the dialect `vllm serve` speaks: long-form flags with no short
+// aliases and no boolean specials, so keys pass through unchanged.
+var VLLM = Dialect{}
+
 // OMLX is the dialect `omlx-cli serve` speaks. It spells every flag in long
 // form (`--model-dir`, `--memory-guard`, `--paged-ssd-cache-dir`), so no
 // aliasing is applied and keys pass through as written.

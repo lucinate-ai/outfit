@@ -25,6 +25,7 @@ GPU:
 | ---------- | ------------ |
 | `llamacpp` | `llama-server` |
 | `omlx` | [oMLX](https://omlx.ai) on Apple Silicon |
+| `vllm` | `vllm serve` (the model as its positional argument) |
 
 Any other provider is an error: `serve` launches a self-hosted engine, and the
 rest of the catalogue names endpoints somebody else runs.
@@ -133,11 +134,49 @@ oMLX ships as a macOS app, so `serve` looks for `omlx-cli` on your `PATH` first
 and falls back to `/Applications/oMLX.app/Contents/MacOS/omlx-cli`. If you've
 only ever launched it from the menu bar, the fallback is the one that finds it.
 
+## The control API (`--api`) and `outfit daemon`
+
+`serve` is strictly foreground: it runs the engine in front of you until one
+of you exits. Two related surfaces build on it:
+
+- `serve --api` (`-a`) exposes the control API *beside* the foreground
+  engine — status and metrics answer, start fails (the engine is already
+  running), and stop terminates the engine, after which serve exits as it
+  always has.
+- `outfit daemon` is the long-lived agent: it supervises one engine, writes
+  its output to `~/.config/outfit/daemon/engine.log`, tracks its state
+  (`idle`, `running`, `stopped`, `crashed` — a crash is reported, never
+  auto-restarted), and starts **nothing** until a start request asks. The
+  start can carry the deploy config to run; otherwise a previously pushed
+  config, or the Outfit the daemon sits beside, is used. Stopping the engine
+  leaves the daemon answering; only a signal ends it. The daemon stays in the
+  foreground itself; background it with tmux, systemd, launchd or similar.
+
+The API listens on `:4242` (change with `--api-addr`) and speaks JSON.
+See [HTTP Control API](../http-api.md) for details:
+
+| Endpoint | Meaning |
+| -------- | ------- |
+| `GET /v1/status` | Engine state, what is served, the engine log path |
+| `POST /v1/start` | Start the engine (optional deploy-config body; 409 while one runs) |
+| `POST /v1/stop` | Stop the engine (idempotent; never ends the daemon) |
+| `GET /v1/metrics` | Engine token counters plus host GPU/CPU/RAM |
+| `PUT /v1/deploy-config` | Set what the *next* start serves |
+
+Requests carry `Authorization: Bearer $OUTFIT_API_TOKEN`. The token is read
+from the environment (the `.env` beside the Outfit works — it is loaded
+first), never from a flag; a non-loopback listen with no token refuses to
+start. A supervised engine gets its own `/metrics` endpoint switched on
+(llama.cpp `--metrics`), which is where the token counters come from; GPU
+readings need `nvidia-smi` (no Apple GPU source yet).
+
 ## Flags
 
 | Flag | Meaning |
 | ---- | ------- |
 | `-n`, `--dry-run` | Print the server command without running it |
+| `-a`, `--api` | Expose the control API beside the foreground engine |
+| `--api-addr` | Control API listen address (default `:4242`) |
 
 ## Notes
 
