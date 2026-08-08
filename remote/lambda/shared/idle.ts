@@ -2,7 +2,6 @@
  * Pure idle-detection logic, kept free of AWS calls so it can be unit tested.
  */
 
-import type { Runner } from './deploy-config';
 
 export interface IdleState {
   /** Last observed activity counter (sum of vLLM token/request counters). */
@@ -13,71 +12,19 @@ export interface IdleState {
   last_wake_at?: string;
 }
 
+// The activity signals the idle check runs on: in-flight requests plus the
+// cumulative token counter, read from the on-instance daemon's metrics reply
+// (its engine scrape). ok: false means the daemon (or its engine scrape) was
+// unreachable — treated as "no activity observed" so a wedged server still
+// stops at the threshold.
 export type MetricsResult = { ok: true; running: number; counter: number } | { ok: false };
 
-// The Prometheus metric names each runner exposes on /metrics that signal
-// activity: `running` gauges (in-flight requests) plus cumulative `counters`
-// (tokens/requests) that catch a long generation starting and ending between
-// two idle ticks. vLLM uses a `vllm:` prefix, llama.cpp a `llamacpp:` one, with
-// different names — so the scrape is runner-aware.
-interface MetricsSpec {
-  prefix: string;
-  running: Set<string>;
-  counters: Set<string>;
-}
-const METRICS: Record<Runner, MetricsSpec> = {
-  vllm: {
-    prefix: 'vllm',
-    running: new Set(['num_requests_running', 'num_requests_waiting']),
-    counters: new Set(['prompt_tokens_total', 'generation_tokens_total', 'request_success_total']),
-  },
-  llamacpp: {
-    prefix: 'llamacpp',
-    running: new Set(['requests_processing', 'requests_deferred']),
-    counters: new Set(['prompt_tokens_total', 'tokens_predicted_total', 'n_decode_total']),
-  },
-};
-
-/** The grep -E pattern that pulls just this runner's activity metrics. */
-export function metricsGrepPattern(runner: Runner): string {
-  const spec = METRICS[runner];
-  return `^${spec.prefix}:(${[...spec.running, ...spec.counters].join('|')})`;
-}
-
-/**
- * Parse the (pre-grepped) Prometheus metrics scrape for a runner. Returns
- * ok: false when the scrape failed or produced nothing recognisable — the
- * caller treats that as "no activity observed" so a wedged server still gets
- * stopped at the idle threshold instead of burning GPU-hours.
- */
-export function parseMetrics(stdout: string, runner: Runner): MetricsResult {
-  if (!stdout || stdout.includes('SCRAPE_FAILED')) {
+/** Lift the idle signals out of a daemon metrics reply. */
+export function metricsFromDaemon(tokens?: { running: number; counter: number }): MetricsResult {
+  if (!tokens) {
     return { ok: false };
   }
-  const spec = METRICS[runner];
-  const metricLine = new RegExp(`^${spec.prefix}:([a-z_]+)(?:\\{[^}]*\\})?\\s+([0-9.eE+-]+)$`);
-  let running = 0;
-  let counter = 0;
-  let matched = false;
-  for (const line of stdout.split('\n')) {
-    const match = metricLine.exec(line.trim());
-    if (!match) {
-      continue;
-    }
-    const [, name, rawValue] = match;
-    const value = Number(rawValue);
-    if (!Number.isFinite(value)) {
-      continue;
-    }
-    if (spec.running.has(name)) {
-      running += value;
-      matched = true;
-    } else if (spec.counters.has(name)) {
-      counter += value;
-      matched = true;
-    }
-  }
-  return matched ? { ok: true, running, counter } : { ok: false };
+  return { ok: true, running: tokens.running, counter: tokens.counter };
 }
 
 export interface IdleDecisionInput {

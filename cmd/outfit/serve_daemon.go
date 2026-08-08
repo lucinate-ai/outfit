@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -128,9 +129,8 @@ func cmdDaemon(args []string) error {
 	return nil
 }
 
-// runServeForegroundAPI is `outfit serve --api` without --daemon: the engine
-// runs in the foreground with stdio forwarded as ever, with the control API
-// alongside it. Start over the API always fails — the engine is
+// runServeForegroundAPI is `outfit serve --api`: the engine runs in the
+// foreground with stdio forwarded as ever, with the control API alongside it. Start over the API always fails — the engine is
 // foreground-managed and already running — and stop terminates it, after
 // which serve exits exactly as it does when the engine exits on its own.
 func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serveEngine, argv []string, apiAddr string) error {
@@ -232,6 +232,9 @@ func argvFromDeployConfig(engine serveEngine, dc remote.DeployConfig) ([]string,
 		return nil, err
 	}
 	argv := append([]string{engine.binary()}, engine.subcommand...)
+	if engine.positional != nil {
+		argv = append(argv, engine.positional(sel)...)
+	}
 	argv = append(argv, engine.dialect.Flags(params)...)
 	argv = append(argv, dc.ServeArgs...)
 	fmt.Printf("Serving %s from the pushed deploy config\n\n", model)
@@ -268,8 +271,10 @@ func withMetricsArgs(argv []string, engine serveEngine) []string {
 
 // scrapeTargetFor locates the engine's own /metrics for the collector: the
 // Outfit's BASEURL when it states one, the engine's default bind otherwise,
-// with the API key lifted from the command so a gated /metrics still answers.
-// An engine with no metrics endpoint yields the zero target (no scrape).
+// with the API key lifted from the command — a literal --api-key, or the
+// contents of an --api-key-file (how the cloud delivers it) — so a gated
+// /metrics still answers. An engine with no metrics endpoint yields the zero
+// target (no scrape).
 func scrapeTargetFor(engine serveEngine, baseURL string, argv []string) metrics.ScrapeTarget {
 	if engine.metricsEngine == "" {
 		return metrics.ScrapeTarget{}
@@ -279,8 +284,16 @@ func scrapeTargetFor(engine serveEngine, baseURL string, argv []string) metrics.
 	}
 	key := ""
 	for i, a := range argv {
-		if a == "--api-key" && i+1 < len(argv) {
+		if i+1 >= len(argv) {
+			break
+		}
+		switch a {
+		case "--api-key":
 			key = argv[i+1]
+		case "--api-key-file":
+			if data, err := os.ReadFile(argv[i+1]); err == nil {
+				key = strings.TrimSpace(string(data))
+			}
 		}
 	}
 	return metrics.ScrapeTarget{BaseURL: baseURL, Engine: engine.metricsEngine, APIKey: key}

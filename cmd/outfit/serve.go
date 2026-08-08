@@ -31,6 +31,10 @@ var llamaServerBinary = "llama-server"
 // up"; tests set it to a stub, exactly as they do for llamaServerBinary.
 var omlxBinary = ""
 
+// vllmBinary is the vLLM executable that `serve` launches. A package var so
+// tests can point it at a stub instead of a real install.
+var vllmBinary = "vllm"
+
 // omlxBundleBinary is where the macOS app installs its CLI. oMLX ships as a
 // signed app rather than a PATH install, so a user who has only ever launched
 // it from the menu bar still has this and nothing on their PATH.
@@ -76,6 +80,9 @@ type serveEngine struct {
 	// defaultBaseURL is where the engine listens when the Outfit states no
 	// BASEURL, so the scraper can still find /metrics.
 	defaultBaseURL string
+	// positional yields arguments placed directly after the subcommand —
+	// vLLM takes its model positionally rather than behind a flag.
+	positional func(sel outfit.Selection) []string
 }
 
 // engineFor maps an Outfit's PROVIDER to the engine `serve` launches locally.
@@ -103,9 +110,27 @@ func engineFor(provider string) (serveEngine, error) {
 			params:      omlxServeParams,
 			installHint: "install oMLX (https://omlx.ai) or check the path",
 		}, nil
+	case "vllm":
+		return serveEngine{
+			binary:      func() string { return vllmBinary },
+			subcommand:  []string{"serve"},
+			dialect:     preset.VLLM,
+			params:      vllmServeParams,
+			needsModel:  true,
+			installHint: "install vLLM (pip install vllm) or check the path",
+			// vLLM serves /metrics unconditionally, so no switch to append.
+			metricsEngine:  "vllm",
+			defaultBaseURL: "http://127.0.0.1:8000",
+			positional: func(sel outfit.Selection) []string {
+				if sel.Model == "" {
+					return nil
+				}
+				return []string{sel.Model}
+			},
+		}, nil
 	default:
 		return serveEngine{}, fmt.Errorf(
-			"PROVIDER %q cannot be served locally: serve runs a self-hosted engine, so use llamacpp or omlx",
+			"PROVIDER %q cannot be served locally: serve runs a self-hosted engine, so use llamacpp, omlx or vllm",
 			provider)
 	}
 }
@@ -188,6 +213,13 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 	}
 
 	binary := engine.binary()
+	// A positional-model engine takes the model right after its subcommand,
+	// before any flags — riding along with the subcommand puts it there in
+	// both the preset and preset-less builds.
+	subcommand := engine.subcommand
+	if engine.positional != nil {
+		subcommand = append(append([]string{}, subcommand...), engine.positional(sel)...)
+	}
 	var argv []string
 	if sel.Preset != "" {
 		presetPath := resolvePresetPath(sel.Preset, outfitPath)
@@ -205,13 +237,13 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", presetPath, err)
 		}
-		argv = pre.CommandIn(engine.dialect, binary, engine.subcommand, sec, params)
+		argv = pre.CommandIn(engine.dialect, binary, subcommand, sec, params)
 		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
 	} else {
 		if engine.needsModel && sel.Model == "" {
 			return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
 		}
-		argv = append([]string{binary}, engine.subcommand...)
+		argv = append([]string{binary}, subcommand...)
 		argv = append(argv, engine.dialect.Flags(params)...)
 		if sel.Model != "" {
 			fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
@@ -232,6 +264,29 @@ func resolvePresetPath(presetValue, outfitPath string) string {
 		return presetValue
 	}
 	return filepath.Join(filepath.Dir(outfitPath), presetValue)
+}
+
+// vllmServeParams turns the vLLM settings an Outfit states into preset
+// params. The model is deliberately absent — `vllm serve` takes it as its
+// positional argument (see the engine's positional func). ALIAS names what is
+// served, CONTEXT caps the model length, BASEURL binds the address.
+func vllmServeParams(sel outfit.Selection) ([]preset.Param, error) {
+	var params []preset.Param
+	if sel.Alias != "" {
+		params = append(params, preset.Param{Key: "served-model-name", Value: sel.Alias})
+	}
+	if sel.Context != "" {
+		n, err := contextsize.Parse(sel.Context)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, preset.Param{Key: "max-model-len", Value: strconv.Itoa(n)})
+	}
+	bind, err := bindAddressParams(sel)
+	if err != nil {
+		return nil, err
+	}
+	return append(params, bind...), nil
 }
 
 // omlxServeParams turns the oMLX settings an Outfit states into preset params.

@@ -7,28 +7,17 @@ import {
   runShellCommand,
 } from '../shared/aws';
 import { type DeployConfig } from '../shared/deploy-config';
+import { DAEMON_METRICS_CMD, parseDaemonMetrics } from '../shared/daemon';
 import {
   deployConfigParam,
   ENV_TAG_KEY,
   environmentFrom,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
-import { parseMetrics } from '../shared/idle';
-import {
-  buildTokenStats,
-  metricsCurlCommand,
-  NVIDIA_SMI_CMD,
-  parseCpuStat,
-  parseGpuStats,
-  parseMemoryStat,
-  VMSTAT_CMD,
-  FREE_CMD,
-  type StatsResult,
-} from '../shared/stats';
+import { type StatsResult } from '../shared/stats';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
-const PORT = Number(requireEnv('VLLM_PORT'));
 
 /** Narrow instance discovery to one environment's instance. */
 function envFilter(env: string) {
@@ -36,12 +25,11 @@ function envFilter(env: string) {
 }
 
 /**
- * The stats Lambda called by `outfit remote stats`. Returns instance metadata,
- * token usage, GPU/CPU/RAM metrics via a single SigV4 Function URL call.
- * 
- * All metric collection runs via SSM on the instance — not direct HTTP — 
- * because llama.cpp gates /metrics behind API key auth and system stats 
- * (nvidia-smi, vmstat, free) require shell commands.
+ * The stats Lambda called by `outfit remote metrics`. The control plane
+ * contributes what only it knows — environment, instance id/type, uptime
+ * since launch — and everything measured (engine token counters, GPU, CPU,
+ * RAM) comes from the on-instance outfit daemon's /v1/metrics, fetched with
+ * one SSM curl. Collection itself lives in outfit's internal/metrics.
  */
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   let env: string;
@@ -63,7 +51,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
 
   // Find the instance.
   const instance = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
-  
+
   if (!instance || instance.state !== 'running') {
     const result: StatsResult = {
       environment: env,
@@ -74,7 +62,6 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     return jsonResponse(200, result);
   }
 
-  // Collect all metrics in parallel.
   const result: StatsResult = {
     environment: env,
     state: 'running',
@@ -82,97 +69,36 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     runner: deployConfig.runner,
     modelId: deployConfig.modelId,
   };
-
-  // Uptime from launch time.
+  if (instance.instanceType) {
+    result.instanceType = instance.instanceType;
+  }
+  // Uptime from launch time — the instance's, not the engine's, since cost
+  // estimation multiplies it by the on-demand price.
   if (instance.launchTime) {
     result.uptimeSeconds = Math.floor((Date.now() - instance.launchTime.getTime()) / 1000);
   }
 
   const errors: string[] = [];
-
-  // Run all SSM commands in parallel.
-  const [metricsResult, gpuResult, cpuResult, memResult] = await Promise.all([
-    // Metrics scrape
-    (async () => {
-      try {
-        const cmd = metricsCurlCommand(deployConfig.runner, PORT);
-        return await runShellCommand(instance.instanceId, cmd, 30);
-      } catch (err) {
-        errors.push(`metrics: ${errorName(err)}`);
-        return null;
+  try {
+    const scrape = await runShellCommand(instance.instanceId, DAEMON_METRICS_CMD, 30);
+    const daemon = scrape.status === 'Success' ? parseDaemonMetrics(scrape.stdout) : null;
+    if (daemon) {
+      result.tokens = daemon.tokens;
+      result.gpus = daemon.gpus;
+      result.cpu = daemon.cpu;
+      result.memory = daemon.memory;
+      if (daemon.errors?.length) {
+        errors.push(...daemon.errors);
       }
-    })(),
-    // GPU stats
-    (async () => {
-      try {
-        return await runShellCommand(instance.instanceId, NVIDIA_SMI_CMD, 15);
-      } catch (err) {
-        errors.push(`gpu: ${errorName(err)}`);
-        return null;
-      }
-    })(),
-    // CPU stats
-    (async () => {
-      try {
-        return await runShellCommand(instance.instanceId, VMSTAT_CMD, 15);
-      } catch (err) {
-        errors.push(`cpu: ${errorName(err)}`);
-        return null;
-      }
-    })(),
-    // Memory stats
-    (async () => {
-      try {
-        return await runShellCommand(instance.instanceId, FREE_CMD, 15);
-      } catch (err) {
-        errors.push(`memory: ${errorName(err)}`);
-        return null;
-      }
-    })(),
-  ]);
-
-  // Parse metrics.
-  if (metricsResult) {
-    const parsed = buildTokenStats(
-      parseMetrics(metricsResult.stdout, deployConfig.runner),
-      metricsResult.stdout,
-      deployConfig.runner,
-    );
-    if (parsed) {
-      result.tokens = parsed;
     } else {
-      errors.push('metrics: no recognisable metrics in scrape');
+      errors.push('daemon: unreachable or unrecognisable metrics reply');
     }
+  } catch (err) {
+    errors.push(`daemon: ${errorName(err)}`);
   }
-
-  // Parse GPU stats.
-  if (gpuResult && gpuResult.status === 'Success') {
-    const gpus = parseGpuStats(gpuResult.stdout);
-    if (gpus.length > 0) {
-      result.gpus = gpus;
-    }
-  }
-
-  // Parse CPU stats.
-  if (cpuResult && cpuResult.status === 'Success') {
-    const cpu = parseCpuStat(cpuResult.stdout);
-    if (cpu) {
-      result.cpu = cpu;
-    }
-  }
-
-  // Parse memory stats.
-  if (memResult && memResult.status === 'Success') {
-    const memory = parseMemoryStat(memResult.stdout);
-    if (memory) {
-      result.memory = memory;
-    }
-  }
-
   if (errors.length > 0) {
     result.errors = errors;
   }
 
-  console.log(JSON.stringify({ action: 'stats', environment: env, instanceId: instance.instanceId, errors }));
   return jsonResponse(200, result);
 }

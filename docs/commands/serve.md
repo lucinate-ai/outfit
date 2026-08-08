@@ -25,6 +25,7 @@ GPU:
 | ---------- | ------------ |
 | `llamacpp` | `llama-server` |
 | `omlx` | [oMLX](https://omlx.ai) on Apple Silicon |
+| `vllm` | `vllm serve` (the model as its positional argument) |
 
 Any other provider is an error: `serve` launches a self-hosted engine, and the
 rest of the catalogue names endpoints somebody else runs.

@@ -67,9 +67,11 @@ flowchart TB
 ```
 
 The Lambdas live **outside the VPC** (no NAT cost) and reach the instance over
-**SSM Run Command** (`curl localhost`), so nothing is exposed beyond the vLLM
-port, and that only to your `/32`. A stable **Elastic IP** is re-associated on
-each launch so the base URL never changes.
+**SSM Run Command** — a `curl` to the on-instance **outfit daemon**'s
+loopback control API (`127.0.0.1:4242`), which supervises the engine and
+collects its metrics — so nothing is exposed beyond the vLLM port, and that
+only to your `/32`. A stable **Elastic IP** is re-associated on each launch so
+the base URL never changes.
 
 ## The deploy-config control plane
 
@@ -91,7 +93,7 @@ flowchart LR
   deploy -->|PutParameter| param
   deploy -.->|RunInstances| seed --> s3[("S3 weights")]
   start -->|read| param
-  start -->|build serve command| unit["systemd unit"]
+  start -->|render daemon deploy-config| unit["outfit daemon"]
 ```
 
 The DeployConfig contract (`lambda/shared/deploy-config.ts`):

@@ -12,36 +12,22 @@ import {
   writeState,
   type InstanceInfo,
 } from '../shared/aws';
-import type { Runner } from '../shared/deploy-config';
 import {
   deployConfigParam,
   ENV_TAG_KEY,
   environmentFrom,
   idleStateParam,
 } from '../shared/environments';
-import { decideIdle, metricsGrepPattern, parseMetrics, type MetricsResult } from '../shared/idle';
+import { DAEMON_METRICS_CMD, parseDaemonMetrics } from '../shared/daemon';
+import { decideIdle, metricsFromDaemon, type MetricsResult } from '../shared/idle';
 import { jsonResponse } from '../shared/http';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
-const VLLM_PORT = requireEnv('VLLM_PORT');
 const IDLE_THRESHOLD_MINUTES = Number(requireEnv('IDLE_THRESHOLD_MINUTES'));
 const GRACE_PERIOD_MINUTES = Number(requireEnv('GRACE_PERIOD_MINUTES'));
 const MAX_RUNTIME_MINUTES = Number(requireEnv('MAX_RUNTIME_MINUTES'));
 
-// Grep on the instance (GetCommandInvocation truncates stdout at 24 000 chars,
-// and /metrics is far larger). The metric names are runner-specific, and
-// llama.cpp gates /metrics behind the API key (vLLM leaves it open) — the key
-// is in the same root-only file the server reads, and the SSM command runs as
-// root, so the scrape can pass it.
-function metricsCommand(runner: Runner): string {
-  const auth = runner === 'llamacpp' ? '-H "Authorization: Bearer $(cat /etc/llm/api-key)" ' : '';
-  return (
-    `curl -s --max-time 5 ${auth}http://localhost:${VLLM_PORT}/metrics` +
-    ` | grep -E '${metricsGrepPattern(runner)}'` +
-    ` || echo SCRAPE_FAILED`
-  );
-}
 
 type StopEvent = ScheduledEvent | LambdaFunctionURLEvent;
 
@@ -115,17 +101,17 @@ async function idleCheck(instance: InstanceInfo): Promise<void> {
     return;
   }
 
-  // The runner (which metric names to scrape) comes from the environment's
-  // deploy-config. An instance with no environment tag is an anomaly (launched
-  // outside the deploy flow): nothing is assumed for it — no scrape, no state —
-  // so it is judged on launch time alone and cleaned up at the threshold
-  // rather than burning GPU-hours. For a tagged instance whose config is
-  // unreadable, decideIdle likewise treats "no metrics" as no activity.
+  // The activity signals come from the on-instance daemon's metrics reply.
+  // An instance with no environment tag is an anomaly (launched outside the
+  // deploy flow): nothing is assumed for it — no scrape, no state — so it is
+  // judged on launch time alone and cleaned up at the threshold rather than
+  // burning GPU-hours. For a tagged instance whose config is unreadable,
+  // decideIdle likewise treats "no metrics" as no activity.
   let metrics: MetricsResult = { ok: false };
   if (env) {
     try {
-      const { runner } = await readDeployConfig(deployConfigParam(env));
-      metrics = await scrapeMetrics(instance.instanceId, runner);
+      await readDeployConfig(deployConfigParam(env));
+      metrics = await scrapeMetrics(instance.instanceId);
     } catch (err) {
       console.log(
         JSON.stringify({
@@ -162,18 +148,18 @@ async function idleCheck(instance: InstanceInfo): Promise<void> {
   }
 }
 
-async function scrapeMetrics(instanceId: string, runner: Runner): Promise<MetricsResult> {
+async function scrapeMetrics(instanceId: string): Promise<MetricsResult> {
   try {
     if (!(await isSsmAgentOnline(instanceId))) {
       console.log(JSON.stringify({ mode: 'idle', warning: 'ssm agent offline' }));
       return { ok: false };
     }
-    const result = await runShellCommand(instanceId, metricsCommand(runner), 30);
+    const result = await runShellCommand(instanceId, DAEMON_METRICS_CMD, 30);
     if (result.status !== 'Success') {
       console.log(JSON.stringify({ mode: 'idle', warning: `scrape ${result.status}` }));
       return { ok: false };
     }
-    return parseMetrics(result.stdout, runner);
+    return metricsFromDaemon(parseDaemonMetrics(result.stdout)?.tokens);
   } catch (err) {
     // Treated as "no activity observed" by decideIdle: a crashed container
     // gets terminated at the threshold rather than running up GPU-hours.

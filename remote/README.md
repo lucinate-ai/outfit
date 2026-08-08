@@ -321,16 +321,19 @@ coding a day lands around $90/month. Full breakdown in
 
 | Want to know | Command |
 |---|---|
-| Follow the engine's logs | `tail -f /var/log/llm/llama-server.log` |
-| Why it won't start | `tail -50 /var/log/llm/llama-server.log` (or the boot log below for a pre-engine failure) |
-| Is it up? | `systemctl is-active llama-server` · `ss -ltn \| grep :8000` |
-| Is MTP actually working | `grep 'draft acceptance' /var/log/llm/llama-server.log` |
+| Engine state (idle/running/stopped/crashed) | `curl -s 127.0.0.1:4242/v1/status` |
+| Engine + host metrics | `curl -s 127.0.0.1:4242/v1/metrics` |
+| Follow the engine's logs | `tail -f /root/.config/outfit/daemon/engine.log` |
+| Why it won't start | `tail -50 /root/.config/outfit/daemon/engine.log` (or the boot log below for a pre-engine failure) |
+| Is it up? | `systemctl is-active outfit-daemon` · `ss -ltn \| grep :8000` |
+| Is MTP actually working | `grep 'draft acceptance' /root/.config/outfit/daemon/engine.log` |
 | Boot / S3-sync progress | `tail -f /var/log/cloud-init-output.log` |
 | Weights pulled so far | `du -sh /opt/llm/model` |
 | GPU + driver | `nvidia-smi` |
 | RAM + swap | `free -h` |
 
-(For a vLLM deployment the unit is `vllm` rather than `llama-server`.)
+(Both runners run under the same `outfit-daemon` unit: the baked `outfit`
+binary supervises the engine and serves its control API on loopback `:4242`.)
 
 From your own machine, no shell needed (the EIP is `<endpoint>`):
 

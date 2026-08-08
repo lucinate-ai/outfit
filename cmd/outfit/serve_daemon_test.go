@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/daemon"
+	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
 // stubEngineDaemon points llamaServerBinary at a long-running script that
@@ -242,13 +243,13 @@ func TestCmdDaemon_StartCarriesDeployConfig(t *testing.T) {
 
 	// An unservable runner is rejected, on push and on a start body alike.
 	if code, body := apiDo(t, "PUT", base+"/v1/deploy-config", "tok",
-		`{"runner":"vllm","modelId":"org/model"}`); code != http.StatusBadRequest ||
-		!strings.Contains(body["error"].(string), "vllm") {
-		t.Fatalf("vllm push = %d %v", code, body)
+		`{"runner":"ollama","modelId":"org/model"}`); code != http.StatusBadRequest ||
+		!strings.Contains(body["error"].(string), "ollama") {
+		t.Fatalf("ollama push = %d %v", code, body)
 	}
 	if code, _ := apiDo(t, "POST", base+"/v1/start", "tok",
-		`{"runner":"vllm","modelId":"org/model"}`); code != http.StatusBadRequest {
-		t.Fatalf("vllm start body = %d, want 400", code)
+		`{"runner":"ollama","modelId":"org/model"}`); code != http.StatusBadRequest {
+		t.Fatalf("ollama start body = %d, want 400", code)
 	}
 
 	// A start carrying its config pushes and starts in one call.
@@ -322,6 +323,76 @@ func TestCmdServe_ForegroundAPIStopExitsServe(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not exit after the foreground engine stopped")
+	}
+}
+
+func TestCmdServe_VllmDryRun(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath,
+		"PROVIDER vllm\nMODEL org/model\nALIAS friendly\nCONTEXT 16k\nBASEURL http://0.0.0.0:8000/v1\n")
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Error(err)
+		}
+	})
+	// The model rides positionally after `serve`, before any flags.
+	if !strings.Contains(out, "vllm serve org/model") {
+		t.Errorf("model is not vllm serve's positional argument:\n%s", out)
+	}
+	for _, want := range []string{"--served-model-name friendly", "--max-model-len 16000",
+		"--host 0.0.0.0", "--port 8000"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("vllm argv missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestArgvFromDeployConfigVllm(t *testing.T) {
+	engine, err := engineFor("vllm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:          "vllm",
+		ModelID:         "/opt/llm/model",
+		ContextSize:     32768,
+		ServedModelName: "friendly",
+		ServeArgs:       []string{"--gpu-memory-utilization", "0.92"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	if !strings.HasPrefix(got, "vllm serve /opt/llm/model ") {
+		t.Errorf("model is not the positional argument: %s", got)
+	}
+	for _, want := range []string{"--served-model-name friendly", "--max-model-len 32768",
+		"--gpu-memory-utilization 0.92"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestScrapeTargetForReadsAPIKeyFile(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "api-key")
+	mustWrite(t, keyFile, "sk-from-file\n")
+	target := scrapeTargetFor(engine, "", []string{"llama-server", "--api-key-file", keyFile})
+	if target.APIKey != "sk-from-file" {
+		t.Errorf("APIKey = %q, want the file's trimmed contents", target.APIKey)
+	}
+	if target.BaseURL != engine.defaultBaseURL || target.Engine != "llamacpp" {
+		t.Errorf("target = %+v", target)
+	}
+	// A literal --api-key still wins the usual way.
+	target = scrapeTargetFor(engine, "http://127.0.0.1:9000/v1", []string{"--api-key", "sk-lit"})
+	if target.APIKey != "sk-lit" || target.BaseURL != "http://127.0.0.1:9000/v1" {
+		t.Errorf("target = %+v", target)
 	}
 }
 

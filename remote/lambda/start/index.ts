@@ -15,7 +15,7 @@ import {
   sleep,
   writeState,
 } from '../shared/aws';
-import { buildServeCommand, type DeployConfig, type Runner } from '../shared/deploy-config';
+import { type DeployConfig, type Runner } from '../shared/deploy-config';
 import {
   baseUrlFor,
   deployConfigParam,
@@ -41,9 +41,10 @@ const WEIGHTS_BUCKET = requireEnv('WEIGHTS_BUCKET');
 const REGION = requireEnv('AWS_REGION');
 const BOOT_LOG_GROUP = requireEnv('BOOT_LOG_GROUP');
 const ENGINE_LOG_GROUP = { llamacpp: requireEnv('LLAMACPP_LOG_GROUP'), vllm: requireEnv('VLLM_LOG_GROUP') };
-// Where each engine's unit writes its stdout/stderr (tailed by the CloudWatch
-// agent). llama.cpp's binary is `llama-server`; vLLM's log is named for it.
-const ENGINE_LOG_FILE = { llamacpp: '/var/log/llm/llama-server.log', vllm: '/var/log/llm/vllm.log' };
+// Where the outfit daemon writes the engine's stdout/stderr (tailed by the
+// CloudWatch agent): the daemon's stable engine-log path, root's config home
+// since the daemon runs as root.
+const ENGINE_LOG_FILE = '/root/.config/outfit/daemon/engine.log';
 
 const DEADLINE_MARGIN_MS = 20_000;
 const POLL_MS = 5_000;
@@ -288,7 +289,7 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
           files: {
             collect_list: [
               {
-                file_path: ENGINE_LOG_FILE[runner],
+                file_path: ENGINE_LOG_FILE,
                 log_group_name: ENGINE_LOG_GROUP[runner],
                 log_stream_name: stream,
                 retention_in_days: -1,
@@ -309,14 +310,15 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
   );
 }
 
-function buildUserData(env: string, cfg: DeployConfig): string {
+/** Exported for tests: the boot script is pure string-building. */
+export function buildUserData(env: string, cfg: DeployConfig): string {
   const modelDir = '/opt/llm/model';
-  const serveCommand = buildServeCommand(cfg, { modelDir, port: Number(VLLM_PORT) });
-  const runnerUnit = cfg.runner === 'vllm' ? vllmUnit(serveCommand) : llamacppUnit(serveCommand);
+  const runnerUnit = cfg.runner === 'vllm' ? vllmDaemonBoot(cfg, modelDir) : llamacppDaemonBoot(cfg, modelDir);
   const cwAgentConfig = cloudwatchAgentConfig(env, cfg.runner);
   // Common boot: log the GPU, add swap for the load spike, start the log
   // shipper, sync the weights from S3, fetch the environment's API key. Then
-  // the runner-specific env file + systemd unit take over.
+  // the daemon takes over: its deploy config is written, its unit enabled,
+  // and the engine's first start requested over the control API.
   return `#!/bin/bash
 set -euxo pipefail
 # Log the GPU state up front so cloud-init-output.log shows whether the driver
@@ -361,8 +363,76 @@ ${runnerUnit}
 `;
 }
 
-/** vLLM: env file (API key, offline, native sampler) plus its systemd unit. */
-function vllmUnit(serveCommand: string): string {
+/**
+ * Render the daemon's stored deploy config: the same shape `outfit remote
+ * deploy` produces, with the cloud-owned settings resolved in — the model as
+ * the synced local path, the bind address and port, and the runner's key
+ * delivery — so the daemon's ordinary start serves exactly what the old
+ * per-runner unit ran. No --metrics here: the daemon switches the engine's
+ * metrics endpoint on itself.
+ */
+function daemonDeployConfig(cfg: DeployConfig, modelDir: string, extraServeArgs: string[]): string {
+  const modelId = cfg.runner === 'llamacpp' ? `${modelDir}/model.gguf` : modelDir;
+  return JSON.stringify(
+    {
+      runner: cfg.runner,
+      modelId,
+      quant: '',
+      contextSize: cfg.contextSize,
+      servedModelName: cfg.servedModelName,
+      serveArgs: ['--host', '0.0.0.0', '--port', String(VLLM_PORT), ...extraServeArgs, ...cfg.serveArgs],
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * The daemon boot shared by both runners: write the deploy config where the
+ * daemon reads it, enable outfit-daemon.service (and the baked crash-nudge
+ * timer), then request the engine's first start over the control API — the
+ * daemon never auto-starts, so the boot start is the same explicit API start
+ * any client performs. A 409 also counts: a re-run must not fail on an
+ * engine already up.
+ */
+function daemonBoot(deployConfigJson: string, unitExtra: string): string {
+  return `mkdir -p /root/.config/outfit/daemon
+cat >/root/.config/outfit/daemon/deploy-config.json <<'DEPLOYCONFIG'
+${deployConfigJson}
+DEPLOYCONFIG
+chmod 600 /root/.config/outfit/daemon/deploy-config.json
+
+cat >/etc/systemd/system/outfit-daemon.service <<'UNIT'
+[Unit]
+Description=outfit daemon (engine host)
+After=network-online.target
+Wants=network-online.target
+[Service]
+${unitExtra}ExecStart=/usr/local/bin/outfit daemon --api-addr 127.0.0.1:4242
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now outfit-daemon.service
+systemctl enable --now outfit-nudge.timer || echo "NUDGE_TIMER_MISSING"
+
+# First engine start, retried until the daemon answers. The engine loads the
+# model asynchronously; the start Lambda's health poll still gates "ready".
+for attempt in $(seq 1 30); do
+  code=$(curl -s -o /tmp/outfit-start.json -w '%{http_code}' --max-time 15 -X POST http://127.0.0.1:4242/v1/start || true)
+  if [ "$code" = "200" ] || [ "$code" = "409" ]; then
+    break
+  fi
+  sleep 2
+done
+cat /tmp/outfit-start.json || true`;
+}
+
+/** vLLM: its env file (API key by env, offline mode, native sampler), then the daemon boot. */
+function vllmDaemonBoot(cfg: DeployConfig, modelDir: string): string {
   return `# Python dev headers: Triton JIT-compiles a CUDA stub against Python.h on the
 # first model load (Qwen3.6's linear-attention path); baked into recipe 2.0.3+,
 # this is a safety net for instances off an older AMI and a no-op once present.
@@ -378,53 +448,16 @@ HF_HUB_OFFLINE=1
 VLLM_USE_FLASHINFER_SAMPLER=0
 ENVFILE
 
-cat >/etc/systemd/system/vllm.service <<'UNIT'
-[Unit]
-Description=vLLM server
-After=network-online.target
-Wants=network-online.target
-[Service]
-EnvironmentFile=/etc/vllm.env
-ExecStart=${serveCommand}
-# Log to a file the CloudWatch agent tails (not journald), so the log survives
-# instance termination. logrotate bounds this file (see the baked AMI config).
-StandardOutput=append:${ENGINE_LOG_FILE.vllm}
-StandardError=append:${ENGINE_LOG_FILE.vllm}
-Restart=on-failure
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now vllm.service`;
+${daemonBoot(daemonDeployConfig(cfg, modelDir, ['--gpu-memory-utilization', '0.92']), 'EnvironmentFile=/etc/vllm.env\n')}`;
 }
 
-/** llama.cpp: the API key in a root-only file (--api-key-file) plus its unit. */
-function llamacppUnit(serveCommand: string): string {
+/** llama.cpp: the API key in a root-only file (--api-key-file), then the daemon boot. */
+function llamacppDaemonBoot(cfg: DeployConfig, modelDir: string): string {
   return `mkdir -p /etc/llm
 printf '%s' "$API_KEY" >/etc/llm/api-key
 chmod 600 /etc/llm/api-key
 
-cat >/etc/systemd/system/llama-server.service <<'UNIT'
-[Unit]
-Description=llama.cpp server
-After=network-online.target
-Wants=network-online.target
-[Service]
-ExecStart=${serveCommand}
-# Log to a file the CloudWatch agent tails (not journald), so the log survives
-# instance termination. logrotate bounds this file (see the baked AMI config).
-StandardOutput=append:${ENGINE_LOG_FILE.llamacpp}
-StandardError=append:${ENGINE_LOG_FILE.llamacpp}
-Restart=on-failure
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now llama-server.service`;
+${daemonBoot(daemonDeployConfig(cfg, modelDir, ['--api-key-file', '/etc/llm/api-key']), '')}`;
 }
 
 async function checkHealth(instanceId: string): Promise<boolean> {
