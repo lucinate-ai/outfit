@@ -93,6 +93,20 @@ gains `outfitVersion`; the Image Builder components download that release
 binary (checksum-verified) during the bake, exactly how `llamacppRelease`
 pins the engine. Recipe versions bump so a version change re-bakes.
 
+**D8 — (post-plan) runner knowledge lives in a registry, not conditionals.**
+Implementation review folded three refinements in, behaviour unchanged. The
+per-runner logic (daemon boot fragment, synced model path, seed sentinel and
+download, seed-tooling flag) moved into `lambda/runners/` — one spec file per
+runner registered in a `Record<Runner, RunnerSpec>`, so adding a runner to
+the `RUNNERS` union refuses to compile until its spec exists; no runner
+ternaries remain in `lambda/` or `lib/`, and the CDK stack's log groups, IAM
+grants and per-runner env vars (via `logGroupEnvVar`) follow `RUNNERS`.
+Alongside it, `buildUserData` became `buildInferenceUserData` (pairing it
+with `buildSeedUserData`) and `vllmPort`/`VLLM_PORT` became
+`enginePort`/`ENGINE_PORT` — the port predates the second runner and is
+shared by every runner so the EIP, security group and health check stay
+runner-neutral.
+
 ## Risks / Trade-offs
 
 - [The baked outfit predates a daemon API change] → the AMI pins outfit;

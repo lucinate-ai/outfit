@@ -51,14 +51,26 @@
 - [x] 4.4 Update Lambda tests to stub the daemon reply and verify the merged
       response
 
-## 5. Verification and docs
+## 5. Post-plan refactors (behaviour unchanged; see design D8)
 
-- [x] 5.1 `go test ./... -cover` >= 80% and `gofmt` clean; `pnpm test` green
+- [x] 5.1 Rename `buildUserData` to `buildInferenceUserData`, pairing it with
+      `buildSeedUserData`
+- [x] 5.2 Extract the daemon boot builders into `lambda/runners/` and replace
+      every runner conditional in `lambda/` and `lib/` with a
+      `Record<Runner, RunnerSpec>` registry (boot fragment, synced model
+      path, seed sentinel/download, seed-tooling flag); CDK log groups, IAM
+      grants and per-runner env vars follow `RUNNERS`
+- [x] 5.3 Rename `vllmPort`/`VLLM_PORT` to `enginePort`/`ENGINE_PORT` — one
+      serving port for every runner
+
+## 6. Verification and docs
+
+- [x] 6.1 `go test ./... -cover` >= 80% and `gofmt` clean; `pnpm test` green
       in `remote/`
-- [x] 5.2 Verify `outfit remote metrics` renders a stubbed daemon-shaped
+- [x] 6.2 Verify `outfit remote metrics` renders a stubbed daemon-shaped
       reply identically in bar, table and JSON formats
-- [x] 5.3 Update `remote/README.md`/docs and AGENTS.md for the daemon-hosted
+- [x] 6.3 Update `remote/README.md`/docs and AGENTS.md for the daemon-hosted
       instance and the deleted collectors
-- [x] 5.4 `openspec validate remote-on-daemon --strict` passes
-- [ ] 5.5 End-to-end on a real environment (user-run): re-bake, deploy,
+- [x] 6.4 `openspec validate remote-on-daemon --strict` passes
+- [ ] 6.5 End-to-end on a real environment (user-run): re-bake, deploy,
       `outfit remote start`, `metrics`, crash-nudge, `stop`
