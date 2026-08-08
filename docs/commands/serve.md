@@ -133,11 +133,46 @@ oMLX ships as a macOS app, so `serve` looks for `omlx-cli` on your `PATH` first
 and falls back to `/Applications/oMLX.app/Contents/MacOS/omlx-cli`. If you've
 only ever launched it from the menu bar, the fallback is the one that finds it.
 
+## Daemon mode and the control API
+
+`serve --daemon` (`-d`) supervises the engine instead of running it in the
+foreground: it starts the engine detached, writes its output to
+`~/.config/outfit/daemon/engine.log`, tracks its state (`idle`, `running`,
+`stopped`, `crashed` — a crash is reported, never auto-restarted), and keeps
+running until interrupted, stopping the engine on the way out. The daemon
+stays in the foreground itself; background it with tmux, systemd, launchd or
+similar.
+
+With `--daemon` the control API is on by default (`--api=false` turns it off);
+`--api` (`-a`) alone exposes the same API over an ordinary foreground serve.
+The API listens on `:4242` (change with `--api-addr`) and speaks JSON:
+
+| Endpoint | Meaning |
+| -------- | ------- |
+| `GET /v1/status` | Engine state, what is served, the engine log path |
+| `POST /v1/start` | Start the engine (409 while one runs) |
+| `POST /v1/stop` | Stop the engine (idempotent) |
+| `GET /v1/metrics` | Engine token counters plus host GPU/CPU/RAM |
+| `PUT /v1/deploy-config` | Set what the *next* start serves |
+
+Requests carry `Authorization: Bearer $OUTFIT_API_TOKEN`. The token is read
+from the environment (the `.env` beside the Outfit works — it is loaded
+first), never from a flag; a non-loopback listen with no token refuses to
+start. What to serve resolves in order: a pushed deploy config (the same shape
+`outfit remote deploy` derives from an Outfit and its preset), else the
+Outfit the daemon started beside; with neither the daemon starts idle and
+waits for a push. A supervised engine gets its own `/metrics` endpoint
+switched on (llama.cpp `--metrics`), which is where the token counters come
+from; GPU readings need `nvidia-smi` (no Apple GPU source yet).
+
 ## Flags
 
 | Flag | Meaning |
 | ---- | ------- |
 | `-n`, `--dry-run` | Print the server command without running it |
+| `-d`, `--daemon` | Supervise the engine and keep running (implies `--api`) |
+| `-a`, `--api` | Expose the control API (on by default with `--daemon`) |
+| `--api-addr` | Control API listen address (default `:4242`) |
 
 ## Notes
 

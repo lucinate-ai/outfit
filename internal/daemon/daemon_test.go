@@ -1,0 +1,355 @@
+//go:build !windows
+
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lucinate-ai/outfit/internal/metrics"
+	"github.com/lucinate-ai/outfit/internal/remote"
+)
+
+// stubEngine writes an executable shell script and returns its path.
+func stubEngine(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "engine")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// waitForState polls until the supervisor reaches want or the deadline hits.
+func waitForState(t *testing.T, s *Supervisor, want State) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, _, _ := s.Status(); got == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, _, _ := s.Status()
+	t.Fatalf("state = %s, want %s", got, want)
+}
+
+func TestSupervisorLifecycle(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "engine.log")
+	s := NewSupervisor(logPath)
+	engine := stubEngine(t, `echo booted
+trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+
+	if state, _, _ := s.Status(); state != StateIdle {
+		t.Fatalf("initial state = %s, want idle", state)
+	}
+	if err := s.Start([]string{engine}); err != nil {
+		t.Fatal(err)
+	}
+	if state, name, _ := s.Status(); state != StateRunning || name != engine {
+		t.Fatalf("after start: state=%s name=%s", state, name)
+	}
+
+	// Wait for the engine to have actually booted (and installed its TERM
+	// trap) before poking it further.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if data, _ := os.ReadFile(logPath); strings.Contains(string(data), "booted") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("engine never wrote its boot line")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// One engine per supervisor: a second start fails naming the first.
+	err := s.Start([]string{engine})
+	if err == nil || !strings.Contains(err.Error(), engine) {
+		t.Fatalf("second start error = %v, want one naming %s", err, engine)
+	}
+
+	if err := s.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if state, _, _ := s.Status(); state != StateStopped {
+		t.Fatalf("after stop: state = %s, want stopped", state)
+	}
+	// Stop with nothing running is a no-op.
+	if err := s.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "booted") {
+		t.Errorf("log file missing engine output: %q", data)
+	}
+}
+
+func TestSupervisorCrashIsReportedNotRestarted(t *testing.T) {
+	s := NewSupervisor(filepath.Join(t.TempDir(), "engine.log"))
+	engine := stubEngine(t, "exit 3")
+	if err := s.Start([]string{engine}); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, s, StateCrashed)
+	// Stay crashed: nothing restarts it.
+	time.Sleep(50 * time.Millisecond)
+	if state, _, _ := s.Status(); state != StateCrashed {
+		t.Fatalf("state = %s, want crashed to persist", state)
+	}
+	if err := s.Wait(); err == nil {
+		t.Error("Wait returned nil for a crashed engine")
+	}
+}
+
+func TestSupervisorCleanExitIsStopped(t *testing.T) {
+	s := NewSupervisor(filepath.Join(t.TempDir(), "engine.log"))
+	if err := s.Start([]string{stubEngine(t, "exit 0")}); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, s, StateStopped)
+	if err := s.Wait(); err != nil {
+		t.Errorf("Wait = %v for a clean exit", err)
+	}
+}
+
+func TestSupervisorStopEscalatesToKill(t *testing.T) {
+	s := NewSupervisor(filepath.Join(t.TempDir(), "engine.log"))
+	s.Grace = 100 * time.Millisecond
+	engine := stubEngine(t, `trap '' TERM
+while true; do sleep 0.05; done`)
+	if err := s.Start([]string{engine}); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.Stop() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stop did not return: SIGKILL escalation failed")
+	}
+	if state, _, _ := s.Status(); state != StateStopped {
+		t.Fatalf("state = %s, want stopped after kill", state)
+	}
+}
+
+// testDaemon builds a Daemon whose BuildArgv serves the stub engine, with the
+// runner recorded from the deploy config when one is stored.
+func testDaemon(t *testing.T, engineScript string) *Daemon {
+	t.Helper()
+	dir := t.TempDir()
+	engine := stubEngine(t, engineScript)
+	d := &Daemon{
+		Sup: NewSupervisor(filepath.Join(dir, "engine.log")),
+		Dir: dir,
+		BuildArgv: func(dc *remote.DeployConfig) ([]string, error) {
+			if dc == nil {
+				return nil, fmt.Errorf("nothing to serve: no Outfit and no stored deploy config")
+			}
+			return append([]string{engine}, dc.ServeArgs...), nil
+		},
+		ValidateConfig: func(dc remote.DeployConfig) error {
+			if dc.Runner != "llamacpp" {
+				return fmt.Errorf("runner %q cannot be served locally", dc.Runner)
+			}
+			return nil
+		},
+	}
+	return d
+}
+
+func TestDaemonDeployConfigPersistence(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+
+	// Nothing pushed yet: stored config is absent, start has nothing to serve.
+	if dc, err := d.StoredConfig(); err != nil || dc != nil {
+		t.Fatalf("StoredConfig = %v, %v; want nil, nil", dc, err)
+	}
+	if err := d.StartEngine(); err == nil || !strings.Contains(err.Error(), "nothing to serve") {
+		t.Fatalf("idle start error = %v", err)
+	}
+
+	// An unservable runner is rejected and not stored.
+	if err := d.Push(remote.DeployConfig{Runner: "vllm"}); err == nil ||
+		!strings.Contains(err.Error(), "vllm") {
+		t.Fatalf("push of unservable runner = %v", err)
+	}
+	if dc, _ := d.StoredConfig(); dc != nil {
+		t.Fatal("rejected config was stored")
+	}
+
+	dc := remote.DeployConfig{Runner: "llamacpp", ModelID: "org/model", ServeArgs: []string{}}
+	if err := d.Push(dc); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(d.Dir, "deploy-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("deploy-config.json mode = %v, want 0600", fi.Mode().Perm())
+	}
+
+	// A fresh Daemon over the same dir — the restart case — serves it.
+	d2 := testDaemon(t, "exit 0")
+	d2.Dir = d.Dir
+	got, err := d2.StoredConfig()
+	if err != nil || got == nil || got.ModelID != "org/model" {
+		t.Fatalf("restarted StoredConfig = %+v, %v", got, err)
+	}
+}
+
+func TestDaemonAPI(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	d.Collector = &metrics.Collector{GOOS: "linux", Run: func(_ context.Context, name string, _ ...string) (string, error) {
+		if name == "free" {
+			return "Mem: 1000 400 600 0 0 600\n", nil
+		}
+		return "", fmt.Errorf("%s: not found", name)
+	}}
+	srv := httptest.NewServer(d.Handler("sekrit"))
+	defer srv.Close()
+	client := srv.Client()
+
+	do := func(method, path, token string, body string) (*http.Response, map[string]any) {
+		t.Helper()
+		req, err := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var decoded map[string]any
+		json.NewDecoder(resp.Body).Decode(&decoded)
+		return resp, decoded
+	}
+
+	// Auth: missing and wrong tokens are 401; nothing happens.
+	if resp, _ := do("GET", "/v1/status", "", ""); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token: HTTP %d, want 401", resp.StatusCode)
+	}
+	if resp, _ := do("POST", "/v1/start", "wrong", ""); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("wrong token: HTTP %d, want 401", resp.StatusCode)
+	}
+	if state, _, _ := d.Sup.Status(); state != StateIdle {
+		t.Fatal("unauthorised request changed engine state")
+	}
+
+	// Status while idle.
+	if resp, body := do("GET", "/v1/status", "sekrit", ""); resp.StatusCode != 200 || body["state"] != "idle" {
+		t.Fatalf("status = %d %v", resp.StatusCode, body)
+	}
+
+	// Start with nothing to serve is a 400 with the reason.
+	if resp, body := do("POST", "/v1/start", "sekrit", ""); resp.StatusCode != http.StatusBadRequest ||
+		!strings.Contains(body["error"].(string), "nothing to serve") {
+		t.Fatalf("idle start = %d %v", resp.StatusCode, body)
+	}
+
+	// Push a config, then start serves it.
+	dc := `{"runner":"llamacpp","modelId":"org/model","serveArgs":[]}`
+	if resp, _ := do("PUT", "/v1/deploy-config", "sekrit", dc); resp.StatusCode != 200 {
+		t.Fatalf("push = %d", resp.StatusCode)
+	}
+	if resp, body := do("POST", "/v1/start", "sekrit", ""); resp.StatusCode != 200 || body["state"] != "running" {
+		t.Fatalf("start = %d %v", resp.StatusCode, body)
+	}
+
+	// Start while running is a 409 naming the engine.
+	if resp, body := do("POST", "/v1/start", "sekrit", ""); resp.StatusCode != http.StatusConflict ||
+		!strings.Contains(body["error"].(string), "already running") {
+		t.Fatalf("start while running = %d %v", resp.StatusCode, body)
+	}
+
+	// Push while running: stored, engine untouched.
+	if resp, body := do("PUT", "/v1/deploy-config", "sekrit", dc); resp.StatusCode != 200 ||
+		!strings.Contains(body["message"].(string), "next start") {
+		t.Fatalf("push while running = %d %v", resp.StatusCode, body)
+	}
+	if state, _, _ := d.Sup.Status(); state != StateRunning {
+		t.Fatal("push disturbed the running engine")
+	}
+
+	// Metrics while running: state, runner, and the collector's memory stat.
+	if resp, body := do("GET", "/v1/metrics", "sekrit", ""); resp.StatusCode != 200 ||
+		body["state"] != "running" || body["runner"] != "llamacpp" || body["memory"] == nil {
+		t.Fatalf("metrics = %d %v", resp.StatusCode, body)
+	}
+
+	// Stop, and stop again: idempotent.
+	if resp, body := do("POST", "/v1/stop", "sekrit", ""); resp.StatusCode != 200 || body["state"] != "stopped" {
+		t.Fatalf("stop = %d %v", resp.StatusCode, body)
+	}
+	if resp, body := do("POST", "/v1/stop", "sekrit", ""); resp.StatusCode != 200 || body["state"] != "stopped" {
+		t.Fatalf("second stop = %d %v", resp.StatusCode, body)
+	}
+
+	// A crashed engine restarts only on explicit start.
+	crash := testDaemon(t, "exit 3")
+	crash.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "org/model"})
+	if err := crash.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, crash.Sup, StateCrashed)
+	if got := crash.Status(); got.State != "crashed" {
+		t.Fatalf("status after crash = %+v", got)
+	}
+}
+
+func TestDaemonMetricsIdle(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+	stats := d.Metrics(context.Background())
+	if stats.State != "idle" || stats.CPU != nil || stats.Memory != nil {
+		t.Errorf("idle metrics = %+v, want bare state", stats)
+	}
+}
+
+func TestListenGuard(t *testing.T) {
+	// Tokenless non-loopback is refused.
+	for _, addr := range []string{":0", "0.0.0.0:0", "[::]:0"} {
+		if l, err := Listen(addr, ""); err == nil {
+			l.Close()
+			t.Errorf("tokenless Listen(%q) succeeded, want refusal", addr)
+		} else if !strings.Contains(err.Error(), TokenEnvVar) {
+			t.Errorf("refusal for %q does not name %s: %v", addr, TokenEnvVar, err)
+		}
+	}
+	// Tokenless loopback is fine.
+	for _, addr := range []string{"127.0.0.1:0", "localhost:0"} {
+		l, err := Listen(addr, "")
+		if err != nil {
+			t.Errorf("tokenless Listen(%q) = %v, want success", addr, err)
+			continue
+		}
+		l.Close()
+	}
+	// With a token, non-loopback is fine.
+	l, err := Listen("127.0.0.1:0", "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Close()
+}

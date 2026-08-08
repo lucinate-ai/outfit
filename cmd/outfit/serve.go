@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/contextsize"
+	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/preset"
 )
@@ -65,6 +66,16 @@ type serveEngine struct {
 	needsModel bool
 	// installHint completes "<binary> not found — ...".
 	installHint string
+	// metricsArgs switches the engine's own /metrics endpoint on. Appended
+	// only for a supervised engine (daemon or --api serve) — a plain
+	// foreground serve runs exactly the command it always has.
+	metricsArgs []string
+	// metricsEngine names the Prometheus dialect the engine speaks, for the
+	// scraper; empty means the engine has no metrics endpoint to scrape.
+	metricsEngine string
+	// defaultBaseURL is where the engine listens when the Outfit states no
+	// BASEURL, so the scraper can still find /metrics.
+	defaultBaseURL string
 }
 
 // engineFor maps an Outfit's PROVIDER to the engine `serve` launches locally.
@@ -75,11 +86,14 @@ func engineFor(provider string) (serveEngine, error) {
 	switch provider {
 	case "llamacpp":
 		return serveEngine{
-			binary:      func() string { return llamaServerBinary },
-			dialect:     preset.LlamaCpp,
-			params:      llamacppServeParams,
-			needsModel:  true,
-			installHint: "install llama.cpp (e.g. brew install llama.cpp) or check the path",
+			binary:         func() string { return llamaServerBinary },
+			dialect:        preset.LlamaCpp,
+			params:         llamacppServeParams,
+			needsModel:     true,
+			installHint:    "install llama.cpp (e.g. brew install llama.cpp) or check the path",
+			metricsArgs:    []string{"--metrics"},
+			metricsEngine:  "llamacpp",
+			defaultBaseURL: "http://127.0.0.1:8080",
 		}, nil
 	case "omlx":
 		return serveEngine{
@@ -100,19 +114,46 @@ func engineFor(provider string) (serveEngine, error) {
 // With a PRESET it turns the matching preset section into the command; without
 // one it derives the command from the Outfit's own instructions. Either way it
 // prints the command before running it. The Outfit path defaults to ./Outfit.
+// With --daemon the server runs supervised instead of foreground; with --api
+// (implied by --daemon) the control API is served alongside it.
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	var dryRun bool
+	var (
+		dryRun     bool
+		daemonMode bool
+		apiOn      bool
+		apiAddr    string
+	)
 	fs.BoolVar(&dryRun, "dry-run", false, "print the server command without running it")
 	fs.BoolVar(&dryRun, "n", false, "print the command without running it (shorthand)")
-	if err := fs.Parse(args); err != nil {
+	fs.BoolVar(&daemonMode, "daemon", false, "supervise the engine and keep running (implies --api)")
+	fs.BoolVar(&daemonMode, "d", false, "supervise the engine (shorthand)")
+	fs.BoolVar(&apiOn, "api", false, "expose the control API (on by default with --daemon)")
+	fs.BoolVar(&apiOn, "a", false, "expose the control API (shorthand)")
+	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
+	}
+	// The API is on by default under --daemon, off otherwise; an explicit
+	// --api/-a (either polarity) wins.
+	apiSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "api" || f.Name == "a" {
+			apiSet = true
+		}
+	})
+	if !apiSet {
+		apiOn = daemonMode
 	}
 
 	var path string
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
+	if daemonMode && !dryRun {
+		return runServeDaemon(path, apiOn, apiAddr)
+	}
+
 	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
 	if err != nil {
 		return err
@@ -121,51 +162,23 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return err
 	}
-
-	// Anything the Outfit states overrides the preset's own values.
-	params, err := engine.params(sel)
+	argv, err := buildServeArgv(engine, sel, outfitPath)
 	if err != nil {
 		return err
 	}
-
-	binary := engine.binary()
-	var argv []string
-	if sel.Preset != "" {
-		presetPath := resolvePresetPath(sel.Preset, outfitPath)
-		data, err := os.ReadFile(presetPath)
-		if err != nil {
-			return fmt.Errorf("reading preset %s: %w", presetPath, err)
-		}
-		pre, err := preset.Parse(data)
-		if err != nil {
-			return fmt.Errorf("%s: %w", presetPath, err)
-		}
-		// The preset's sections are named by the friendly ALIAS, not the
-		// provider-native MODEL, so that is what selects one.
-		sec, err := pre.Select(sel.Alias)
-		if err != nil {
-			return fmt.Errorf("%s: %w", presetPath, err)
-		}
-		argv = pre.CommandIn(engine.dialect, binary, engine.subcommand, sec, params)
-		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
-	} else {
-		if engine.needsModel && sel.Model == "" {
-			return fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
-		}
-		argv = append([]string{binary}, engine.subcommand...)
-		argv = append(argv, engine.dialect.Flags(params)...)
-		if sel.Model != "" {
-			fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
-		} else {
-			// An engine that needs no model to start (oMLX serves a whole
-			// directory) has nothing to name but itself.
-			fmt.Printf("Starting %s from %s\n\n", sel.Provider, outfitPath)
-		}
+	if daemonMode || apiOn {
+		// A supervised engine gets its metrics endpoint switched on, exactly
+		// as the cloud path does for a deployed one.
+		argv = withMetricsArgs(argv, engine)
 	}
 
 	fmt.Printf("%s\n\n", preset.FormatCommand(argv))
 	if dryRun {
 		return nil
+	}
+
+	if apiOn {
+		return runServeForegroundAPI(sel, outfitPath, engine, argv, apiAddr)
 	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -179,6 +192,54 @@ func cmdServe(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// buildServeArgv turns an Outfit into the engine command, from its PRESET
+// section when it names one and from the Outfit's own instructions otherwise,
+// narrating which source it used. It is the single construction both a
+// foreground serve and the daemon's Outfit-sourced starts run through.
+func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string) ([]string, error) {
+	// Anything the Outfit states overrides the preset's own values.
+	params, err := engine.params(sel)
+	if err != nil {
+		return nil, err
+	}
+
+	binary := engine.binary()
+	var argv []string
+	if sel.Preset != "" {
+		presetPath := resolvePresetPath(sel.Preset, outfitPath)
+		data, err := os.ReadFile(presetPath)
+		if err != nil {
+			return nil, fmt.Errorf("reading preset %s: %w", presetPath, err)
+		}
+		pre, err := preset.Parse(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", presetPath, err)
+		}
+		// The preset's sections are named by the friendly ALIAS, not the
+		// provider-native MODEL, so that is what selects one.
+		sec, err := pre.Select(sel.Alias)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", presetPath, err)
+		}
+		argv = pre.CommandIn(engine.dialect, binary, engine.subcommand, sec, params)
+		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
+	} else {
+		if engine.needsModel && sel.Model == "" {
+			return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
+		}
+		argv = append([]string{binary}, engine.subcommand...)
+		argv = append(argv, engine.dialect.Flags(params)...)
+		if sel.Model != "" {
+			fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
+		} else {
+			// An engine that needs no model to start (oMLX serves a whole
+			// directory) has nothing to name but itself.
+			fmt.Printf("Starting %s from %s\n\n", sel.Provider, outfitPath)
+		}
+	}
+	return argv, nil
 }
 
 // resolvePresetPath resolves an Outfit's PRESET value: a relative one is taken

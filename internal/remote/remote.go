@@ -23,6 +23,8 @@ import (
 
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/smithy-go"
+
+	"github.com/lucinate-ai/outfit/internal/metrics"
 )
 
 // httpClient is a package variable so tests can substitute it. The long
@@ -61,7 +63,7 @@ type Config struct {
 // registry (see environments.go) supersedes it; it is still read as the
 // fallback for the default environment.
 func ConfigPath() string {
-	return filepath.Join(configHome(), "remote.json")
+	return filepath.Join(ConfigHome(), "remote.json")
 }
 
 // LoadConfig reads the per-user config file and applies environment overrides
@@ -517,35 +519,19 @@ type StatsResponse struct {
 	Errors        []string    `json:"errors"`
 }
 
-// TokenStats holds per-runner token/request counters from /metrics.
-type TokenStats struct {
-	Running          int `json:"running"`
-	Counter          int `json:"counter"`
-	PromptTokens     int `json:"promptTokens"`
-	GenerationTokens int `json:"generationTokens"`
-	Requests         int `json:"requests"`
-}
-
-// GpuStat holds per-GPU metrics from nvidia-smi.
-type GpuStat struct {
-	Index       int    `json:"index"`
-	Name        string `json:"name"`
-	Utilization int    `json:"utilization"`
-	MemoryUsed  int64  `json:"memoryUsed"`
-	MemoryTotal int64  `json:"memoryTotal"`
-	Temperature int    `json:"temperature"`
-}
-
-// CpuStat holds CPU utilization from vmstat.
-type CpuStat struct {
-	Utilization float64 `json:"utilization"`
-}
-
-// MemoryStat holds system memory from free.
-type MemoryStat struct {
-	Total int64 `json:"total"`
-	Used  int64 `json:"used"`
-}
+// The stat sub-types are aliases into internal/metrics, their canonical home
+// since collection moved in-process: the Lambda's reply and the local
+// collector speak the same dialect, so the formatters render either.
+type (
+	// TokenStats holds per-runner token/request counters from /metrics.
+	TokenStats = metrics.TokenStats
+	// GpuStat holds per-GPU metrics from nvidia-smi.
+	GpuStat = metrics.GpuStat
+	// CpuStat holds CPU utilization from vmstat.
+	CpuStat = metrics.CpuStat
+	// MemoryStat holds system memory from free.
+	MemoryStat = metrics.MemoryStat
+)
 
 // Stats queries the stats Lambda for instance metrics: token usage, GPU, CPU,
 // and RAM utilization. Returns an error if the stats URL is not configured,
