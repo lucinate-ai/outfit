@@ -141,7 +141,8 @@ var commands = map[string]command{
 	},
 	"unalias": {positional: kindAliasOnly, positionals: 1},
 	"serve": {
-		flags:      []string{"--dry-run", "-n"},
+		flags:      []string{"--dry-run", "-n", "--daemon", "-d", "--api", "-a", "--api-addr"},
+		values:     map[string]candidateKind{"--api-addr": kindNone},
 		positional: kindAlias, positionals: 1,
 	},
 	"export": {

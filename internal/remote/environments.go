@@ -8,10 +8,10 @@ import (
 	"strings"
 )
 
-// configHome returns outfit's own config directory
+// ConfigHome returns outfit's own config directory
 // (${XDG_CONFIG_HOME:-~/.config}/outfit), where both the legacy remote.json and
 // the environments registry live.
-func configHome() string {
+func ConfigHome() string {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
 		home, _ := os.UserHomeDir()
@@ -23,7 +23,7 @@ func configHome() string {
 // remotesRoot is the environments registry directory: one subdirectory per
 // named environment, each holding a remote.json.
 func remotesRoot() string {
-	return filepath.Join(configHome(), "remotes")
+	return filepath.Join(ConfigHome(), "remotes")
 }
 
 // EnvDir returns an environment's directory,

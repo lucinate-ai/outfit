@@ -179,7 +179,8 @@ outfit apply  [path] [--output <size>]   # apply an Outfit file or directory (de
 outfit unapply [path]                    # remove what an Outfit file selects
 outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
 outfit unalias <name>                    # drop a registered name
-outfit serve  [path] [--dry-run]         # run llama-server from the Outfit's PRESET
+outfit serve  [path] [--dry-run] [-d] [-a]  # run llama-server from the Outfit's PRESET
+                                         #   (-d/--daemon supervises it; -a/--api serves the control API)
 outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit
 outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
@@ -314,6 +315,25 @@ the chosen section into the command instead — with anything the `Outfit` state
 (like `CONTEXT`) overriding the preset. It's the missing piece presets don't
 cover: launching a *single* model. Details in
 [`docs/commands/serve.md`](docs/commands/serve.md).
+
+### Daemon mode
+
+`outfit serve --daemon` (`-d`) runs the same engine *supervised* instead of in
+the foreground: the daemon captures the engine's logs, tracks whether it is
+`running`, `stopped`, or `crashed`, and serves a small control API
+(`-a`/`--api`, on by default under `--daemon`) with status, start, stop,
+metrics — token counters scraped from the engine plus GPU/CPU/RAM readings
+from the host — and a deploy-config push that sets what the next start serves.
+
+```sh
+OUTFIT_API_TOKEN=…  outfit serve -d       # supervise + control API on :4242
+outfit serve -d --api-addr 127.0.0.1:4242  # loopback-only needs no token
+```
+
+The API is bearer-token authenticated (`OUTFIT_API_TOKEN`, e.g. from the
+`.env` beside the Outfit); a non-loopback listen without a token refuses to
+start. This is the building block for managing a fleet of engines across
+machines — the daemon on each box, one `outfit` observing them.
 
 ## Remote inference instance
 

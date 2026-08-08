@@ -47,7 +47,7 @@ func ResolveRef(version, override string) string {
 // <configHome>/cdk. It is named cdk/ to avoid confusion with the remotes/
 // environment registry.
 func SourceRoot() string {
-	return filepath.Join(configHome(), "cdk")
+	return filepath.Join(ConfigHome(), "cdk")
 }
 
 // SourceDir is where the remote/ sources for a given ref are placed,

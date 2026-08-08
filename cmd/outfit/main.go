@@ -146,7 +146,7 @@ Usage:
   outfit unapply [path]                    (remove what an Outfit selects)
   outfit alias  [path] [-n <name>] [-l]    (name an Outfit; -l lists them)
   outfit unalias <name>                    (drop a registered name)
-  outfit serve  [path] [--dry-run]         (run the PROVIDER's inference server)
+  outfit serve  [path] [--dry-run] [--daemon] [--api]  (run the PROVIDER's inference server)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
