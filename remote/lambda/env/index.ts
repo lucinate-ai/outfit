@@ -22,7 +22,7 @@ import {
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
 
-const VLLM_PORT = requireEnv('VLLM_PORT');
+const ENGINE_PORT = requireEnv('ENGINE_PORT');
 
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   let env: string;
@@ -47,7 +47,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
       });
     }
 
-    const baseURL = baseUrlFor(eip.publicIp, VLLM_PORT);
+    const baseURL = baseUrlFor(eip.publicIp, ENGINE_PORT);
 
     return jsonResponse(200, {
       base_url: baseURL,

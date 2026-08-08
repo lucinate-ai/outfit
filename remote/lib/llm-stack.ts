@@ -197,7 +197,7 @@ export class LlmStack extends cdk.Stack {
     const commonEnv = {
       TAG_KEY,
       TAG_VALUE,
-      VLLM_PORT: String(cfg.vllmPort),
+      ENGINE_PORT: String(cfg.enginePort),
     };
 
     const startFn = new nodejs.NodejsFunction(this, 'StartFn', {
@@ -312,7 +312,7 @@ export class LlmStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(60),
       memorySize: 256,
       environment: {
-        VLLM_PORT: String(cfg.vllmPort),
+        ENGINE_PORT: String(cfg.enginePort),
         VPC_ID: vpc.vpcId,
         // Seeding: the Lambda launches the disposable download instance itself
         // when the posted config names weights that are not in S3 yet.
@@ -406,7 +406,7 @@ export class LlmStack extends cdk.Stack {
       environment: {
         TAG_KEY,
         TAG_VALUE,
-        VLLM_PORT: String(cfg.vllmPort),
+        ENGINE_PORT: String(cfg.enginePort),
       },
     });
     // Read the environment's EIP and API key.

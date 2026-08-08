@@ -55,7 +55,8 @@ export interface LlmConfig {
    * even if requests are still flowing.
    */
   maxRuntimeMinutes: number;
-  vllmPort: number;
+  /** The port every runner's engine serves on — one port so the EIP, security group, and health check stay runner-neutral. */
+  enginePort: number;
   /**
    * AZs the start Lambda tries, in order, when launching an instance — the
    * g6e-capable zones. It launches into the first with capacity, so this
@@ -99,7 +100,7 @@ const DEFAULTS = {
   // while the server is still loading, which reads as "idle").
   gracePeriodMinutes: 30,
   maxRuntimeMinutes: 240,
-  vllmPort: 8000,
+  enginePort: 8000,
   availabilityZones: ['us-east-1b', 'us-east-1c', 'us-east-1d', 'us-east-1e'],
   builderInstanceType: 'm5.xlarge',
   // Big enough for the OS + driver + runner AND the ~30 GB model synced from
@@ -183,7 +184,7 @@ export function loadConfig(
     idleThresholdMinutes: contextNumber(app, 'idleThresholdMinutes', DEFAULTS.idleThresholdMinutes),
     gracePeriodMinutes: contextNumber(app, 'gracePeriodMinutes', DEFAULTS.gracePeriodMinutes),
     maxRuntimeMinutes: contextNumber(app, 'maxRuntimeMinutes', DEFAULTS.maxRuntimeMinutes),
-    vllmPort: DEFAULTS.vllmPort,
+    enginePort: DEFAULTS.enginePort,
     availabilityZones: contextList(app, 'availabilityZones', DEFAULTS.availabilityZones),
     builderInstanceType: contextString(app, 'builderInstanceType', DEFAULTS.builderInstanceType),
     imageVolumeGb: contextNumber(app, 'imageVolumeGb', DEFAULTS.imageVolumeGb),

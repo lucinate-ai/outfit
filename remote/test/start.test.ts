@@ -6,7 +6,7 @@ import type { DeployConfig } from '../lambda/shared/deploy-config';
 const LAMBDA_ENV = {
   TAG_KEY: 'cloud-vm-llm:managed',
   TAG_VALUE: 'true',
-  VLLM_PORT: '8000',
+  ENGINE_PORT: '8000',
   AMI_ROLE_TAG_KEY: 'cloud-vm-llm:role',
   AMI_ROLE_TAG_VALUE: 'runtime-ami',
   AMI_RUNNER_TAG_KEY: 'cloud-vm-llm:runner',

@@ -31,7 +31,7 @@ import { runnerSpec } from '../runners';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
-const VLLM_PORT = requireEnv('VLLM_PORT');
+const ENGINE_PORT = requireEnv('ENGINE_PORT');
 const AMI_ROLE_TAG_KEY = requireEnv('AMI_ROLE_TAG_KEY');
 const AMI_ROLE_TAG_VALUE = requireEnv('AMI_ROLE_TAG_VALUE');
 const AMI_RUNNER_TAG_KEY = requireEnv('AMI_RUNNER_TAG_KEY');
@@ -55,7 +55,7 @@ const HEALTH_POLL_MS = 10_000;
 const TERMINAL_STATES = new Set(['shutting-down', 'terminated', 'stopping', 'stopped']);
 
 const HEALTH_COMMAND =
-  `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${VLLM_PORT}/health || true`;
+  `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${ENGINE_PORT}/health || true`;
 
 /** Narrow instance discovery to one environment's instance. */
 function envFilter(env: string) {
@@ -82,7 +82,7 @@ export async function handler(
 /** GET — report one environment's state without side effects. */
 async function status(env: string): Promise<LambdaFunctionURLResult> {
   const eip = await findEnvEip(env);
-  const baseUrl = eip ? baseUrlFor(eip.publicIp, VLLM_PORT) : '';
+  const baseUrl = eip ? baseUrlFor(eip.publicIp, ENGINE_PORT) : '';
   const instance = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   if (!instance || instance.state !== 'running') {
     return jsonResponse(200, {
@@ -132,7 +132,7 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
       retry_after_seconds: 300,
     });
   }
-  const baseUrl = baseUrlFor(eip.publicIp, VLLM_PORT);
+  const baseUrl = baseUrlFor(eip.publicIp, ENGINE_PORT);
 
   const existing = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   let instanceId: string;
@@ -316,7 +316,7 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
 /** Exported for tests: the boot script is pure string-building. The seed twin is shared/seed.ts's buildSeedUserData. */
 export function buildInferenceUserData(env: string, cfg: DeployConfig): string {
   const modelDir = '/opt/llm/model';
-  const runnerUnit = runnerSpec(cfg.runner).daemonBoot(cfg, modelDir, Number(VLLM_PORT));
+  const runnerUnit = runnerSpec(cfg.runner).daemonBoot(cfg, modelDir, Number(ENGINE_PORT));
   const cwAgentConfig = cloudwatchAgentConfig(env, cfg.runner);
   // Common boot: log the GPU, add swap for the load spike, start the log
   // shipper, sync the weights from S3, fetch the environment's API key. Then
