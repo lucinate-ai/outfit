@@ -64,21 +64,26 @@
 - [x] 4.4 Ensure the Outfit-adjacent `.env` loading runs before the API token
       is read, matching the remote commands' local-environment behaviour
 
-## 5. Agent mode (`outfit daemon`) and start payload
+## 5. The `outfit daemon` command and serve cleanup
 
 - [ ] 5.1 Add the top-level `outfit daemon [path] [--api-addr]` command:
-      dispatch case, usage text, completion-table entry; same daemon stack as
-      `serve --daemon` but no engine start on boot (stored config and Outfit
-      become bare-start fallbacks only), API always on, same token rules
-- [ ] 5.2 Accept an optional deploy config body on `POST /v1/start`:
+      dispatch case, usage text, completion-table entry; hosts the daemon
+      stack with no engine start on boot (stored config and Outfit are
+      bare-start fallbacks only), API always on, same token rules
+- [ ] 5.2 Remove `-d`/`--daemon` from `serve` (flags, completion entry,
+      usage text), keeping `-a`/`--api` and `--api-addr`; rehome the daemon
+      runtime under the `daemon` command and drop serve's boot-start path
+- [ ] 5.3 Accept an optional deploy config body on `POST /v1/start`:
       validate and persist via the push path, then start; the already-running
       check runs first so a 409 stores nothing
-- [ ] 5.3 Tests: agent mode idles beside an Outfit until started; stop over
+- [ ] 5.4 Tests: the daemon idles beside an Outfit until started; stop over
       the API leaves the daemon answering and restartable; start-with-body
       serves the carried config; start-with-body while running is a 409 that
-      stores nothing
-- [ ] 5.4 Update README, AGENTS.md and `docs/commands/serve.md` for
-      `outfit daemon` and the start payload
+      stores nothing; `serve -d` is an unknown flag; `serve -a` stays
+      foreground
+- [ ] 5.5 Update README, AGENTS.md, `docs/commands/serve.md` and
+      `docs/http-api.md` for `outfit daemon`, the start payload, and serve's
+      foreground-only contract
 
 ## 6. Verification and docs
 

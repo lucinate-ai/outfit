@@ -27,8 +27,9 @@
       daemon's `deploy-config.json` from the stored deploy config (local
       weights path as the model, cloud-owned flags into serveArgs, API-key
       delivery per runner), write `outfit-daemon.service`
-      (`outfit serve --daemon --api-addr 127.0.0.1:4242`), enable it and the
-      nudge timer
+      (`outfit daemon --api-addr 127.0.0.1:4242`), enable it and the nudge
+      timer, then POST `/v1/start` on loopback, retrying until the daemon
+      answers
 - [ ] 3.2 Delete `buildServeCommand` and the per-runner unit builders once
       user-data no longer uses them; keep the health probe as-is
 - [ ] 3.3 Point the per-boot CloudWatch agent config's engine-log source at

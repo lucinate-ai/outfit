@@ -35,17 +35,19 @@ See proposal.md — Why. Current state that shapes the approach:
 
 ## Decisions
 
-**D1 — The boot writes the daemon's deploy-config.json directly; no API push
-at boot.** The start Lambda already holds the deploy config (SSM parameter);
-user-data renders it into the daemon's state file — runner, the *local* model
-path (`/opt/llm/model/model.gguf` or the model dir; the serve-daemon argv
-builder already treats a path-shaped model correctly), servedModelName,
-contextSize, and serveArgs carrying the cloud-owned flags (`--host 0.0.0.0`,
-`--port`, key delivery) — then enables `outfit-daemon.service`. The daemon
-boots, finds a stored config, starts the engine: the standard daemon start
-path, no cloud special case inside outfit. Alternative — boot-time
-`curl PUT /v1/deploy-config` — rejected: it needs the daemon up first and adds
-an ordering dance for no benefit; the file *is* the API's storage.
+**D1 — The boot writes the daemon's deploy-config.json directly, then asks
+for the start over the API.** The start Lambda already holds the deploy
+config (SSM parameter); user-data renders it into the daemon's state file —
+runner, the *local* model path (`/opt/llm/model/model.gguf` or the model dir;
+the serve-daemon argv builder already treats a path-shaped model correctly),
+servedModelName, contextSize, and serveArgs carrying the cloud-owned flags
+(`--host 0.0.0.0`, `--port`, key delivery) — enables `outfit-daemon.service`,
+and then POSTs `/v1/start` on loopback (retrying until the daemon answers).
+The daemon never auto-starts, so the boot start is the standard API start —
+no cloud special case inside outfit. Alternative — pushing the config via
+`PUT /v1/deploy-config` instead of writing the file — rejected: the file *is*
+the API's storage, and writing it avoids ordering the push before the start;
+only the start itself needs the daemon up.
 
 **D2 — vLLM joins the engine table as a first-class serve engine.** New
 `serveEngine` entry: binary `vllm`, subcommand `serve`, model as the

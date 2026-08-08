@@ -23,14 +23,15 @@ version, so an instance's outfit is decided by its AMI, not fetched at boot.
 
 ### Requirement: The instance engine runs under the daemon
 
-At boot the instance SHALL run `outfit serve --daemon` as its engine host,
-bound to loopback, instead of a per-runner engine unit. The boot sequence
-SHALL derive the daemon's deploy config from the environment's stored deploy
-config — with the cloud-owned settings (bind address and port, API-key
-delivery, the synced local weights path) resolved into it — and place it where
-the daemon reads it, so the daemon starts the engine on boot exactly as it
-would from any pushed config. The engine command the daemon runs SHALL be
-equivalent to the one the boot script previously installed for that runner.
+At boot the instance SHALL run `outfit daemon` as its engine host, bound to
+loopback, instead of a per-runner engine unit. The boot sequence SHALL derive
+the daemon's deploy config from the environment's stored deploy config — with
+the cloud-owned settings (bind address and port, API-key delivery, the synced
+local weights path) resolved into it — place it where the daemon reads it,
+and request the engine's start through the control API once the daemon
+answers, so the boot start is the same explicit API start any client
+performs. The engine command the daemon runs SHALL be equivalent to the one
+the boot script previously installed for that runner.
 
 #### Scenario: Boot starts the engine through the daemon
 

@@ -1,6 +1,6 @@
 ## Why
 
-The serve-daemon change made `outfit serve --daemon` the one way an engine
+The serve-daemon change made `outfit daemon` the one way an engine
 runs and reports — everywhere except the cloud, where the remote instance
 still runs a hand-rolled systemd unit and the Lambdas collect metrics by
 shelling `nvidia-smi`/`vmstat`/`free`/`curl` over SSM, duplicating in
@@ -15,14 +15,16 @@ before the `fleet` change lands.
 - **Bake outfit into the runtime AMIs**: a pinned outfit release (version in
   `remote/lib/config.ts`, like `llamacppRelease`/`vllmVersion`) installed by
   the Image Builder components for both runners; recipe versions bump.
-- **The instance boots `outfit serve --daemon`**: the start Lambda's user-data
-  stops writing per-runner engine units. Instead it writes the daemon's
+- **The instance boots `outfit daemon`**: the start Lambda's user-data stops
+  writing per-runner engine units. Instead it writes the daemon's
   `deploy-config.json` (derived from the SSM-stored deploy config, with the
   cloud-owned settings — bind address, API key file, local weights path —
-  resolved into it) and one `outfit-daemon.service` unit running
-  `outfit serve --daemon --api-addr 127.0.0.1:4242`. Loopback bind means the
-  tokenless-listen rule is satisfied and nothing on the network can reach the
-  control API; only SSM can.
+  resolved into it), one `outfit-daemon.service` unit running
+  `outfit daemon --api-addr 127.0.0.1:4242`, and then requests the first
+  engine start through the control API once the daemon answers — the daemon
+  never auto-starts, so the boot start is the same explicit API start any
+  client performs. Loopback bind means the tokenless-listen rule is satisfied
+  and nothing on the network can reach the control API; only SSM can.
 - **`outfit serve` learns vLLM**: the engine table gains `vllm` (`vllm serve`,
   its own flag dialect), so the daemon can host the cloud's other runner — and
   `PROVIDER vllm` becomes locally servable for everyone.

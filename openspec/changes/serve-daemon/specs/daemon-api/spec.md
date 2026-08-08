@@ -9,15 +9,15 @@ contract fleet clients and the remote control plane speak to a node.
 
 ### Requirement: API exposure
 
-`outfit serve` SHALL expose the control API when `-a`/`--api` is passed. Under
-`-d`/`--daemon` the API SHALL be on by default; `--api=false` SHALL turn it
-off. Without `--daemon`, the API SHALL be off unless `--api` is passed. The
+`outfit daemon` SHALL always expose the control API — it is the command's
+purpose. `outfit serve` SHALL expose it only when `-a`/`--api` is passed, and
+remains a foreground command either way; serve SHALL have no daemon flag. The
 listen address SHALL default to port 4242 on all interfaces and SHALL be
 overridable by flag.
 
-#### Scenario: Daemon exposes the API by default
+#### Scenario: The daemon exposes the API
 
-- **WHEN** `outfit serve --daemon` runs with no API flags
+- **WHEN** `outfit daemon` runs with no API flags
 - **THEN** the control API listens on the default address
 
 #### Scenario: Foreground serve is API-off by default
@@ -67,9 +67,9 @@ config push, then started — so a client can say what to run and run it in one
 call; without a body, start uses the stored config or the Outfit. Start SHALL
 fail when an engine is already running, changing nothing — a body sent with a
 rejected start SHALL NOT be stored. Stop SHALL succeed when nothing is
-running (idempotent), and stopping the engine SHALL never terminate a daemon
-(`serve --daemon` or `outfit daemon`) — the API keeps answering. Errors SHALL
-be returned as JSON with a message and a meaningful HTTP status.
+running (idempotent), and stopping the engine SHALL never terminate
+`outfit daemon` — the API keeps answering. Errors SHALL be returned as JSON
+with a message and a meaningful HTTP status.
 
 #### Scenario: Status reports the supervised state
 
@@ -102,10 +102,9 @@ be returned as JSON with a message and a meaningful HTTP status.
 - **WHEN** a stop request is made while no engine is running
 - **THEN** the response succeeds, reporting the engine as not running
 
-#### Scenario: Stop never ends a daemon
+#### Scenario: Stop never ends the daemon
 
-- **WHEN** a stop request stops the engine under `serve --daemon` or
-  `outfit daemon`
+- **WHEN** a stop request stops the engine under `outfit daemon`
 - **THEN** the daemon and its API keep running, and a later start request
   succeeds
 
