@@ -200,6 +200,7 @@ AMI matching the tags**. A slim AMI carries only the driver + the runner
 | Runtime stack (lambdas, EIP, S3, params) | `lib/llm-stack.ts` |
 | Image Builder pipeline | `lib/image-stack.ts` |
 | Deploy-config contract | `lambda/shared/deploy-config.ts` |
+| Runner registry (one spec per runner: boot, weights, seed) | `lambda/runners/` |
 | The on-instance daemon's API (SSM curl targets) | `lambda/shared/daemon.ts` |
 | Wake / launch / user-data (`buildInferenceUserData`) | `lambda/start/index.ts` |
 | Idle / manual stop | `lambda/stop/index.ts`, `lambda/shared/idle.ts` |

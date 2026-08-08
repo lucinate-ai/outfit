@@ -2,8 +2,9 @@
  * The runner-neutral half of booting the instance's engine under the outfit
  * daemon: rendering the daemon's stored deploy config from the environment's,
  * and the boot-script tail that enables the daemon and requests the first
- * start over its control API. The per-runner halves (key delivery, env files)
- * live in vllm-boot.ts and llamacpp-boot.ts.
+ * start over its control API. Each runner's spec (vllm.ts, llamacpp.ts)
+ * supplies its half — key delivery, env files, the synced model path — and
+ * calls back into these.
  */
 
 import type { DeployConfig } from '../shared/deploy-config';
@@ -13,16 +14,16 @@ import type { DeployConfig } from '../shared/deploy-config';
  * deploy` produces, with the cloud-owned settings resolved in — the model as
  * the synced local path, the bind address and port, and the runner's key
  * delivery — so the daemon's ordinary start serves exactly what the old
- * per-runner unit ran. No --metrics here: the daemon switches the engine's
- * metrics endpoint on itself.
+ * per-runner unit ran — the model as the runner's synced local path
+ * (spec.syncedModelPath). No --metrics here: the daemon switches the
+ * engine's metrics endpoint on itself.
  */
 export function daemonDeployConfig(
   cfg: DeployConfig,
-  modelDir: string,
+  modelId: string,
   port: number,
   extraServeArgs: string[],
 ): string {
-  const modelId = cfg.runner === 'llamacpp' ? `${modelDir}/model.gguf` : modelDir;
   return JSON.stringify(
     {
       runner: cfg.runner,

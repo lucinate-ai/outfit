@@ -15,7 +15,7 @@ import {
   sleep,
   writeState,
 } from '../shared/aws';
-import { type DeployConfig, type Runner } from '../shared/deploy-config';
+import { type DeployConfig, logGroupEnvVar, type Runner, RUNNERS } from '../shared/deploy-config';
 import {
   baseUrlFor,
   deployConfigParam,
@@ -27,8 +27,7 @@ import {
   readEnvApiKey,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
-import { llamacppDaemonBoot } from './llamacpp-boot';
-import { vllmDaemonBoot } from './vllm-boot';
+import { runnerSpec } from '../runners';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
@@ -42,7 +41,9 @@ const INSTANCE_PROFILE_ARN = requireEnv('INSTANCE_PROFILE_ARN');
 const WEIGHTS_BUCKET = requireEnv('WEIGHTS_BUCKET');
 const REGION = requireEnv('AWS_REGION');
 const BOOT_LOG_GROUP = requireEnv('BOOT_LOG_GROUP');
-const ENGINE_LOG_GROUP = { llamacpp: requireEnv('LLAMACPP_LOG_GROUP'), vllm: requireEnv('VLLM_LOG_GROUP') };
+const ENGINE_LOG_GROUP = Object.fromEntries(
+  RUNNERS.map((r) => [r, requireEnv(logGroupEnvVar(r))]),
+) as Record<Runner, string>;
 // Where the outfit daemon writes the engine's stdout/stderr (tailed by the
 // CloudWatch agent): the daemon's stable engine-log path, root's config home
 // since the daemon runs as root.
@@ -315,9 +316,7 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
 /** Exported for tests: the boot script is pure string-building. The seed twin is shared/seed.ts's buildSeedUserData. */
 export function buildInferenceUserData(env: string, cfg: DeployConfig): string {
   const modelDir = '/opt/llm/model';
-  const port = Number(VLLM_PORT);
-  const runnerUnit =
-    cfg.runner === 'vllm' ? vllmDaemonBoot(cfg, modelDir, port) : llamacppDaemonBoot(cfg, modelDir, port);
+  const runnerUnit = runnerSpec(cfg.runner).daemonBoot(cfg, modelDir, Number(VLLM_PORT));
   const cwAgentConfig = cloudwatchAgentConfig(env, cfg.runner);
   // Common boot: log the GPU, add swap for the load spike, start the log
   // shipper, sync the weights from S3, fetch the environment's API key. Then

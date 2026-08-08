@@ -27,6 +27,15 @@ export function isRunner(value: unknown): value is Runner {
 }
 
 /**
+ * The environment variable carrying one runner's CloudWatch log-group name —
+ * the naming convention the CDK stack writes and the start Lambda reads, so
+ * both sides follow `RUNNERS` with no per-runner wiring.
+ */
+export function logGroupEnvVar(runner: Runner): string {
+  return `${runner.toUpperCase()}_LOG_GROUP`;
+}
+
+/**
  * Where a model's weights live under the weights bucket. Derived here rather
  * than sent on the wire so callers (outfit) never need to know the S3 layout —
  * runner + modelId + quant fully determine it, which also means the same model

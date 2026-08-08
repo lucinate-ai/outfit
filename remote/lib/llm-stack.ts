@@ -12,6 +12,7 @@ import {
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as path from 'path';
+import { logGroupEnvVar, type Runner, RUNNERS } from '../lambda/shared/deploy-config';
 import {
   AMI_ROLE_TAG_KEY,
   AMI_ROLE_TAG_VALUE,
@@ -97,18 +98,19 @@ export class LlmStack extends cdk.Stack {
     // here — not by the agent at first write — so retention and teardown are
     // managed infrastructure. Retention is short by default (see config).
     const logRetention = cfg.logRetentionDays as logs.RetentionDays;
-    const engineLogGroups = {
-      llamacpp: new logs.LogGroup(this, 'LlamacppLogGroup', {
-        logGroupName: '/cloud-vm-llm/llamacpp',
-        retention: logRetention,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      }),
-      vllm: new logs.LogGroup(this, 'VllmLogGroup', {
-        logGroupName: '/cloud-vm-llm/vllm',
-        retention: logRetention,
-        removalPolicy: cdk.RemovalPolicy.DESTROY,
-      }),
-    };
+    // One engine log group per runner, driven by RUNNERS so a new runner gets
+    // its group (and the wiring below) for free. The logical id capitalises
+    // the runner name, matching the ids the groups were first created under.
+    const engineLogGroups = Object.fromEntries(
+      RUNNERS.map((runner) => [
+        runner,
+        new logs.LogGroup(this, `${runner.charAt(0).toUpperCase()}${runner.slice(1)}LogGroup`, {
+          logGroupName: `/cloud-vm-llm/${runner}`,
+          retention: logRetention,
+          removalPolicy: cdk.RemovalPolicy.DESTROY,
+        }),
+      ]),
+    ) as Record<Runner, logs.LogGroup>;
     const bootLogGroup = new logs.LogGroup(this, 'BootLogGroup', {
       logGroupName: '/cloud-vm-llm/boot',
       retention: logRetention,
@@ -138,8 +140,7 @@ export class LlmStack extends cdk.Stack {
       new iam.PolicyStatement({
         actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
         resources: [
-          engineLogGroups.llamacpp.logGroupArn,
-          engineLogGroups.vllm.logGroupArn,
+          ...RUNNERS.map((runner) => engineLogGroups[runner].logGroupArn),
           bootLogGroup.logGroupArn,
         ],
       }),
@@ -218,10 +219,12 @@ export class LlmStack extends cdk.Stack {
         SUBNET_IDS: vpc.publicSubnets.map((s) => s.subnetId).join(','),
         INSTANCE_PROFILE_ARN: instanceProfile.instanceProfileArn,
         WEIGHTS_BUCKET: weightsBucket.bucketName,
-        // Log groups the instance's CloudWatch agent ships to. The group is
-        // fixed; the stream (<env>/<instance-id>) is filled in at boot.
-        LLAMACPP_LOG_GROUP: engineLogGroups.llamacpp.logGroupName,
-        VLLM_LOG_GROUP: engineLogGroups.vllm.logGroupName,
+        // Log groups the instance's CloudWatch agent ships to, one env var
+        // per runner by convention (logGroupEnvVar). The group is fixed; the
+        // stream (<env>/<instance-id>) is filled in at boot.
+        ...Object.fromEntries(
+          RUNNERS.map((runner) => [logGroupEnvVar(runner), engineLogGroups[runner].logGroupName]),
+        ),
         BOOT_LOG_GROUP: bootLogGroup.logGroupName,
         // The environment's EIP, security group, API key and deploy-config are
         // all found at wake by the environment name — not baked into the env.
