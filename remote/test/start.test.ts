@@ -12,7 +12,9 @@ const LAMBDA_ENV = {
   AMI_RUNNER_TAG_KEY: 'cloud-vm-llm:runner',
   INSTANCE_TYPE: 'g6e.xlarge',
   SUBNET_IDS: 'subnet-test',
-  INSTANCE_PROFILE_ARN: 'arn:aws:iam::000000000000:instance-profile/test',
+  // A single-digit account id: the sanctioned fake that the cloud-identifier
+  // guard's 12-digit patterns can never mistake for a real ARN.
+  INSTANCE_PROFILE_ARN: 'arn:aws:iam::0:instance-profile/test',
   WEIGHTS_BUCKET: 'test-bucket',
   AWS_REGION: 'us-east-1',
   BOOT_LOG_GROUP: '/test/boot',
