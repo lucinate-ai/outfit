@@ -64,12 +64,28 @@
 - [x] 4.4 Ensure the Outfit-adjacent `.env` loading runs before the API token
       is read, matching the remote commands' local-environment behaviour
 
-## 5. Verification and docs
+## 5. Agent mode (`outfit daemon`) and start payload
 
-- [x] 5.1 End-to-end test with a stub engine binary: daemon boots, starts,
+- [ ] 5.1 Add the top-level `outfit daemon [path] [--api-addr]` command:
+      dispatch case, usage text, completion-table entry; same daemon stack as
+      `serve --daemon` but no engine start on boot (stored config and Outfit
+      become bare-start fallbacks only), API always on, same token rules
+- [ ] 5.2 Accept an optional deploy config body on `POST /v1/start`:
+      validate and persist via the push path, then start; the already-running
+      check runs first so a 409 stores nothing
+- [ ] 5.3 Tests: agent mode idles beside an Outfit until started; stop over
+      the API leaves the daemon answering and restartable; start-with-body
+      serves the carried config; start-with-body while running is a 409 that
+      stores nothing
+- [ ] 5.4 Update README, AGENTS.md and `docs/commands/serve.md` for
+      `outfit daemon` and the start payload
+
+## 6. Verification and docs
+
+- [x] 6.1 End-to-end test with a stub engine binary: daemon boots, starts,
       reports running, crash reported not restarted, stop idempotent,
       deploy-config push applies on next start
-- [x] 5.2 `go test ./... -cover` >= 80%, `gofmt` clean
-- [x] 5.3 Update README and AGENTS.md for daemon mode, the API surface, the
+- [x] 6.2 `go test ./... -cover` >= 80%, `gofmt` clean
+- [x] 6.3 Update README and AGENTS.md for daemon mode, the API surface, the
       token, and the new packages
-- [x] 5.4 `openspec validate serve-daemon --strict` passes
+- [x] 6.4 `openspec validate serve-daemon --strict` passes

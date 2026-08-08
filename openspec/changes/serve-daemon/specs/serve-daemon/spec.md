@@ -27,15 +27,42 @@ daemon itself SHALL NOT detach.
 - **WHEN** the daemon receives `SIGINT` while the engine is running
 - **THEN** the engine is stopped, then the daemon exits cleanly
 
+### Requirement: Agent mode
+
+`outfit daemon` SHALL run the same daemon as a pure agent: it SHALL NOT start
+an engine on boot — even when a stored deploy config or an adjacent Outfit is
+present — and SHALL wait idle for API requests instead. The engine starts
+only on a start request, whose deploy config resolves through the same source
+order as any start (request payload, then stored config, then Outfit).
+Stopping the engine over the API SHALL leave the daemon running and
+answering subsequent API calls; only a signal ends `outfit daemon`. The
+control API is the command's whole purpose, so it SHALL be on, with the same
+listen address and token rules as `serve --daemon`.
+
+#### Scenario: Agent mode does not auto-start
+
+- **WHEN** `outfit daemon` runs beside an Outfit that names a self-hosted
+  engine
+- **THEN** no engine starts, and status reports `idle` until a start request
+  arrives
+
+#### Scenario: Stop keeps the agent serving
+
+- **WHEN** the engine started via `outfit daemon` is stopped over the API
+- **THEN** the engine stops, the daemon keeps running, and subsequent status,
+  metrics, and start requests are answered
+
 ### Requirement: What the daemon serves
 
-At startup the daemon SHALL determine what to serve in this order: a deploy
+When starting an engine, the daemon SHALL determine what to serve in this
+order: a deploy config carried by the start request itself; else a deploy
 config previously pushed and stored for this daemon; otherwise the resolved
-Outfit (the same resolution foreground `serve` uses, including presets). When
-either source is available the daemon SHALL start the engine immediately;
-with neither, the daemon SHALL start idle and wait for a pushed deploy config.
-A pushed deploy config SHALL be persisted so a daemon restart serves the same
-thing, and SHALL take precedence over the Outfit thereafter.
+Outfit (the same resolution foreground `serve` uses, including presets).
+Under `serve --daemon`, when a stored config or Outfit is available at boot
+the daemon SHALL start the engine immediately; with neither, it SHALL start
+idle and wait for a deploy config. A pushed or start-carried deploy config
+SHALL be persisted so a daemon restart serves the same thing, and SHALL take
+precedence over the Outfit thereafter.
 
 #### Scenario: Daemon with an Outfit starts the engine
 

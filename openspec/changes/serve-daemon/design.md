@@ -94,6 +94,26 @@ already running — and when it exits, serve itself exits); `stop` terminates
 the foreground engine, after which serve exits as it always has on engine
 exit. No special foreground mode in the API.
 
+**D8a — `outfit daemon` is a thin second entry to the same machinery.** A new
+top-level command (own `case` in `run()`'s switch, completion-table entry)
+that builds the identical Daemon/Supervisor/API stack as `serve --daemon` but
+skips the boot-time start entirely: no engine until `/v1/start`. It still
+resolves an optional Outfit (for the `.env`-carried token and as the bare
+start's fallback source) and honours `--api-addr` and the token rules; there
+is no `--api=false` — the API is the command's purpose. `serve --daemon`
+keeps its start-on-boot semantics: it is the right unit for a machine that
+should come back serving after a reboot (the remote instance uses exactly
+this), while `outfit daemon` is the fleet node's agent, where the client
+decides what runs. Alternative — fold agent behaviour into a serve flag
+(`serve -d --idle`) — rejected: "serve" promising not to serve is a worse
+name than a second command.
+
+**D8b — A start body is push-then-start, atomically ordered.** `/v1/start`
+with a JSON body runs the exact deploy-config push path (validate via
+`engineFor`, persist 0600) and then the normal start; the one-engine check
+runs first, so a body on a 409 is never stored. No new config shape, no new
+handler logic beyond decode-if-present.
+
 **D8 — Deploy-config push validates against `engineFor`.** The daemon accepts
 the existing Go `DeployConfig` shape, rejects a runner `engineFor` doesn't
 know, persists, and applies on next start — never touching a running engine.

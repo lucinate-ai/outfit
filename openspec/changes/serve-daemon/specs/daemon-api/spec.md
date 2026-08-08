@@ -61,9 +61,15 @@ listening on loopback without a token SHALL be allowed.
 
 The API SHALL provide JSON endpoints to: report status (engine state, what is
 being served, the engine log path); start the engine; stop the engine; return
-collected metrics; and accept a deploy config. Start SHALL fail when an engine
-is already running; stop SHALL succeed when nothing is running (idempotent).
-Errors SHALL be returned as JSON with a message and a meaningful HTTP status.
+collected metrics; and accept a deploy config. Start SHALL accept an optional
+deploy config in its request body — validated and persisted exactly as a
+config push, then started — so a client can say what to run and run it in one
+call; without a body, start uses the stored config or the Outfit. Start SHALL
+fail when an engine is already running, changing nothing — a body sent with a
+rejected start SHALL NOT be stored. Stop SHALL succeed when nothing is
+running (idempotent), and stopping the engine SHALL never terminate a daemon
+(`serve --daemon` or `outfit daemon`) — the API keeps answering. Errors SHALL
+be returned as JSON with a message and a meaningful HTTP status.
 
 #### Scenario: Status reports the supervised state
 
@@ -77,10 +83,31 @@ Errors SHALL be returned as JSON with a message and a meaningful HTTP status.
   `crashed`
 - **THEN** the daemon starts the engine and the response reports the new state
 
+#### Scenario: Start carries its own deploy config
+
+- **WHEN** a start request carries a deploy config naming a servable runner
+  and model, and no engine is running
+- **THEN** the config is validated, persisted, and the engine starts serving
+  it
+
+#### Scenario: Start body is rejected while running
+
+- **WHEN** a start request carrying a deploy config arrives while an engine
+  is running
+- **THEN** the request fails as already-running, the running engine is
+  untouched, and the carried config is not stored
+
 #### Scenario: Stop is idempotent
 
 - **WHEN** a stop request is made while no engine is running
 - **THEN** the response succeeds, reporting the engine as not running
+
+#### Scenario: Stop never ends a daemon
+
+- **WHEN** a stop request stops the engine under `serve --daemon` or
+  `outfit daemon`
+- **THEN** the daemon and its API keep running, and a later start request
+  succeeds
 
 #### Scenario: Metrics endpoint returns collected stats
 

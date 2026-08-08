@@ -24,7 +24,13 @@ Lambdas call the on-instance daemon; `fleet`: multi-node client and dashboard).
   it on request. No auto-restart of crashed engines (issue #48); one engine per
   daemon (issue #49).
 - **`outfit serve -d/--daemon`**: run serve as a long-lived daemon that
-  supervises the engine and serves the control API.
+  supervises the engine and serves the control API, starting the engine on
+  boot when it has something to serve (its Outfit or a stored deploy config).
+- **`outfit daemon`**: the same daemon as a pure agent — it never starts an
+  engine on boot; the engine starts only on an API request, and `/v1/start`
+  can carry the deploy config (runner, model, etc.) to start. Stopping the
+  engine over the API always leaves the daemon running for subsequent calls.
+  This is the mode a fleet node runs.
 - **`outfit serve -a/--api`**: expose the control HTTP API — on by default
   under `--daemon`, off otherwise; `--api` alone enables it for a foreground
   serve.
@@ -41,7 +47,8 @@ Lambdas call the on-instance daemon; `fleet`: multi-node client and dashboard).
 - `engine-metrics`: in-process collection of engine token/request stats and
   system GPU/CPU/RAM stats, with platform-graceful degradation, exposed as the
   same stats shape the existing `remote metrics` formatters render.
-- `serve-daemon`: the supervised engine lifecycle — daemon mode, detached
+- `serve-daemon`: the supervised engine lifecycle — daemon mode (via
+  `serve --daemon` and the agent-style `outfit daemon` command), detached
   start, log capture, state tracking (`running`/`stopped`/`crashed`), stop,
   and stored deploy config as the source of what to serve.
 - `daemon-api`: the control HTTP API — endpoint surface, request/response
@@ -59,6 +66,8 @@ Lambdas call the on-instance daemon; `fleet`: multi-node client and dashboard).
   (supervisor + HTTP API).
 - `cmd/outfit/serve.go`: new flags and daemon/API wiring; the engine-command
   construction (`engineFor`, params, presets) is reused unchanged.
+- `cmd/outfit/main.go` + `complete.go`: the new top-level `daemon` command in
+  the dispatch, usage text, and completion table.
 - `cmd/outfit/remote.go`: `deployConfigFor` becomes shared with the daemon
   push path (no behaviour change to `remote deploy` in this change).
 - Secrets/auth: API token read from the environment/`.env` (never a flag),
