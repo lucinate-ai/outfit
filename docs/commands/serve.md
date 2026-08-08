@@ -144,8 +144,10 @@ stays in the foreground itself; background it with tmux, systemd, launchd or
 similar.
 
 With `--daemon` the control API is on by default (`--api=false` turns it off);
-`--api` (`-a`) alone exposes the same API over an ordinary foreground serve.
-The API listens on `:4242` (change with `--api-addr`) and speaks JSON:
+`--api` alone exposes the same API over an ordinary foreground serve.
+The API listens on `:4242` (change with `--api-addr`) and speaks JSON.
+See [HTTP Control API](../http-api.md) for details:
+
 
 | Endpoint | Meaning |
 | -------- | ------- |
