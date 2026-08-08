@@ -217,7 +217,7 @@ async function launchAcrossAzs(
       }),
     };
   }
-  const userData = buildUserData(env, deployConfig);
+  const userData = buildInferenceUserData(env, deployConfig);
   const tried: string[] = [];
   for (const subnetId of SUBNET_IDS) {
     try {
@@ -310,8 +310,8 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
   );
 }
 
-/** Exported for tests: the boot script is pure string-building. */
-export function buildUserData(env: string, cfg: DeployConfig): string {
+/** Exported for tests: the boot script is pure string-building. The seed twin is shared/seed.ts's buildSeedUserData. */
+export function buildInferenceUserData(env: string, cfg: DeployConfig): string {
   const modelDir = '/opt/llm/model';
   const runnerUnit = cfg.runner === 'vllm' ? vllmDaemonBoot(cfg, modelDir) : llamacppDaemonBoot(cfg, modelDir);
   const cwAgentConfig = cloudwatchAgentConfig(env, cfg.runner);

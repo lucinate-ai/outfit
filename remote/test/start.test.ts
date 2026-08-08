@@ -20,11 +20,11 @@ const LAMBDA_ENV = {
   VLLM_LOG_GROUP: '/test/vllm',
 };
 
-let buildUserData: (env: string, cfg: DeployConfig) => string;
+let buildInferenceUserData: (env: string, cfg: DeployConfig) => string;
 
 beforeAll(async () => {
   Object.assign(process.env, LAMBDA_ENV);
-  ({ buildUserData } = await import('../lambda/start/index'));
+  ({ buildInferenceUserData } = await import('../lambda/start/index'));
 });
 
 const LLAMACPP: DeployConfig = {
@@ -43,10 +43,10 @@ const VLLM: DeployConfig = {
   serveArgs: ['--kv-cache-dtype', 'fp8'],
 };
 
-describe('buildUserData', () => {
+describe('buildInferenceUserData', () => {
   it('boots the engine through the outfit daemon, not a per-runner unit', () => {
     for (const cfg of [LLAMACPP, VLLM]) {
-      const data = buildUserData('prod', cfg);
+      const data = buildInferenceUserData('prod', cfg);
       expect(data).toContain('outfit-daemon.service');
       expect(data).toContain('outfit daemon --api-addr 127.0.0.1:4242');
       expect(data).toContain('systemctl enable --now outfit-daemon.service');
@@ -61,7 +61,7 @@ describe('buildUserData', () => {
   });
 
   it('renders the daemon deploy config with cloud-owned settings resolved', () => {
-    const data = buildUserData('prod', LLAMACPP);
+    const data = buildInferenceUserData('prod', LLAMACPP);
     expect(data).toContain('deploy-config.json');
     expect(data).toContain('"runner": "llamacpp"');
     // The synced local weights file is the model — path-shaped, so the daemon
@@ -77,7 +77,7 @@ describe('buildUserData', () => {
   });
 
   it('renders the vllm deploy config with the model dir and env-file key delivery', () => {
-    const data = buildUserData('prod', VLLM);
+    const data = buildInferenceUserData('prod', VLLM);
     expect(data).toContain('"modelId": "/opt/llm/model"');
     expect(data).toContain('EnvironmentFile=/etc/vllm.env');
     expect(data).toContain('VLLM_API_KEY=$API_KEY');
@@ -87,7 +87,7 @@ describe('buildUserData', () => {
   });
 
   it('tails the daemon engine log into the runner log group', () => {
-    const data = buildUserData('prod', LLAMACPP);
+    const data = buildInferenceUserData('prod', LLAMACPP);
     expect(data).toContain('/root/.config/outfit/daemon/engine.log');
     expect(data).toContain('/test/llamacpp');
     expect(data).not.toContain('/var/log/llm/llama-server.log');
