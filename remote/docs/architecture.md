@@ -111,9 +111,12 @@ weights are not in the bucket, the Lambda launches the seed instance itself and
 replies `{seeding: true, seedInstanceId}`; a wake before it finishes would sync
 an incomplete prefix, so wait for it.
 
-`buildServeCommand()` turns it into the ExecStart, branching by runner —
-`vllm serve …` or `llama-server …`. There is **no default runner**: an unset or
-invalid config fails the wake loudly rather than guessing.
+At boot, `buildInferenceUserData()` renders it into the on-instance outfit
+daemon's own deploy config — the model as the synced local path, the bind
+address and per-runner key delivery resolved into the serve args — and the
+daemon builds the engine command from there (`vllm serve …` or
+`llama-server …`). There is **no default runner**: an unset or invalid config
+fails the wake loudly rather than guessing.
 
 The parameter is **outfit/manual-owned**. CDK creates it with a constant
 `unconfigured` placeholder — deliberately *not* the cfg-derived config — so a
@@ -152,7 +155,8 @@ sequenceDiagram
 
 Boot user-data (built by the start Lambda from the deploy-config): log
 `nvidia-smi`, add a swapfile, `aws s3 sync` the weights, fetch the API key, then
-write the runner's env file + systemd unit and start it. The health check hits
+write the daemon's deploy config, start `outfit daemon` (loopback `:4242`), and
+request the engine's first start over its control API. The health check hits
 `/health` on the port — portable across runners.
 
 ## Idle / stop
@@ -195,8 +199,9 @@ AMI matching the tags**. A slim AMI carries only the driver + the runner
 | Config + validation | `lib/config.ts` |
 | Runtime stack (lambdas, EIP, S3, params) | `lib/llm-stack.ts` |
 | Image Builder pipeline | `lib/image-stack.ts` |
-| Deploy-config contract + `buildServeCommand` | `lambda/shared/deploy-config.ts` |
-| Wake / launch / user-data | `lambda/start/index.ts` |
+| Deploy-config contract | `lambda/shared/deploy-config.ts` |
+| The on-instance daemon's API (SSM curl targets) | `lambda/shared/daemon.ts` |
+| Wake / launch / user-data (`buildInferenceUserData`) | `lambda/start/index.ts` |
 | Idle / manual stop | `lambda/stop/index.ts`, `lambda/shared/idle.ts` |
 | Set the deploy-config | `lambda/deploy/index.ts` |
 | Shared AWS + SSM helpers | `lambda/shared/aws.ts` |

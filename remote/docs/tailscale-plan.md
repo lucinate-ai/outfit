@@ -39,7 +39,7 @@ caveats).
      behind a `tailscaleEnabled` config flag during the transition).
    - `BaseUrl` output (and the Lambdas' `BASE_URL` env) becomes
      `http://<tailscaleHostname>:8000/v1`.
-3. **User-data** (`buildUserData` in `lambda/start/index.ts`)
+3. **User-data** (`buildInferenceUserData` in `lambda/start/index.ts`)
    - Install tailscaled (`curl -fsSL https://tailscale.com/install.sh | sh`
      or the apt repo directly, pinned).
    - `tailscale up --authkey "$TS_AUTHKEY" --hostname cloud-vm-llm` before
