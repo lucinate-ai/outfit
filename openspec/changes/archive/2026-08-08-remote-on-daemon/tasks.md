@@ -72,5 +72,3 @@
 - [x] 6.3 Update `remote/README.md`/docs and AGENTS.md for the daemon-hosted
       instance and the deleted collectors
 - [x] 6.4 `openspec validate remote-on-daemon --strict` passes
-- [ ] 6.5 End-to-end on a real environment (user-run): re-bake, deploy,
-      `outfit remote start`, `metrics`, crash-nudge, `stop`
