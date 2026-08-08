@@ -1,25 +1,27 @@
 # HTTP Control API
 
-When running `outfit serve --daemon` or `outfit serve --api`, a control API is exposed on `:4242` (or the address specified by `--api-addr`) that allows management of the engine via JSON requests.
+When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a control API is exposed on `:4242` (or the address specified by `--api-addr`) that allows management of the engine via JSON requests.
 
 All requests must include a bearer token in the `Authorization` header:
 `Authorization: Bearer $OUTFIT_API_TOKEN`
 
-The token is read from the environment (e.g., the `.env` file beside the Outfit).
+The token is read from the environment (e.g., the `.env` file beside the Outfit). A non-loopback listen with no token refuses to start; a loopback listen may go tokenless.
+
+Under `outfit daemon`, nothing runs until a start request asks, and stopping the engine never ends the daemon — the API keeps answering. Under `serve --api` the engine is foreground-managed: start always fails as already-running, and stopping the engine ends serve itself.
 
 ## Endpoints
 
 ### GET `/v1/status`
 Returns the current state of the engine:
 - `state`: `idle`, `running`, `stopped`, or `crashed`
-- `served`: The configuration of what is currently being served
-- `log_path`: The path to the engine's log file (when running in daemon mode)
+- `runner` / `model`: what is being served, when known
+- `logPath`: the path to the engine's log file (when running under the daemon)
 
 ### POST `/v1/start`
-Starts the engine.
+Starts the engine. The request body may carry a deploy config (same JSON as `PUT /v1/deploy-config`) naming what to run — it is validated and persisted exactly like a push, then started. With no body, the stored deploy config, else the Outfit the daemon sits beside, is served.
 - Returns `200 OK` on success.
-- Returns `409 Conflict` if an engine is already running.
-- Returns `400 Bad Request` if the engine fails to start.
+- Returns `409 Conflict` if an engine is already running — a carried config is **not** stored.
+- Returns `400 Bad Request` if the config is invalid or the engine fails to start.
 
 ### POST `/v1/stop`
 Stops the engine.

@@ -269,13 +269,35 @@ while true; do sleep 0.05; done`)
 		t.Fatalf("idle start = %d %v", resp.StatusCode, body)
 	}
 
-	// Push a config, then start serves it.
-	dc := `{"runner":"llamacpp","modelId":"org/model","serveArgs":[]}`
-	if resp, _ := do("PUT", "/v1/deploy-config", "sekrit", dc); resp.StatusCode != 200 {
-		t.Fatalf("push = %d", resp.StatusCode)
+	// A malformed start body is a 400.
+	if resp, _ := do("POST", "/v1/start", "sekrit", "{not json"); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad start body = %d, want 400", resp.StatusCode)
 	}
-	if resp, body := do("POST", "/v1/start", "sekrit", ""); resp.StatusCode != 200 || body["state"] != "running" {
-		t.Fatalf("start = %d %v", resp.StatusCode, body)
+	// An unservable start body is a 400 and stores nothing.
+	if resp, _ := do("POST", "/v1/start", "sekrit", `{"runner":"vllm","modelId":"m"}`); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unservable start body = %d, want 400", resp.StatusCode)
+	}
+	if dc, _ := d.StoredConfig(); dc != nil {
+		t.Fatal("rejected start body was stored")
+	}
+
+	// A start carrying its config pushes and starts in one call.
+	dc := `{"runner":"llamacpp","modelId":"org/model","serveArgs":[]}`
+	if resp, body := do("POST", "/v1/start", "sekrit", dc); resp.StatusCode != 200 || body["state"] != "running" {
+		t.Fatalf("start with body = %d %v", resp.StatusCode, body)
+	}
+	if stored, _ := d.StoredConfig(); stored == nil || stored.ModelID != "org/model" {
+		t.Fatalf("start body not persisted: %+v", stored)
+	}
+
+	// A start body while running is a 409 that stores nothing.
+	if resp, body := do("POST", "/v1/start", "sekrit",
+		`{"runner":"llamacpp","modelId":"org/other","serveArgs":[]}`); resp.StatusCode != http.StatusConflict ||
+		!strings.Contains(body["error"].(string), "already running") {
+		t.Fatalf("start body while running = %d %v", resp.StatusCode, body)
+	}
+	if stored, _ := d.StoredConfig(); stored == nil || stored.ModelID != "org/model" {
+		t.Fatalf("409 start body was stored: %+v", stored)
 	}
 
 	// Start while running is a 409 naming the engine.

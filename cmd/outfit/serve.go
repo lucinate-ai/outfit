@@ -114,46 +114,28 @@ func engineFor(provider string) (serveEngine, error) {
 // With a PRESET it turns the matching preset section into the command; without
 // one it derives the command from the Outfit's own instructions. Either way it
 // prints the command before running it. The Outfit path defaults to ./Outfit.
-// With --daemon the server runs supervised instead of foreground; with --api
-// (implied by --daemon) the control API is served alongside it.
+// Serve is strictly foreground; with --api the control API is served alongside
+// the engine. Long-lived supervision is `outfit daemon`'s job.
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var (
-		dryRun     bool
-		daemonMode bool
-		apiOn      bool
-		apiAddr    string
+		dryRun  bool
+		apiOn   bool
+		apiAddr string
 	)
 	fs.BoolVar(&dryRun, "dry-run", false, "print the server command without running it")
 	fs.BoolVar(&dryRun, "n", false, "print the command without running it (shorthand)")
-	fs.BoolVar(&daemonMode, "daemon", false, "supervise the engine and keep running (implies --api)")
-	fs.BoolVar(&daemonMode, "d", false, "supervise the engine (shorthand)")
-	fs.BoolVar(&apiOn, "api", false, "expose the control API (on by default with --daemon)")
+	fs.BoolVar(&apiOn, "api", false, "expose the control API beside the foreground engine")
 	fs.BoolVar(&apiOn, "a", false, "expose the control API (shorthand)")
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
 	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
-	}
-	// The API is on by default under --daemon, off otherwise; an explicit
-	// --api/-a (either polarity) wins.
-	apiSet := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "api" || f.Name == "a" {
-			apiSet = true
-		}
-	})
-	if !apiSet {
-		apiOn = daemonMode
 	}
 
 	var path string
 	if rest := fs.Args(); len(rest) > 0 {
 		path = rest[0]
 	}
-	if daemonMode && !dryRun {
-		return runServeDaemon(path, apiOn, apiAddr)
-	}
-
 	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
 	if err != nil {
 		return err
@@ -166,7 +148,7 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return err
 	}
-	if daemonMode || apiOn {
+	if apiOn {
 		// A supervised engine gets its metrics endpoint switched on, exactly
 		// as the cloud path does for a deployed one.
 		argv = withMetricsArgs(argv, engine)

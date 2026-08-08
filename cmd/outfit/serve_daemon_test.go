@@ -116,30 +116,40 @@ func TestCmdServe_PlainServeHasNoMetricsFlag(t *testing.T) {
 	}
 }
 
-func TestCmdServe_DaemonDryRunAddsMetricsFlag(t *testing.T) {
+func TestCmdServe_DaemonFlagRemoved(t *testing.T) {
+	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
+	captureStderr(t, func() {
+		if err := cmdServe([]string{"-d", outfitPath}); err == nil ||
+			!strings.Contains(err.Error(), "not defined") {
+			t.Errorf("serve -d = %v, want unknown-flag error", err)
+		}
+	})
+}
+
+func TestCmdServe_APIDryRunAddsMetricsFlag(t *testing.T) {
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
 	out := captureStdout(t, func() {
-		if err := cmdServe([]string{"-d", "--dry-run", outfitPath}); err != nil {
+		if err := cmdServe([]string{"-a", "--dry-run", outfitPath}); err != nil {
 			t.Error(err)
 		}
 	})
 	if !strings.Contains(out, "--metrics") {
-		t.Errorf("daemon dry run missing --metrics:\n%s", out)
+		t.Errorf("api dry run missing --metrics:\n%s", out)
 	}
 }
 
-func TestCmdServe_DaemonRefusesTokenlessNonLoopback(t *testing.T) {
+func TestCmdDaemon_RefusesTokenlessNonLoopback(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv(daemon.TokenEnvVar, "")
 	t.Chdir(t.TempDir())
-	err := cmdServe([]string{"-d"})
+	err := cmdDaemon(nil)
 	if err == nil || !strings.Contains(err.Error(), daemon.TokenEnvVar) {
 		t.Fatalf("tokenless daemon on %s = %v, want refusal naming %s",
 			daemon.DefaultAPIAddr, err, daemon.TokenEnvVar)
 	}
 }
 
-func TestCmdServe_DaemonServesOutfitOverAPI(t *testing.T) {
+func TestCmdDaemon_ServesOutfitOnRequestOnly(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv(daemon.TokenEnvVar, "")
 	argsFile := filepath.Join(t.TempDir(), "args")
@@ -152,18 +162,26 @@ func TestCmdServe_DaemonServesOutfitOverAPI(t *testing.T) {
 
 	waitAddr := apiAddrFromStdout(t)
 	done := make(chan error, 1)
-	go func() { done <- cmdServe([]string{"-d", "--api-addr", "127.0.0.1:0", filepath.Join(dir, "Outfit")}) }()
+	go func() { done <- cmdDaemon([]string{"--api-addr", "127.0.0.1:0", filepath.Join(dir, "Outfit")}) }()
 	base := "http://" + waitAddr()
 
 	// The .env token gates the API.
 	if code, _ := apiDo(t, "GET", base+"/v1/status", "", ""); code != http.StatusUnauthorized {
 		t.Fatalf("tokenless status = %d, want 401", code)
 	}
+
+	// No auto-start: the daemon idles beside a perfectly good Outfit.
 	code, body := apiDo(t, "GET", base+"/v1/status", "sekrit", "")
-	if code != 200 || body["state"] != "running" || body["runner"] != "llamacpp" {
-		t.Fatalf("status = %d %v", code, body)
+	if code != 200 || body["state"] != "idle" {
+		t.Fatalf("boot status = %d %v, want idle", code, body)
 	}
-	if body["logPath"] == nil {
+
+	// A bare start serves the Outfit.
+	if code, body := apiDo(t, "POST", base+"/v1/start", "sekrit", ""); code != 200 || body["state"] != "running" ||
+		body["runner"] != "llamacpp" {
+		t.Fatalf("start = %d %v", code, body)
+	}
+	if _, body := apiDo(t, "GET", base+"/v1/status", "sekrit", ""); body["logPath"] == nil {
 		t.Fatal("status has no logPath")
 	}
 
@@ -178,7 +196,7 @@ func TestCmdServe_DaemonServesOutfitOverAPI(t *testing.T) {
 		t.Fatalf("start while running = %d %v", code, body)
 	}
 
-	// Stop over the API, idempotently; the daemon itself keeps running.
+	// Stop over the API, idempotently; the daemon itself keeps answering.
 	if code, body := apiDo(t, "POST", base+"/v1/stop", "sekrit", ""); code != 200 || body["state"] != "stopped" {
 		t.Fatalf("stop = %d %v", code, body)
 	}
@@ -200,8 +218,9 @@ func TestCmdServe_DaemonServesOutfitOverAPI(t *testing.T) {
 	}
 }
 
-func TestCmdServe_DaemonIdleThenDeployConfigPush(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+func TestCmdDaemon_StartCarriesDeployConfig(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
 	t.Setenv(daemon.TokenEnvVar, "tok")
 	argsFile := filepath.Join(t.TempDir(), "args")
 	stubEngineDaemon(t, argsFile)
@@ -209,10 +228,10 @@ func TestCmdServe_DaemonIdleThenDeployConfigPush(t *testing.T) {
 
 	waitAddr := apiAddrFromStdout(t)
 	done := make(chan error, 1)
-	go func() { done <- cmdServe([]string{"--daemon", "--api-addr", "127.0.0.1:0"}) }()
+	go func() { done <- cmdDaemon([]string{"--api-addr", "127.0.0.1:0"}) }()
 	base := "http://" + waitAddr()
 
-	// No Outfit, nothing pushed: idle, and start says why it cannot.
+	// No Outfit, nothing pushed: idle, and a bare start says why it cannot.
 	if code, body := apiDo(t, "GET", base+"/v1/status", "tok", ""); code != 200 || body["state"] != "idle" {
 		t.Fatalf("status = %d %v", code, body)
 	}
@@ -221,27 +240,42 @@ func TestCmdServe_DaemonIdleThenDeployConfigPush(t *testing.T) {
 		t.Fatalf("idle start = %d %v", code, body)
 	}
 
-	// An unservable runner is rejected.
+	// An unservable runner is rejected, on push and on a start body alike.
 	if code, body := apiDo(t, "PUT", base+"/v1/deploy-config", "tok",
 		`{"runner":"vllm","modelId":"org/model"}`); code != http.StatusBadRequest ||
 		!strings.Contains(body["error"].(string), "vllm") {
 		t.Fatalf("vllm push = %d %v", code, body)
 	}
-
-	// Push a servable config; start serves it with its args.
-	dc := `{"runner":"llamacpp","modelId":"org/model","quant":"Q4_K_M","contextSize":16384,"servedModelName":"friendly","serveArgs":["--ngl","99"]}`
-	if code, body := apiDo(t, "PUT", base+"/v1/deploy-config", "tok", dc); code != 200 || body["message"] != "stored" {
-		t.Fatalf("push = %d %v", code, body)
+	if code, _ := apiDo(t, "POST", base+"/v1/start", "tok",
+		`{"runner":"vllm","modelId":"org/model"}`); code != http.StatusBadRequest {
+		t.Fatalf("vllm start body = %d, want 400", code)
 	}
-	if code, body := apiDo(t, "POST", base+"/v1/start", "tok", ""); code != 200 || body["state"] != "running" ||
+
+	// A start carrying its config pushes and starts in one call.
+	dc := `{"runner":"llamacpp","modelId":"org/model","quant":"Q4_K_M","contextSize":16384,"servedModelName":"friendly","serveArgs":["--ngl","99"]}`
+	if code, body := apiDo(t, "POST", base+"/v1/start", "tok", dc); code != 200 || body["state"] != "running" ||
 		body["model"] != "org/model" {
-		t.Fatalf("start = %d %v", code, body)
+		t.Fatalf("start with body = %d %v", code, body)
 	}
 	args := waitForFile(t, argsFile)
 	for _, want := range []string{"org/model:Q4_K_M", "friendly", "16384", "--ngl", "--metrics"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("engine argv missing %q:\n%s", want, args)
 		}
+	}
+
+	// A start body while running is a 409 that stores nothing.
+	other := `{"runner":"llamacpp","modelId":"org/other","serveArgs":[]}`
+	if code, body := apiDo(t, "POST", base+"/v1/start", "tok", other); code != http.StatusConflict ||
+		!strings.Contains(body["error"].(string), "already running") {
+		t.Fatalf("start body while running = %d %v", code, body)
+	}
+	stored, err := os.ReadFile(filepath.Join(configHome, "outfit", "daemon", "deploy-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stored), "org/other") || !strings.Contains(string(stored), "org/model") {
+		t.Errorf("409 start body was stored:\n%s", stored)
 	}
 
 	interruptSelf(t)

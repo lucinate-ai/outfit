@@ -1,5 +1,5 @@
-// Serve's supervised modes: `outfit serve --daemon` runs the engine under
-// internal/daemon's supervisor with the control API on by default, and
+// The daemon side of the CLI: `outfit daemon` hosts internal/daemon's
+// supervisor and control API (never starting an engine on boot), and
 // `outfit serve --api` exposes the same API over a foreground engine. The
 // engine-specific knowledge stays in serve.go's engine table; this file only
 // wires it into the daemon.
@@ -9,8 +9,8 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -26,11 +26,23 @@ import (
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
-// runServeDaemon is `outfit serve --daemon`: a long-lived foreground process
-// that supervises the engine and (with apiOn) serves the control API. What to
-// serve resolves in order: the stored deploy config, else the Outfit; with
-// neither the daemon starts idle and waits for a pushed config.
-func runServeDaemon(path string, apiOn bool, apiAddr string) error {
+// cmdDaemon is `outfit daemon`: a long-lived foreground process that
+// supervises one engine and serves the control API — the API is the command's
+// whole purpose, so it is always on. Nothing starts on boot: the engine runs
+// only when a start request asks, sourced from the request's own deploy
+// config, the stored one, or the adjacent Outfit, in that order.
+func cmdDaemon(args []string) error {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	var apiAddr string
+	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
+	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+		return err
+	}
+	var path string
+	if rest := fs.Args(); len(rest) > 0 {
+		path = rest[0]
+	}
+
 	sel, outfitPath, hasOutfit, err := resolveDaemonOutfit(path)
 	if err != nil {
 		return err
@@ -58,16 +70,12 @@ func runServeDaemon(path string, apiOn bool, apiAddr string) error {
 		Collector:      &metrics.Collector{},
 		ValidateConfig: validateDeployConfig,
 	}
-	// lastEngine remembers which engine the most recent start attempt chose,
-	// so a start failure can carry that engine's install hint.
-	var lastEngine serveEngine
 	d.BuildArgv = func(dc *remote.DeployConfig) ([]string, error) {
 		if dc != nil {
 			engine, err := engineFor(dc.Runner)
 			if err != nil {
 				return nil, err
 			}
-			lastEngine = engine
 			argv, err := argvFromDeployConfig(engine, *dc)
 			if err != nil {
 				return nil, err
@@ -84,67 +92,39 @@ func runServeDaemon(path string, apiOn bool, apiAddr string) error {
 		if err != nil {
 			return nil, err
 		}
-		lastEngine = engine
 		argv, err := buildServeArgv(engine, sel, outfitPath)
 		if err != nil {
 			return nil, err
 		}
 		argv = withMetricsArgs(argv, engine)
-		d.SetScrape(scrapeTargetFor(engine, sel.BaseURL, argv))
-		return argv, nil
-	}
-	if hasOutfit {
 		model := sel.Model
 		if model == "" {
 			model = sel.Alias
 		}
 		d.SetServed(sel.Provider, model)
+		d.SetScrape(scrapeTargetFor(engine, sel.BaseURL, argv))
+		return argv, nil
 	}
-
-	// The listener comes up before the engine so a port conflict or the
-	// tokenless non-loopback refusal fails fast, before anything starts.
-	var srv *http.Server
-	var ln net.Listener
-	if apiOn {
-		ln, err = daemon.Listen(apiAddr, token)
-		if err != nil {
-			return err
-		}
-		srv = &http.Server{Handler: d.Handler(token)}
-	}
-
-	stored, err := d.StoredConfig()
+	// Nothing starts on boot; the listener is the daemon's whole job, so a
+	// port conflict or the tokenless non-loopback refusal fails immediately.
+	ln, err := daemon.Listen(apiAddr, token)
 	if err != nil {
 		return err
 	}
-	if stored != nil || hasOutfit {
-		if err := d.StartEngine(); err != nil {
-			if ln != nil {
-				ln.Close()
-			}
-			if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("engine not found — %s", lastEngine.installHint)
-			}
-			return err
-		}
-		fmt.Printf("engine running; log: %s\n", sup.LogPath)
-	} else {
-		fmt.Printf("daemon idle: nothing to serve yet — push a deploy config to start an engine\n")
-	}
-	if srv != nil {
-		fmt.Printf("control API on %s\n", ln.Addr())
-		go srv.Serve(ln)
-	}
+	srv := &http.Server{Handler: d.Handler(token)}
+	fmt.Printf("daemon ready: nothing runs until a start request arrives\n")
+	fmt.Printf("engine log: %s\n", sup.LogPath)
+	fmt.Printf("control API on %s\n", ln.Addr())
+	go srv.Serve(ln)
 
-	// Foreground until signalled; the engine is stopped before the daemon
-	// exits. Backgrounding is the user's business (tmux, systemd, launchd).
+	// Foreground until signalled; a running engine is stopped before the
+	// daemon exits. Backgrounding is the user's business (tmux, systemd,
+	// launchd).
 	<-sigCh
 	sup.Stop()
-	if srv != nil {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		srv.Shutdown(shutdownCtx)
-		cancel()
-	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	srv.Shutdown(shutdownCtx)
+	cancel()
 	return nil
 }
 

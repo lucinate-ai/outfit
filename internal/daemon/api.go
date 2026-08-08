@@ -1,9 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -60,6 +62,30 @@ func (d *Daemon) Handler(token string) http.Handler {
 		writeJSON(w, http.StatusOK, d.Status())
 	})
 	mux.HandleFunc("POST /v1/start", func(w http.ResponseWriter, r *http.Request) {
+		// A start may carry its own deploy config: push-then-start in one
+		// call. The already-running check comes first so a 409 stores
+		// nothing.
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		if len(bytes.TrimSpace(body)) > 0 {
+			if state, engine, _ := d.Sup.Status(); state == StateRunning {
+				writeError(w, http.StatusConflict,
+					fmt.Errorf("an engine is already running (%s); stop it first", engine))
+				return
+			}
+			var dc remote.DeployConfig
+			if err := json.Unmarshal(body, &dc); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Errorf("decoding deploy config: %w", err))
+				return
+			}
+			if err := d.Push(dc); err != nil {
+				writeError(w, http.StatusBadRequest, err)
+				return
+			}
+		}
 		if err := d.StartEngine(); err != nil {
 			status := http.StatusBadRequest
 			if state, _, _ := d.Sup.Status(); state == StateRunning {
