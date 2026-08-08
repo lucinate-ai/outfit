@@ -27,6 +27,8 @@ import {
   readEnvApiKey,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
+import { llamacppDaemonBoot } from './llamacpp-boot';
+import { vllmDaemonBoot } from './vllm-boot';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
@@ -313,7 +315,9 @@ function cloudwatchAgentConfig(env: string, runner: Runner): string {
 /** Exported for tests: the boot script is pure string-building. The seed twin is shared/seed.ts's buildSeedUserData. */
 export function buildInferenceUserData(env: string, cfg: DeployConfig): string {
   const modelDir = '/opt/llm/model';
-  const runnerUnit = cfg.runner === 'vllm' ? vllmDaemonBoot(cfg, modelDir) : llamacppDaemonBoot(cfg, modelDir);
+  const port = Number(VLLM_PORT);
+  const runnerUnit =
+    cfg.runner === 'vllm' ? vllmDaemonBoot(cfg, modelDir, port) : llamacppDaemonBoot(cfg, modelDir, port);
   const cwAgentConfig = cloudwatchAgentConfig(env, cfg.runner);
   // Common boot: log the GPU, add swap for the load spike, start the log
   // shipper, sync the weights from S3, fetch the environment's API key. Then
@@ -361,103 +365,6 @@ umask 077
 
 ${runnerUnit}
 `;
-}
-
-/**
- * Render the daemon's stored deploy config: the same shape `outfit remote
- * deploy` produces, with the cloud-owned settings resolved in — the model as
- * the synced local path, the bind address and port, and the runner's key
- * delivery — so the daemon's ordinary start serves exactly what the old
- * per-runner unit ran. No --metrics here: the daemon switches the engine's
- * metrics endpoint on itself.
- */
-function daemonDeployConfig(cfg: DeployConfig, modelDir: string, extraServeArgs: string[]): string {
-  const modelId = cfg.runner === 'llamacpp' ? `${modelDir}/model.gguf` : modelDir;
-  return JSON.stringify(
-    {
-      runner: cfg.runner,
-      modelId,
-      quant: '',
-      contextSize: cfg.contextSize,
-      servedModelName: cfg.servedModelName,
-      serveArgs: ['--host', '0.0.0.0', '--port', String(VLLM_PORT), ...extraServeArgs, ...cfg.serveArgs],
-    },
-    null,
-    2,
-  );
-}
-
-/**
- * The daemon boot shared by both runners: write the deploy config where the
- * daemon reads it, enable outfit-daemon.service (and the baked crash-nudge
- * timer), then request the engine's first start over the control API — the
- * daemon never auto-starts, so the boot start is the same explicit API start
- * any client performs. A 409 also counts: a re-run must not fail on an
- * engine already up.
- */
-function daemonBoot(deployConfigJson: string, unitExtra: string): string {
-  return `mkdir -p /root/.config/outfit/daemon
-cat >/root/.config/outfit/daemon/deploy-config.json <<'DEPLOYCONFIG'
-${deployConfigJson}
-DEPLOYCONFIG
-chmod 600 /root/.config/outfit/daemon/deploy-config.json
-
-cat >/etc/systemd/system/outfit-daemon.service <<'UNIT'
-[Unit]
-Description=outfit daemon (engine host)
-After=network-online.target
-Wants=network-online.target
-[Service]
-${unitExtra}ExecStart=/usr/local/bin/outfit daemon --api-addr 127.0.0.1:4242
-Restart=on-failure
-RestartSec=5
-[Install]
-WantedBy=multi-user.target
-UNIT
-
-systemctl daemon-reload
-systemctl enable --now outfit-daemon.service
-systemctl enable --now outfit-nudge.timer || echo "NUDGE_TIMER_MISSING"
-
-# First engine start, retried until the daemon answers. The engine loads the
-# model asynchronously; the start Lambda's health poll still gates "ready".
-for attempt in $(seq 1 30); do
-  code=$(curl -s -o /tmp/outfit-start.json -w '%{http_code}' --max-time 15 -X POST http://127.0.0.1:4242/v1/start || true)
-  if [ "$code" = "200" ] || [ "$code" = "409" ]; then
-    break
-  fi
-  sleep 2
-done
-cat /tmp/outfit-start.json || true`;
-}
-
-/** vLLM: its env file (API key by env, offline mode, native sampler), then the daemon boot. */
-function vllmDaemonBoot(cfg: DeployConfig, modelDir: string): string {
-  return `# Python dev headers: Triton JIT-compiles a CUDA stub against Python.h on the
-# first model load (Qwen3.6's linear-attention path); baked into recipe 2.0.3+,
-# this is a safety net for instances off an older AMI and a no-op once present.
-if [ ! -f /usr/include/python3.12/Python.h ]; then
-  apt-get update && apt-get install -y python3.12-dev
-fi
-
-cat >/etc/vllm.env <<ENVFILE
-VLLM_API_KEY=$API_KEY
-HF_HUB_OFFLINE=1
-# Native Torch sampler, not FlashInfer's — FlashInfer JIT-needs nvcc, which the
-# slim AMI (driver + CUDA runtime only, no toolkit) does not ship.
-VLLM_USE_FLASHINFER_SAMPLER=0
-ENVFILE
-
-${daemonBoot(daemonDeployConfig(cfg, modelDir, ['--gpu-memory-utilization', '0.92']), 'EnvironmentFile=/etc/vllm.env\n')}`;
-}
-
-/** llama.cpp: the API key in a root-only file (--api-key-file), then the daemon boot. */
-function llamacppDaemonBoot(cfg: DeployConfig, modelDir: string): string {
-  return `mkdir -p /etc/llm
-printf '%s' "$API_KEY" >/etc/llm/api-key
-chmod 600 /etc/llm/api-key
-
-${daemonBoot(daemonDeployConfig(cfg, modelDir, ['--api-key-file', '/etc/llm/api-key']), '')}`;
 }
 
 async function checkHealth(instanceId: string): Promise<boolean> {
