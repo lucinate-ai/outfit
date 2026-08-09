@@ -227,3 +227,31 @@ func TestFanOutMixedFleetKeepsOrder(t *testing.T) {
 		t.Errorf("up node result = %+v", results[1])
 	}
 }
+
+// A daemon that answers a fan-out call with an error yields `failed`, not
+// `unreachable`: the node was reached, the request was refused, and the
+// daemon's own message reaches the row.
+func TestFanOutFailedCarriesTheDaemonsMessage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "collector exploded"})
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	port, _ := strconv.Atoi(u.Port())
+	cfg, err := Load(writeFleet(t, fmt.Sprintf(
+		"nodes:\n  - name: box\n    host: %s\n    port: %d\n", u.Hostname(), port), ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := cfg.FanOut(context.Background(), StatusCall)[0]
+	if r.Outcome != OutcomeFailed {
+		t.Fatalf("outcome = %q, want failed (err: %v)", r.Outcome, r.Err)
+	}
+	if !strings.Contains(r.Detail(), "collector exploded") {
+		t.Errorf("detail = %q, want the daemon's message", r.Detail())
+	}
+}

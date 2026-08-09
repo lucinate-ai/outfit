@@ -81,9 +81,16 @@ skip. No remote-kind code ships here.
 type.** Each node is polled in its own goroutine with a short client timeout
 (a few seconds — a fleet view must stay snappy). Each yields a `NodeResult`:
 either the status/metrics, or a typed failure (`unreachable`, `unauthorized`,
-`config-error`). The renderer switches on that, so a failure is a rendered row,
-never a returned error. `fleet status`/`metrics` themselves only error on a
-problem with the *fleet file* (missing, unparseable), never on node state.
+`config-error`, `failed`). The renderer switches on that, so a failure is a
+rendered row, never a returned error. `fleet status`/`metrics` themselves only
+error on a problem with the *fleet file* (missing, unparseable), never on node
+state.
+
+`failed` is the case where the daemon *answered* with an error — a start while
+its engine is already running, an unservable config. Folding it into
+`unreachable` would be misleading in the one situation where the difference
+matters most: the box is healthy and it was the request that was refused, so
+the daemon's own message is what the user needs to see.
 
 **D5 — Token resolution reuses outfit's env precedence.** A node's
 `tokenEnv` (env var name) is resolved from the process environment then the

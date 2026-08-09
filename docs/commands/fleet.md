@@ -70,6 +70,7 @@ offline  unreachable   dial tcp 10.0.0.9:4242: connect: connection refused
 | `unreachable` | No answer at all — refused, timed out, no such host |
 | `unauthorized` | The box is up; the token was rejected |
 | `config-error` | The node could not be called — usually a `tokenEnv` that resolves to nothing |
+| `failed` | The daemon answered with an error — the node is fine, the request was refused |
 
 ## Metrics
 

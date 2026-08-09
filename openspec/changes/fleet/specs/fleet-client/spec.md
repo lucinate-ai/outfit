@@ -22,11 +22,19 @@ command's latency is that of the slowest reachable node, not their sum.
 
 ### Requirement: Unreachable nodes degrade
 
-A node whose daemon cannot be reached (connection refused, timeout, DNS
-failure) SHALL be shown as `unreachable`, and one that rejects the client's
-token SHALL be shown as `unauthorized`, each with a short reason. Such a node
-SHALL NOT abort the command: every other node's result SHALL still render, and
-the command SHALL succeed.
+A node that does not yield a result SHALL be shown with a typed outcome and a
+short reason, distinguishing what went wrong:
+
+- `unreachable` — the daemon could not be contacted at all (connection
+  refused, timeout, DNS failure);
+- `unauthorized` — the daemon rejected the client's bearer token;
+- `config-error` — the node could not be called, typically a token reference
+  that resolves to nothing;
+- `failed` — the daemon answered with an error (a refused start, an
+  unservable config): the node is healthy, the request was not.
+
+Such a node SHALL NOT abort the command: every other node's result SHALL still
+render, and the command SHALL succeed.
 
 #### Scenario: One node down, the rest still shown
 
@@ -38,6 +46,13 @@ the command SHALL succeed.
 
 - **WHEN** a node's daemon rejects the client's bearer token
 - **THEN** that node's row reads `unauthorized`, not `unreachable`
+
+#### Scenario: A refused request is distinguished from an unreachable node
+
+- **WHEN** a node's daemon answers a request with an error, such as a start
+  while its engine is already running
+- **THEN** that node's outcome reads `failed` with the daemon's own message,
+  not `unreachable` — the node was reached, the request was refused
 
 ### Requirement: Fleet metrics
 
