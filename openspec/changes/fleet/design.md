@@ -14,6 +14,17 @@ See proposal.md — Why. What the earlier changes leave in place:
   Lambda's reply are the same dialect.
 - Outfit resolves adjacent `.env` via `opencode.ParseEnvFile`, with the
   precedence environment-over-`.env` (see `applyOutfitEnv`).
+- `OUTFIT_CONFIG_DIR` (added by config-dir-override) redirects outfit's *own*
+  config directory (`config.json`, `remote.json`, the daemon state dir). It has
+  no bearing on `fleet.yaml`, which is project-local — resolved from the working
+  directory or `--fleet`, like `Outfit`/`preset.ini`, not from the config dir —
+  and no bearing on token resolution, which reads the process environment and
+  the `.env` beside the `fleet.yaml`.
+- Each fleet node is a machine running `outfit daemon` reachable over the
+  network, so its daemon listens on a non-loopback address — which `daemon-api`
+  requires a bearer token for. The cloud instance's daemon is loopback-only
+  (`--api-addr 127.0.0.1:4242`, reached only via the stats Lambda over SSM), so
+  it is *not* a direct fleet node; it is the deferred remote-env kind (see D3).
 - The CLI dispatch and completion tables (`main.go`, `complete.go`) are covered
   by `TestCompletionCoversDispatch`, which scans `main.go` for `case "…":`.
 
@@ -56,11 +67,15 @@ refactor of existing code; it must leave `remote metrics` output byte-identical
 
 **D3 — Node kind is an interface, daemon is the only implementation.** `Node`
 is an interface so a `remoteEnvNode` (wrapping a registered `remote`
-environment, calling its stats Lambda) can be added later — issue #6's "almost
-free" because it already yields `internal/metrics.Stats`. `fleet.yaml` leaves
-room for a per-node `kind` (defaulting to `daemon`); an unknown/other kind in
-v1 is a clear "not supported yet" error, not a silent skip. No remote-kind code
-ships here.
+environment, calling its stats Lambda) can be added later. Since remote-on-daemon
+merged, that path is confirmed "almost free": the stats Lambda already returns
+`internal/metrics.Stats` (it curls the on-instance daemon's `/v1/metrics` over
+SSM), the exact shape a `Node` yields — so a remote-env node reuses the fleet
+renderer with no new dialect. It is the natural home for the cloud instance,
+whose daemon is loopback-only and so unreachable as a direct daemon node.
+`fleet.yaml` leaves room for a per-node `kind` (defaulting to `daemon`); an
+unknown/other kind in v1 is a clear "not supported yet" error, not a silent
+skip. No remote-kind code ships here.
 
 **D4 — Fan-out is concurrent with a per-node timeout; results are a value
 type.** Each node is polled in its own goroutine with a short client timeout
