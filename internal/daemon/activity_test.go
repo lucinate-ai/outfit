@@ -358,3 +358,76 @@ while true; do sleep 0.05; done`)
 	}
 	d.Sup.Stop()
 }
+
+// TestMarkActiveExported covers the wrapper `outfit serve --api` uses: it
+// starts its engine through the supervisor directly, so it stamps the activity
+// record itself rather than going through StartEngine.
+func TestMarkActiveExported(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+	d.Now = func() time.Time { return baseTime }
+
+	if _, ok := d.act.snapshot(); ok {
+		t.Fatal("a fresh daemon reports activity")
+	}
+	d.MarkActive()
+	if got, ok := d.act.snapshot(); !ok || !got.Equal(baseTime) {
+		t.Errorf("after MarkActive: last active = %v (%v), want %v", got, ok, baseTime)
+	}
+	if got := d.Status(); got.LastActiveAt != baseTime.Format(time.RFC3339) {
+		t.Errorf("status after MarkActive = %+v, want the record reported", got)
+	}
+}
+
+// TestMetricsObservesActivity covers the single-observe path: a client polling
+// /v1/metrics feeds the same activity record the background sampler does, so
+// the two cannot hold different ideas of the latest counter.
+func TestMetricsObservesActivity(t *testing.T) {
+	engineMetrics := &fakeEngine{counter: 100}
+	engine := httptest.NewServer(engineMetrics)
+	defer engine.Close()
+
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	clock := &fakeClock{t: baseTime}
+	d.Now = clock.now
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: engine.URL, Engine: "llamacpp"})
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateRunning)
+	defer d.Sup.Stop()
+
+	// The first scrape is the counter baseline, so the record still reads from
+	// the start — no sampler is running here, only these calls.
+	clock.set(baseTime.Add(time.Minute))
+	if stats := d.Metrics(context.Background()); stats.Tokens == nil {
+		t.Fatal("metrics carried no token stats")
+	}
+	if got, _ := d.act.snapshot(); !got.Equal(baseTime) {
+		t.Errorf("the first metrics scrape counted as activity (last active %v)", got)
+	}
+
+	// A moved counter observed through /v1/metrics is activity.
+	moved := baseTime.Add(2 * time.Minute)
+	clock.set(moved)
+	engineMetrics.set(500)
+	d.Metrics(context.Background())
+	if got, _ := d.act.snapshot(); !got.Equal(moved) {
+		t.Errorf("a moved counter seen via metrics was not recorded (last active %v)", got)
+	}
+
+	// A failed scrape is a non-observation on this path too: the record holds,
+	// and the reply simply omits the token stats.
+	engine.Close()
+	clock.set(baseTime.Add(3 * time.Minute))
+	stats := d.Metrics(context.Background())
+	if stats.Tokens != nil {
+		t.Errorf("a failed scrape still reported tokens: %+v", stats.Tokens)
+	}
+	if got, _ := d.act.snapshot(); !got.Equal(moved) {
+		t.Errorf("a failed scrape moved last active to %v, want %v", got, moved)
+	}
+}
