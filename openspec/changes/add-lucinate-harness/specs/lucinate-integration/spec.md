@@ -1,3 +1,18 @@
+## Purpose
+
+How outfit reads and writes lucinate's connections store: the one managed
+OpenAI-compatible connection it owns, the merge that leaves every sibling
+connection and unknown field untouched, and the top-level default that makes
+lucinate boot straight into the selected model.
+
+The part worth knowing is the API key. A lucinate connection has somewhere to
+put one, and outfit deliberately does not — no secret is written, to the store
+or to lucinate's secrets store. lucinate falls back to `LUCINATE_OPENAI_API_KEY`
+when its stored secret is empty, and `outfit harness` supplies it at launch,
+which is the same runtime-injection idiom the other harnesses use. This also
+covers which providers map (OpenAI-compatible ones only) and what happens to
+the limits a connection cannot represent.
+
 ## ADDED Requirements
 
 ### Requirement: Config location and shape

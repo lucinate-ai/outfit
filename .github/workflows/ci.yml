@@ -41,6 +41,13 @@ jobs:
       - name: Validate specs
         run: npx --yes @fission-ai/openspec@1.8.0 validate --all --strict
 
+      # validate checks a Purpose section exists; it cannot tell a real one
+      # from the stub the archive step writes. This catches the stub, and
+      # catches a new capability whose delta has no Purpose at all — which is
+      # what mints the stub in the first place.
+      - name: Spec purposes are filled in
+        run: scripts/check-spec-purposes.sh
+
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
