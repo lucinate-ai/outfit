@@ -370,6 +370,128 @@ func TestEnvResolver_DotEnvFillsAGap(t *testing.T) {
 	}
 }
 
+// LoadConfigState is the inverse of WriteConfig, used by `outfit export` to
+// reconstruct an Outfit from the applied configuration.
+func TestLoadConfigState_MissingFile(t *testing.T) {
+	providers, defaultModel, err := LoadConfigState(filepath.Join(t.TempDir(), "no-such-file.json"))
+	if err != nil {
+		t.Fatalf("missing file should not error: %v", err)
+	}
+	if len(providers) != 0 {
+		t.Errorf("providers = %v, want empty", providers)
+	}
+	if defaultModel != "" {
+		t.Errorf("defaultModel = %q, want empty", defaultModel)
+	}
+}
+
+func TestLoadConfigState_SingleProvider(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	WriteConfig(path, "openrouter", map[string]any{
+		"options": map[string]any{
+			"apiKey":  "sk-test",
+			"baseURL": "https://openrouter.ai/api/v1",
+		},
+		"models": map[string]any{
+			"deepseek/deepseek-v4-pro": map[string]any{
+				"name": "DeepSeek v4",
+				"limit": map[string]any{
+					"context": 128000,
+					"output":  32000,
+				},
+			},
+			"qwen3.6-27b": map[string]any{
+				"name": "Qwen 27B",
+			},
+		},
+	}, "openrouter/deepseek/deepseek-v4-pro")
+
+	providers, defaultModel, err := LoadConfigState(path)
+	if err != nil {
+		t.Fatalf("LoadConfigState: %v", err)
+	}
+	if defaultModel != "openrouter/deepseek/deepseek-v4-pro" {
+		t.Errorf("defaultModel = %q, want openrouter/deepseek/deepseek-v4-pro", defaultModel)
+	}
+
+	st, ok := providers["openrouter"]
+	if !ok {
+		t.Fatal("openrouter provider not found")
+	}
+	if len(st.ModelKeys) != 2 {
+		t.Errorf("ModelKeys = %v, want 2 models", st.ModelKeys)
+	}
+	if st.ModelKeys[0] != "deepseek/deepseek-v4-pro" || st.ModelKeys[1] != "qwen3.6-27b" {
+		t.Errorf("model keys not sorted: %v", st.ModelKeys)
+	}
+	if st.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("BaseURL = %q", st.BaseURL)
+	}
+	if st.Contexts["deepseek/deepseek-v4-pro"] != 128000 {
+		t.Errorf("context = %d, want 128000", st.Contexts["deepseek/deepseek-v4-pro"])
+	}
+	if st.Outputs["deepseek/deepseek-v4-pro"] != 32000 {
+		t.Errorf("output = %d, want 32000", st.Outputs["deepseek/deepseek-v4-pro"])
+	}
+	// qwen3.6-27b has no limits set, so it should not appear.
+	if _, ok := st.Contexts["qwen3.6-27b"]; ok {
+		t.Error("qwen3.6-27b should not be in Contexts")
+	}
+}
+
+func TestLoadConfigState_MultipleProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	WriteConfig(path, "openrouter", sampleBlock("m1"), "openrouter/m1")
+	WriteConfig(path, "anthropic", sampleBlock("claude"), "openrouter/m1")
+
+	providers, defaultModel, err := LoadConfigState(path)
+	if err != nil {
+		t.Fatalf("LoadConfigState: %v", err)
+	}
+	if defaultModel != "openrouter/m1" {
+		t.Errorf("defaultModel = %q", defaultModel)
+	}
+	if len(providers) != 2 {
+		t.Errorf("providers = %d, want 2", len(providers))
+	}
+	if _, ok := providers["openrouter"]; !ok {
+		t.Error("openrouter not found")
+	}
+	if _, ok := providers["anthropic"]; !ok {
+		t.Error("anthropic not found")
+	}
+}
+
+func TestLoadConfigState_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	if err := os.WriteFile(path, []byte("{invalid json}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadConfigState(path); err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestLoadConfigState_NoProviders(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencode.json")
+	os.WriteFile(path, []byte(`{"model": "anthropic/claude", "theme": "dark"}`), 0o600)
+
+	providers, defaultModel, err := LoadConfigState(path)
+	if err != nil {
+		t.Fatalf("LoadConfigState: %v", err)
+	}
+	if defaultModel != "anthropic/claude" {
+		t.Errorf("defaultModel = %q", defaultModel)
+	}
+	if len(providers) != 0 {
+		t.Errorf("providers = %v, want empty", providers)
+	}
+}
+
 // A command with no Outfit — `outfit add -p openrouter` and friends — still has
 // a project around it, so its .env is worth reading.
 func TestEnvResolver_NoOutfitReadsTheWorkingDirectory(t *testing.T) {

@@ -212,3 +212,23 @@ func TestPruneSources(t *testing.T) {
 		t.Errorf("prune of absent root: %v", err)
 	}
 }
+
+func TestSkipSource(t *testing.T) {
+	cases := map[string]bool{
+		"node_modules":      true,
+		"node_modules/foo":  true,
+		"cdk.out":           true,
+		"cdk.out/hello":     true,
+		".env":              true,
+		"remote.json":       true,
+		"cdk-outputs.json":  true,
+		"package.json":      false,
+		"lib/config.ts":     false,
+		"scripts/deploy.sh": false,
+	}
+	for rel, want := range cases {
+		if got := skipSource(rel); got != want {
+			t.Errorf("skipSource(%q) = %v, want %v", rel, got, want)
+		}
+	}
+}

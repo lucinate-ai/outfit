@@ -78,9 +78,10 @@ it dresses the agent for you:
 - **Local models, sorted.** The same file that points your agent at a local model
   can launch the server for it. One source of truth, two jobs.
 
-Works with [opencode](https://opencode.ai) and
-[Pi](https://github.com/earendil-works/pi) today — pick the one you use per
-command, or set a default. The same selection works for either.
+Works with [opencode](https://opencode.ai),
+[Pi](https://github.com/earendil-works/pi) and
+[lucinate](https://github.com/lucinate-ai/lucinate) today — pick the one you use
+per command, or set a default. The same selection works for any of them.
 
 ## Install
 
@@ -159,6 +160,8 @@ outfit remove -p openrouter -m deepseek/deepseek-v4-flash
 On opencode, `add` sets the chosen model as the default and `remove` clears it
 if it pointed at something you removed. Pi has no default-model setting, so
 `add` just registers the provider and tells you which model to pick with `/model`.
+On lucinate, `add` writes an OpenAI-compatible connection and points lucinate's
+startup default at it, so it opens straight onto the model you chose.
 
 `--context`/`-c` records each added model's context window. Parsing is
 forgiving: `128k`, `1m`, `1.5m`, `200000`, `128,000`, even `128 K tokens` all
@@ -212,8 +215,8 @@ The [`docs/`](docs/) directory is the user manual:
 ## Harnesses
 
 A **harness** is the coding agent being configured. opencode is the default; Pi
-is also supported. The harness is chosen at runtime — never baked into an `Outfit`
-file — so the same selection works for either.
+and lucinate are also supported. The harness is chosen at runtime — never baked
+into an `Outfit` file — so the same selection works for any of them.
 
 ```sh
 outfit add -p ollama -m llama3.2 --harness pi   # this command only
@@ -226,7 +229,8 @@ outfit show                # what the active harness has configured
 Precedence: `--harness`/`-H` flag, then `OUTFIT_HARNESS`, then your stored
 default, then opencode. Not every provider maps to every harness — `outfit list`
 shows which harnesses each one supports (AWS Bedrock, for instance, is
-opencode-only). The full story — launching, dressing on the way in, inspecting
+opencode-only; lucinate takes the OpenAI-compatible providers). The full story —
+launching, dressing on the way in, inspecting
 any harness — is in [`docs/commands/harness.md`](docs/commands/harness.md) and
 [`docs/commands/show.md`](docs/commands/show.md).
 
@@ -461,7 +465,7 @@ merge:
 - Adding a provider or model? It's a data change in
   `internal/catalog/providers.yaml`, not Go — see
   [Adding providers and models](#adding-providers-and-models).
-- Adding a third harness? Start at the `Harness` interface in
+- Adding another harness? Start at the `Harness` interface in
   `internal/harness`; [`AGENTS.md`](AGENTS.md) walks through the contract.
 - Keep the suite green and formatted (`go test ./...`, `gofmt -w ./...`) before
   opening a PR.

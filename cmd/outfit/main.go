@@ -67,6 +67,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/discovery"
 	"github.com/lucinate-ai/outfit/internal/harness"
+	"github.com/lucinate-ai/outfit/internal/lucinate"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/remote"
@@ -1000,6 +1001,16 @@ func cmdHarness(args []string) error {
 	if outfitPath.set {
 		cmd.Env = overlayLocalEnv(cmd.Env, sel, envDir)
 	}
+	// lucinate reads an OpenAI-compatible key from LUCINATE_OPENAI_API_KEY when
+	// its stored secret is empty — which is exactly how outfit configures it, with
+	// no secret on disk. Supply the active provider's key here so the launched
+	// agent can authenticate the model it boots into, without ever writing it to
+	// lucinate's config. An explicit setting already in the child's env wins.
+	if h.Name() == "lucinate" {
+		if key, ok := lucinateLaunchKey(providers, opencode.EnvResolver(envDir), sel, outfitPath.set); ok {
+			cmd.Env = setEnvIfAbsent(cmd.Env, "LUCINATE_OPENAI_API_KEY", key)
+		}
+	}
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%s not found — install the %s harness or add it to your PATH", bin, h.Name())
@@ -1054,6 +1065,54 @@ func harnessEnv(providersPath string, resolve func(string) string, remoteResp *r
 		}
 	}
 	return env
+}
+
+// lucinateLaunchKey resolves the API key to inject as LUCINATE_OPENAI_API_KEY
+// for the lucinate harness. The active provider is the worn Outfit's when one is
+// worn, otherwise the provider behind lucinate's default connection — the model
+// lucinate will boot into. It prefers a value already exported, falling back to
+// what resolve (the .env) can supply. Returns false when there is no active
+// provider, it has no key variable, or nothing resolves.
+func lucinateLaunchKey(providersPath string, resolve func(string) string, sel outfit.Selection, worn bool) (string, bool) {
+	providerID := ""
+	if worn {
+		providerID = sel.Provider
+	}
+	if providerID == "" {
+		if id, ok := lucinate.DefaultProviderID(); ok {
+			providerID = id
+		}
+	}
+	if providerID == "" {
+		return "", false
+	}
+	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(providersPath))
+	if err != nil {
+		return "", false
+	}
+	p := cat.Providers[providerID]
+	if p == nil || p.APIKeyEnv == "" {
+		return "", false
+	}
+	if v := os.Getenv(p.APIKeyEnv); v != "" {
+		return v, true
+	}
+	if v := resolve(p.APIKeyEnv); v != "" {
+		return v, true
+	}
+	return "", false
+}
+
+// setEnvIfAbsent appends key=value to a child environment unless the key is
+// already present, so an explicit setting is never overridden.
+func setEnvIfAbsent(env []string, key, value string) []string {
+	prefix := key + "="
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			return env
+		}
+	}
+	return append(env, prefix+value)
 }
 
 // overlayLocalEnv layers the worn Outfit's local environment onto the agent's
@@ -1311,11 +1370,14 @@ func cmdList(args []string) error {
 			}
 			fmt.Fprintf(&b, "    api key: %s%s\n", p.APIKeyEnv, req)
 		}
-		harnesses := "opencode"
+		harnesses := []string{"opencode"}
 		if p.Pi != nil {
-			harnesses = "opencode, pi"
+			harnesses = append(harnesses, "pi")
 		}
-		fmt.Fprintf(&b, "    harnesses: %s\n", harnesses)
+		if p.Lucinate != nil {
+			harnesses = append(harnesses, "lucinate")
+		}
+		fmt.Fprintf(&b, "    harnesses: %s\n", strings.Join(harnesses, ", "))
 		if showModels {
 			if models, err := discovery.Models(p, "", resolve); err == nil && len(models) > 0 {
 				for _, m := range models {

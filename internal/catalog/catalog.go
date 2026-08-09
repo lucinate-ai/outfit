@@ -57,6 +57,10 @@ type Provider struct {
 	// Pi-specific settings. Nil when the provider has no `pi:` block, in which
 	// case BuildPiProvider reports it as unsupported.
 	Pi *PiConfig `yaml:"pi"`
+	// Lucinate marks the provider as usable by the lucinate harness (an
+	// OpenAI-compatible endpoint). Nil when the provider has no `lucinate:`
+	// block, in which case BuildLucinateConnection reports it as unsupported.
+	Lucinate *LucinateConfig `yaml:"lucinate"`
 }
 
 // PiConfig is a provider's Pi-harness settings, from the catalogue `pi:` block.
@@ -65,6 +69,15 @@ type PiConfig struct {
 	// anthropic-messages, or google-generative-ai.
 	API string `yaml:"api"`
 	// BaseURL is the Pi endpoint. Optional; falls back to options.baseURL.
+	BaseURL string `yaml:"baseUrl"`
+}
+
+// LucinateConfig is a provider's lucinate-harness settings, from the catalogue
+// `lucinate:` block. Its presence marks the provider lucinate-capable; the
+// (optional) base URL falls back to options.baseURL when unset.
+type LucinateConfig struct {
+	// BaseURL is the lucinate connection URL. Optional; falls back to
+	// options.baseURL.
 	BaseURL string `yaml:"baseUrl"`
 }
 
@@ -346,6 +359,62 @@ func BuildPiProvider(id string, p *Provider, modelOverride, baseURLOverride stri
 	}
 
 	return prov, defaultModelKey, nil
+}
+
+// LucinateConnection is the resolved plumbing for a lucinate OpenAI-compatible
+// connection: the endpoint URL and the selected model. lucinate reads the API
+// key from LUCINATE_OPENAI_API_KEY at run time, so — like Pi's $VAR idiom — no
+// secret is carried here.
+type LucinateConnection struct {
+	BaseURL string
+	Model   string
+}
+
+// BuildLucinateConnection turns a provider plus an explicit model into the
+// plumbing for a lucinate connection, returning the connection and the chosen
+// model key, or "" if none was selected. A provider without a `lucinate:` block
+// in the catalogue is not lucinate-compatible and yields an error.
+//
+// baseURLOverride mirrors BuildPiProvider: when non-empty it wins; otherwise
+// OUTFIT_BASE_URL is consulted, then the provider's own endpoint variable, then
+// the catalogue's lucinate.baseUrl, then options.baseURL. resolve looks up env
+// vars (used for the override and the per-provider baseURL variable).
+func BuildLucinateConnection(id string, p *Provider, modelOverride, baseURLOverride string, resolve func(string) string) (LucinateConnection, string, error) {
+	if p.Lucinate == nil {
+		return LucinateConnection{}, "", fmt.Errorf("provider %q is not supported by the lucinate harness (no lucinate config in the catalogue)", id)
+	}
+
+	options := p.ResolveOptions(resolve)
+	if baseURLOverride == "" {
+		baseURLOverride = resolve(baseURLEnv)
+	}
+	// Same precedence as BuildPiProvider: explicit override, then the provider's
+	// own endpoint variable, then the catalogue's lucinate endpoint, then its
+	// opencode one.
+	var envBaseURL string
+	if v := p.OptionsFromEnv["baseURL"]; v != "" {
+		envBaseURL = resolve(v)
+	}
+	var conn LucinateConnection
+	switch {
+	case baseURLOverride != "":
+		conn.BaseURL = baseURLOverride
+	case envBaseURL != "":
+		conn.BaseURL = envBaseURL
+	case p.Lucinate.BaseURL != "":
+		conn.BaseURL = p.Lucinate.BaseURL
+	default:
+		conn.BaseURL, _ = p.Options["baseURL"].(string)
+	}
+	if conn.BaseURL != "" {
+		options["baseURL"] = conn.BaseURL
+	}
+	if err := p.RequireOptions(id, options); err != nil {
+		return LucinateConnection{}, "", err
+	}
+
+	conn.Model = modelOverride
+	return conn, modelOverride, nil
 }
 
 // EnvRef renders an environment-variable reference in the form opencode

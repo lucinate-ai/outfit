@@ -888,3 +888,221 @@ func TestOverlayLocalEnv_DoesNotMutateProcessEnv(t *testing.T) {
 		t.Errorf("an ENV value leaked into the process env: OUTFIT_ENV_LEAK_CHECK=%q", v)
 	}
 }
+
+// readLucinateStore reads ~/.lucinate/connections.json (HOME must be set).
+func readLucinateStore(t *testing.T, home string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, ".lucinate", "connections.json"))
+	if err != nil {
+		t.Fatalf("read connections.json: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("connections.json not valid JSON: %v", err)
+	}
+	return m
+}
+
+// lucinateConn returns the managed connection for a provider from a store map.
+func lucinateConn(t *testing.T, root map[string]any, providerID string) map[string]any {
+	t.Helper()
+	conns, _ := root["connections"].([]any)
+	for _, raw := range conns {
+		if m, ok := raw.(map[string]any); ok && m["id"] == "outfit:"+providerID {
+			return m
+		}
+	}
+	t.Fatalf("managed connection for %q not found in %v", providerID, root)
+	return nil
+}
+
+func TestCmdAdd_LucinateHarnessViaFlag(t *testing.T) {
+	home := isolateConfig(t)
+	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
+
+	out := captureStdout(t, func() {
+		if err := cmdAdd([]string{"-H", "lucinate", "-p", "openrouter", "-m", "deepseek/deepseek-v4-flash"}); err != nil {
+			t.Fatalf("cmdAdd: %v", err)
+		}
+	})
+	if !strings.Contains(out, "connections.json") || !strings.Contains(out, "Run 'lucinate'") {
+		t.Errorf("expected lucinate-flavoured output:\n%s", out)
+	}
+	if !strings.Contains(out, "LUCINATE_OPENAI_API_KEY") {
+		t.Errorf("expected the key note to mention LUCINATE_OPENAI_API_KEY:\n%s", out)
+	}
+	if strings.Contains(out, "sk-or-v1-test") {
+		t.Errorf("the resolved secret must never be printed:\n%s", out)
+	}
+
+	root := readLucinateStore(t, home)
+	if root["defaultId"] != "outfit:openrouter" {
+		t.Errorf("defaultId = %v, want outfit:openrouter", root["defaultId"])
+	}
+	conn := lucinateConn(t, root, "openrouter")
+	if conn["type"] != "openai" {
+		t.Errorf("type = %v, want openai", conn["type"])
+	}
+	if conn["url"] != "https://openrouter.ai/api/v1" {
+		t.Errorf("url = %v", conn["url"])
+	}
+	if conn["defaultModel"] != "deepseek/deepseek-v4-flash" {
+		t.Errorf("defaultModel = %v", conn["defaultModel"])
+	}
+	if _, ok := conn["apiKey"]; ok {
+		t.Error("the connection must not carry an apiKey")
+	}
+
+	// No secret store must have been written either.
+	if _, err := os.Stat(filepath.Join(home, ".lucinate", "secrets", "secrets.json")); !os.IsNotExist(err) {
+		t.Error("outfit must not write lucinate's secrets store")
+	}
+	// opencode must be untouched.
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "opencode.json")); !os.IsNotExist(err) {
+		t.Error("opencode config should not have been written for a lucinate add")
+	}
+}
+
+func TestCmdShow_LucinatePopulated(t *testing.T) {
+	isolateConfig(t)
+
+	captureStdout(t, func() {
+		if err := cmdAdd([]string{"-H", "lucinate", "-p", "ollama", "-m", "llama3.2"}); err != nil {
+			t.Fatalf("cmdAdd -H lucinate: %v", err)
+		}
+	})
+
+	out := captureStdout(t, func() {
+		if err := cmdShow([]string{"-H", "lucinate"}); err != nil {
+			t.Fatalf("cmdShow -H lucinate: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Configured providers:") || !strings.Contains(out, "ollama") {
+		t.Errorf("lucinate provider not shown:\n%s", out)
+	}
+	// lucinate has no top-level default model.
+	if strings.Contains(out, "Default model:") {
+		t.Errorf("lucinate has no default model; the line should be omitted:\n%s", out)
+	}
+}
+
+func TestCmdExportRemove_LucinateRoundTrip(t *testing.T) {
+	home := isolateConfig(t)
+	t.Setenv("OUTFIT_HARNESS", "lucinate")
+
+	captureStdout(t, func() {
+		// A context window is applied, but lucinate cannot store one.
+		if err := cmdAdd([]string{"-p", "ollama", "-m", "llama3.2", "-c", "200000"}); err != nil {
+			t.Fatalf("cmdAdd: %v", err)
+		}
+	})
+
+	out := captureStdout(t, func() {
+		if err := cmdExport(nil); err != nil {
+			t.Fatalf("cmdExport: %v", err)
+		}
+	})
+	if !strings.Contains(out, "PROVIDER ollama") || !strings.Contains(out, "llama3.2") {
+		t.Errorf("unexpected lucinate export:\n%s", out)
+	}
+	// Limits do not round-trip through a lucinate connection.
+	if strings.Contains(out, "CONTEXT") {
+		t.Errorf("a lucinate connection cannot carry a context window; export must omit it:\n%s", out)
+	}
+
+	// Remove the connection.
+	out = captureStdout(t, func() {
+		if err := cmdRemove([]string{"-p", "ollama"}); err != nil {
+			t.Fatalf("cmdRemove: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Removed provider") {
+		t.Errorf("unexpected remove output:\n%s", out)
+	}
+	root := readLucinateStore(t, home)
+	conns, _ := root["connections"].([]any)
+	for _, raw := range conns {
+		if m, ok := raw.(map[string]any); ok && m["id"] == "outfit:ollama" {
+			t.Error("ollama connection should have been removed")
+		}
+	}
+}
+
+func TestCmdAdd_LucinateUnsupportedProvider(t *testing.T) {
+	isolateConfig(t)
+	if err := cmdAdd([]string{"-H", "lucinate", "-p", "amazon-bedrock", "-m", "anthropic.claude-3-5-sonnet"}); err == nil {
+		t.Error("expected error adding a lucinate-unsupported provider")
+	}
+	t.Setenv("GOOGLE_VERTEX_PROJECT", "my-proj")
+	if err := cmdAdd([]string{"-H", "lucinate", "-p", "google-vertex", "-m", "gemini"}); err == nil {
+		t.Error("expected error adding google-vertex under lucinate")
+	}
+}
+
+func TestLucinateLaunchKey(t *testing.T) {
+	t.Setenv("LUCINATE_DATA_DIR", t.TempDir())
+	t.Setenv("DEEPSEEK_API_KEY", "")
+	fromDotEnv := func(name string) string {
+		if name == "DEEPSEEK_API_KEY" {
+			return "sk-or-v1-fromenv"
+		}
+		return ""
+	}
+
+	// With an Outfit worn, the worn provider's key resolves.
+	sel := outfit.Selection{Provider: "openrouter"}
+	if key, ok := lucinateLaunchKey("", fromDotEnv, sel, true); !ok || key != "sk-or-v1-fromenv" {
+		t.Errorf("worn launch key = %q, %v; want the resolved key", key, ok)
+	}
+
+	// With no Outfit worn and no store, nothing resolves.
+	if _, ok := lucinateLaunchKey("", fromDotEnv, outfit.Selection{}, false); ok {
+		t.Error("no worn provider and no store should resolve no key")
+	}
+}
+
+func TestSetEnvIfAbsent(t *testing.T) {
+	env := []string{"PATH=/usr/bin", "FOO=1"}
+	got := setEnvIfAbsent(env, "BAR", "2")
+	if v, ok := envValue(got, "BAR"); !ok || v != "2" {
+		t.Errorf("BAR = %q (present=%v), want 2", v, ok)
+	}
+	// An existing key is never overridden.
+	got = setEnvIfAbsent(got, "FOO", "999")
+	if v, _ := envValue(got, "FOO"); v != "1" {
+		t.Errorf("FOO = %q, want the original 1 (not overridden)", v)
+	}
+}
+
+// TestHarness_LucinateInjectsKeyAtLaunch checks the launched agent's environment
+// carries LUCINATE_OPENAI_API_KEY for the worn provider's key.
+func TestHarness_LucinateInjectsKeyAtLaunch(t *testing.T) {
+	isolateConfig(t)
+	t.Setenv("OUTFIT_HARNESS", "lucinate")
+	t.Setenv("DEEPSEEK_API_KEY", "sk-or-v1-test")
+
+	envFile := filepath.Join(t.TempDir(), "env")
+	dir := t.TempDir()
+	body := "#!/bin/sh\nenv > " + envFile + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "lucinate"), []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	outfitPath := filepath.Join(t.TempDir(), "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER openrouter\nMODEL deepseek/deepseek-v4-flash\n")
+
+	captureStdout(t, func() {
+		if err := cmdHarness([]string{"--outfit=" + outfitPath}); err != nil {
+			t.Fatalf("cmdHarness --outfit: %v", err)
+		}
+	})
+
+	got, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("lucinate was not launched: %v", err)
+	}
+	if !strings.Contains(string(got), "LUCINATE_OPENAI_API_KEY=sk-or-v1-test") {
+		t.Errorf("launched agent's env is missing the injected key:\n%s", got)
+	}
+}
