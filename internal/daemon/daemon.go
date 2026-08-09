@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/lucinate-ai/outfit/internal/metrics"
 	"github.com/lucinate-ai/outfit/internal/remote"
@@ -39,11 +40,28 @@ type Daemon struct {
 	ValidateConfig func(remote.DeployConfig) error
 	// Collector gathers system stats; nil skips them.
 	Collector *metrics.Collector
+	// SampleInterval is how often SampleActivity reads the engine's
+	// counters; zero means DefaultSampleInterval.
+	SampleInterval time.Duration
+	// Now is the clock idle durations are measured against; nil means
+	// time.Now. Injected the same way Collector.Run and BuildArgv are, so a
+	// test can age an engine without waiting.
+	Now func() time.Time
+
+	act activity
 
 	mu     sync.Mutex
 	runner string
 	model  string
 	scrape metrics.ScrapeTarget
+}
+
+// now reads the daemon's clock, defaulting to the wall clock.
+func (d *Daemon) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
 }
 
 // SetScrape records where the running engine's own /metrics lives; an empty
@@ -128,7 +146,15 @@ func (d *Daemon) StartEngine() error {
 	if dc != nil {
 		d.SetServed(dc.Runner, dc.ModelID)
 	}
-	return d.Sup.Start(argv)
+	if err := d.Sup.Start(argv); err != nil {
+		return err
+	}
+	// A start is activity in its own right. It is what stops a freshly woken
+	// instance from reporting that it has been idle since before its engine
+	// existed — the race the control plane used to close with a last-wake
+	// timestamp of its own.
+	d.act.markActive(d.now())
+	return nil
 }
 
 // StatusResponse is the control API's status reply.
@@ -138,20 +164,35 @@ type StatusResponse struct {
 	Model         string `json:"model,omitempty"`
 	UptimeSeconds int    `json:"uptimeSeconds,omitempty"`
 	LogPath       string `json:"logPath,omitempty"`
+	// LastActiveAt is when the engine last did any work, RFC 3339. Empty
+	// until an engine has run: a daemon that has served nothing reports no
+	// activity rather than claiming its own start time as some.
+	LastActiveAt string `json:"lastActiveAt,omitempty"`
+	// IdleSeconds is how long it has been since LastActiveAt. Derived at
+	// read time, so it is a convenience for a caller that would otherwise
+	// parse a timestamp in a shell pipeline — LastActiveAt is the fact.
+	IdleSeconds int `json:"idleSeconds,omitempty"`
 }
 
-// Status reports the supervised state, what is being served, and where the
-// engine's log lives.
+// Status reports the supervised state, what is being served, where the
+// engine's log lives, and how long the engine has been idle.
 func (d *Daemon) Status() StatusResponse {
 	state, _, uptime := d.Sup.Status()
 	runner, model := d.served()
-	return StatusResponse{
+	resp := StatusResponse{
 		State:         string(state),
 		Runner:        runner,
 		Model:         model,
 		UptimeSeconds: uptime,
 		LogPath:       d.Sup.LogPath,
 	}
+	if lastActive, ok := d.act.snapshot(); ok {
+		resp.LastActiveAt = lastActive.UTC().Format(time.RFC3339)
+		if idle := int(d.now().Sub(lastActive) / time.Second); idle > 0 {
+			resp.IdleSeconds = idle
+		}
+	}
+	return resp
 }
 
 // Metrics collects the full picture: supervised state, system stats, and —
@@ -176,9 +217,15 @@ func (d *Daemon) Metrics(ctx context.Context) metrics.Stats {
 	scrape := d.scrape
 	d.mu.Unlock()
 	if scrape.BaseURL != "" {
-		if tokens, err := metrics.ScrapeTokenStats(ctx, scrape); err == nil {
-			stats.Tokens = tokens
+		tokens, err := metrics.ScrapeTokenStats(ctx, scrape)
+		if err != nil {
+			tokens = nil
 		}
+		// Feed it through the same path the background sampler uses: one
+		// place decides whether a sample counts as activity, so a client
+		// polling metrics refreshes the record rather than racing it.
+		d.act.observe(tokens, d.now())
+		stats.Tokens = tokens
 	}
 	return stats
 }

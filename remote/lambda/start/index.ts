@@ -8,12 +8,10 @@ import {
   isCapacityError,
   isSsmAgentOnline,
   readDeployConfig,
-  readState,
   requireEnv,
   runInstance,
   runShellCommand,
   sleep,
-  writeState,
 } from '../shared/aws';
 import { type DeployConfig, logGroupEnvVar, type Runner, RUNNERS } from '../shared/deploy-config';
 import {
@@ -23,7 +21,6 @@ import {
   environmentFrom,
   findEnvEip,
   findEnvSecurityGroup,
-  idleStateParam,
   readEnvApiKey,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
@@ -380,11 +377,9 @@ async function checkHealth(instanceId: string): Promise<boolean> {
 }
 
 async function ready(env: string, baseUrl: string): Promise<LambdaFunctionURLResult> {
-  // Record the wake so the idle check gives the first request time to land.
-  const stateParam = idleStateParam(env);
-  const state = await readState(stateParam);
-  await writeState(stateParam, { ...state, last_wake_at: new Date().toISOString() });
-
+  // No wake is recorded here: the daemon counts an engine start as activity,
+  // so the instance itself reports a fresh idle time and the idle check gives
+  // the first request time to land without the control plane tracking it.
   console.log(JSON.stringify({ phase: 'ready', environment: env }));
   return jsonResponse(200, {
     state: 'ready',

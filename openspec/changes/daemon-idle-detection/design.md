@@ -114,15 +114,19 @@ time.Now`, which is not safe across parallel tests.
 just to keep a number fresh. `lastActiveAt` is the fact; `idleSeconds` is a
 convenience for a caller that would otherwise parse a timestamp in a shell
 pipeline. Both are `omitempty`, so a daemon that has never run an engine emits
-neither and the Lambda's fallback triggers on a missing `lastActiveAt`.
+neither, and a missing `lastActiveAt` is what the Lambda keys "nothing
+observed" off.
 
 **D9 — The Lambda reads `/v1/status` and nothing else.** `shared/daemon.ts`
 gains `DAEMON_STATUS_CMD` and `parseDaemonStatus`, mirroring the existing
 metrics pair; `idleCheck` scrapes status and passes the reported idle seconds
 into `decideIdle`. A reply with no `lastActiveAt` is treated exactly like an
 unreachable daemon — no activity observed — which is the policy that already
-governs a failed scrape. `/v1/metrics` stays where it is for the stats path;
-the idle path simply stops using it. Rejected: keeping the counter scrape as a
+governs a failed scrape. With nothing observed, `decideIdle` measures idleness
+from the launch time instead — the same anchor the counter path fell back on —
+so an unreachable instance still gets its grace period and then stops at the
+threshold. `/v1/metrics` stays where it is for the stats path; the idle path
+simply stops using it. Rejected: keeping the counter scrape as a
 fallback for daemons baked before this change. It would double the idle logic
 permanently to smooth over a one-off deployment ordering, and a fallback nobody
 exercises is a fallback nobody notices breaking.
@@ -191,9 +195,10 @@ order matters because there is no compatibility path.
 
 **Rollback:** revert the stack deploy. The old Lambda reads `/v1/metrics`,
 which the new daemon still serves unchanged, so a rolled-back control plane
-works against a new AMI — the incompatibility runs one way only. The
-`idle-state` parameter is recreated by `ensureIdleState` on the next deploy
-call, and a missing one already degrades to `{}` in `readState`.
+works against a new AMI — the incompatibility runs one way only. Its
+`readState` already treats a missing `idle-state` parameter as empty state, and
+the old deploy Lambda seeds one on the next deploy call, so nothing has to be
+restored by hand.
 
 ## Open Questions
 

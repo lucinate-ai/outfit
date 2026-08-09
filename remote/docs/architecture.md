@@ -42,7 +42,6 @@ flowchart TB
     stop["StopFn"]
     deploy["DeployFn"]
     dcfg[("SSM: deploy-config")]
-    idle[("SSM: idle-state")]
     eip["Elastic IP"]
     s3[("S3: weights")]
     sg["Security group<br/>:port from your /32"]
@@ -62,7 +61,7 @@ flowchart TB
   eip --- inst
   agent -->|http + api key| inst
   sched --> stop
-  stop -->|SSM scrape, terminate| inst
+  stop -->|SSM status scrape, terminate| inst
   start -->|SSM health| inst
 ```
 
@@ -161,6 +160,11 @@ request the engine's first start over its control API. The health check hits
 
 ## Idle / stop
 
+Engine activity is judged **on the instance**, not here. The daemon samples its
+engine's counters every 15 seconds and reports `idleSeconds` on `/v1/status`;
+the Lambda reads that number and applies the policy only it knows — retention,
+the hard cap, the grace period.
+
 ```mermaid
 flowchart TB
   tick["EventBridge tick<br/>(every 5 min)"] --> stop["StopFn idleCheck"]
@@ -170,18 +174,26 @@ flowchart TB
   cap -->|yes| term["TerminateInstances"]
   cap -->|no| grace{"within grace<br/>of launch?"}
   grace -->|yes| wait2["wait"]
-  grace -->|no| scrape["SSM: scrape metrics"]
-  scrape --> active{"activity since<br/>the idle anchor?"}
-  active -->|yes| upd["record, wait"]
-  active -->|no| idle{"idle > threshold?"}
+  grace -->|no| scrape["SSM: scrape /v1/status"]
+  scrape --> idle{"daemon idleSeconds<br/>> threshold?"}
   idle -->|yes| term
   idle -->|no| wait3["wait"]
 ```
 
-A failed scrape counts as "no activity", so a wedged box is still terminated at
-the threshold rather than burning GPU-hours. A `Retain-Until` instance tag (UTC
-ISO-8601) overrides both the idle timer and the max-runtime cap; a manual
-`outfit remote stop` still terminates immediately.
+That split is what fixed the sampling blip: one scrape every five minutes could
+land in a lull between requests and read a busy endpoint as idle, whereas the
+daemon has taken ~60 readings in that window. It also means the control plane
+keeps no activity history — there is no `idle-state` parameter and no wake
+timestamp, because the daemon counts an engine start as activity itself.
+
+A daemon that cannot be reached, or that answers without a last-active time,
+counts as "no activity", so a wedged box is still terminated at the threshold
+rather than burning GPU-hours. There is deliberately **no fallback** to reading
+counters: an instance whose baked outfit predates this behaviour reports no
+last-active time and is treated as idle, which is why the AMIs are re-baked
+before the stack is deployed. A `Retain-Until` instance tag (UTC ISO-8601)
+overrides both the idle timer and the max-runtime cap; a manual `outfit remote
+stop` still terminates immediately.
 
 ## Image stack
 
@@ -201,7 +213,7 @@ AMI matching the tags**. A slim AMI carries only the driver + the runner
 | Image Builder pipeline | `lib/image-stack.ts` |
 | Deploy-config contract | `lambda/shared/deploy-config.ts` |
 | Runner registry (one spec per runner: boot, weights, seed) | `lambda/runners/` |
-| The on-instance daemon's API (SSM curl targets) | `lambda/shared/daemon.ts` |
+| The on-instance daemon's API (SSM curl targets, status + metrics types) | `lambda/shared/daemon.ts` |
 | Wake / launch / user-data (`buildInferenceUserData`) | `lambda/start/index.ts` |
 | Idle / manual stop | `lambda/stop/index.ts`, `lambda/shared/idle.ts` |
 | Set the deploy-config | `lambda/deploy/index.ts` |

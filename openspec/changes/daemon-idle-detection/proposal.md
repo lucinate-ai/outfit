@@ -51,6 +51,8 @@ can sample far more often than any external caller.
 - `remote-engine-host`: the control plane's idle check reads the daemon's
   last-active time instead of its raw counters, and keeps no activity history
   of its own.
+- `environment-deployment`: a deploy no longer provisions any
+  activity-tracking state for the environment.
 - `endpoint-lifecycle`: activity is judged from continuous on-instance
   sampling rather than from a single reading taken at each sweep, so a lull
   between the sweep's ticks is no longer mistaken for idleness.
