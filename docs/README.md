@@ -30,6 +30,8 @@ Four words carry the whole tool:
 - [The `Outfit` file](outfit-file.md) — syntax and examples
 - [Running on a cloud GPU](commands/remote.md) — the same Outfit, on a
   machine that stops when you do
+- [The HTTP control API](http-api.md) — driving a supervised engine over
+  HTTP, and the [OpenAPI contract](openapi.yaml) for writing a client
 - [Runnable examples](../examples/) — ready-to-apply Outfits with walkthroughs
 - [Deploying your own cloud GPU endpoint](../remote/) — the AWS project behind
   `outfit remote`
@@ -47,6 +49,7 @@ Four words carry the whole tool:
 | [`outfit alias`](commands/alias.md) | Name an `Outfit` so the name works anywhere a path does |
 | [`outfit unalias`](commands/unalias.md) | Drop a registered name |
 | [`outfit serve`](commands/serve.md) | Run the inference server for the model an `Outfit` names |
+| `outfit daemon` | Supervise an engine over the [control API](http-api.md) |
 | [`outfit remote`](commands/remote.md) | Run the model on a cloud GPU that stops when you do |
 | [`outfit export`](commands/export.md) | Capture the current setup as an `Outfit` |
 | [`outfit harness`](commands/harness.md) | Launch the agent, optionally dressing it first |
@@ -62,6 +65,7 @@ Four words carry the whole tool:
 | `OUTFIT_HARNESS` | Selects the harness (a `--harness`/`-H` flag beats it) |
 | `OUTFIT_PROVIDERS` | Path to a custom provider catalogue (`--providers` beats it) |
 | `OUTFIT_BASE_URL` | Overrides any provider's API base URL (`--base-url`/`-u` beats it) |
+| `OUTFIT_API_TOKEN` | Bearer token for the daemon [control API](http-api.md) |
 | `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, … | Provider API keys — `outfit list` shows which each provider reads |
 | `OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`, `OMLX_BASE_URL`, `VLLM_BASE_URL`, `OPENAI_BASE_URL` | Per-provider endpoint overrides |
 | `AWS_REGION` | Region for AWS Bedrock |
