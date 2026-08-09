@@ -1,5 +1,5 @@
 /**
- * Environments: the per-instance layer on top of the shared stack. The shared
+ * Environments: the per-instance layer on top of the control-plane stack. The shared
  * stack (deployed once by `outfit remote bootstrap`) holds the Lambdas, the
  * weights bucket, roles and the VPC; an environment is created by the deploy
  * Lambda on demand and owns everything specific to one endpoint — its Elastic

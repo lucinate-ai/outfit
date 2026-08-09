@@ -20,7 +20,7 @@ and SHALL NOT perform any TCP probe; `stats` SHALL report instance state,
 token usage, resource consumption, and GPU information for a running instance;
 `deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered
 remote environments (see the Remote Environments specification). `bootstrap`
-SHALL stand up the shared, account-level AWS infrastructure (once per account)
+SHALL stand up the account-level AWS control plane (once per account)
 by obtaining and driving the CDK project, and takes its own flags rather than
 an Outfit path (see the Endpoint Provisioning specification). An unrecognised
 subcommand SHALL fail naming the accepted ones.
@@ -230,7 +230,7 @@ serve, never where the weights are stored. A `--dry-run` SHALL print the
 derived deployment without sending it.
 
 Deploy SHALL target a named environment: in addition to deriving what to serve,
-it SHALL create and register that environment on the shared layer (its Elastic
+it SHALL create and register that environment on the control plane (its Elastic
 IP, instance configuration, per-environment API key and ingress, and SSM state),
 as defined by the Environment Deployment specification. Deploying SHALL NOT start
 the instance.

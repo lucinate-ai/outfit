@@ -19,9 +19,9 @@ import (
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
-// sharedStackName is the CloudFormation stack holding the shared, account-level
-// layer that bootstrap deploys and `outfit remote deploy` discovers.
-const sharedStackName = "cloud-vm-llm"
+// controlPlaneStackName is the CloudFormation stack holding the account-level
+// control plane that bootstrap deploys and `outfit remote deploy` discovers.
+const controlPlaneStackName = "cloud-vm-llm"
 
 // Seams: package variables so tests drive the flow without AWS, a network, or
 // spawning a package manager/cdk.
@@ -31,7 +31,7 @@ var (
 	bootstrapRunStep         bootstrapStep = runBootstrapStep
 	bootstrapDownloadFn                    = remote.DownloadRemote
 	bootstrapAccountFn                     = remote.CallerIdentity
-	bootstrapStackDeployedFn               = remote.SharedStackDeployed
+	bootstrapStackDeployedFn               = remote.ControlPlaneStackDeployed
 	bootstrapBakedFn                       = remote.BakedRunners
 	bootstrapPreflightFn                   = checkNodeAndPackageManager
 )
@@ -130,9 +130,9 @@ func resolvePackageManagerName(flagVal string) (name string, pinned bool, err er
 	return "", false, nil
 }
 
-// cmdRemoteBootstrap deploys the shared, account-level infrastructure once —
+// cmdRemoteBootstrap deploys the account-level control plane once —
 // analogous to `cdk bootstrap` — by downloading the remote/ CDK project and
-// driving its shared-stack deploy. It creates no EIP, instance, or environment;
+// driving its control-plane deploy. It creates no EIP, instance, or environment;
 // those come from `outfit remote deploy`.
 func cmdRemoteBootstrap(args []string) error {
 	fs := flag.NewFlagSet("remote bootstrap", flag.ContinueOnError)
@@ -190,7 +190,7 @@ func cmdRemoteBootstrap(args []string) error {
 		if acct, err := bootstrapAccountFn(ctx, cfg); err == nil {
 			account = acct
 		}
-		if dep, err := bootstrapStackDeployedFn(ctx, cfg, sharedStackName); err == nil {
+		if dep, err := bootstrapStackDeployedFn(ctx, cfg, controlPlaneStackName); err == nil {
 			alreadyBootstrapped = dep
 		}
 	}
@@ -238,7 +238,7 @@ func cmdRemoteBootstrap(args []string) error {
 	}
 
 	fmt.Println("\nThe account is bootstrapped. Create an endpoint with:")
-	fmt.Println("  outfit remote deploy <env>   # names an environment; discovers this shared layer")
+	fmt.Println("  outfit remote deploy <env>   # names an environment; discovers this control plane")
 
 	if *wait {
 		if credsErr != nil {
@@ -449,17 +449,17 @@ func setCdkContext(cdkDir, key, value string) error {
 
 func renderBootstrapPlan(account, region string, runners []string, ref, cdkDir string, alreadyBootstrapped bool, pm packageManager) {
 	w := os.Stderr
-	fmt.Fprintln(w, "outfit remote bootstrap — shared, account-level setup (once per account)")
+	fmt.Fprintln(w, "outfit remote bootstrap — account-level control-plane setup (once per account)")
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "AWS account:  %s\n", account)
 	fmt.Fprintf(w, "Region:       %s\n", region)
 	fmt.Fprintf(w, "Runners:      %s\n", strings.Join(runners, ", "))
 	fmt.Fprintf(w, "Sources:      github.com/lucinate-ai/outfit @ %s  ->  %s\n", ref, cdkDir)
 	if alreadyBootstrapped {
-		fmt.Fprintln(w, "Note:         the account is already bootstrapped; this will update the shared infrastructure.")
+		fmt.Fprintln(w, "Note:         the account is already bootstrapped; this will update the control plane.")
 	}
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "This deploys the shared infrastructure every environment reuses:")
+	fmt.Fprintln(w, "This deploys the control plane every environment reuses:")
 	fmt.Fprintln(w, "  • EC2 Image Builder pipelines and the baked AMIs")
 	fmt.Fprintln(w, "  • the lifecycle Lambdas (start/stop/monitor/deploy) and their IAM")
 	fmt.Fprintln(w, "  • the shared S3 weights bucket, IAM roles, and VPC")

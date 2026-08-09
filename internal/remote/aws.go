@@ -34,10 +34,10 @@ func CallerIdentity(ctx context.Context, cfg aws.Config) (string, error) {
 	return aws.ToString(out.Account), nil
 }
 
-// SharedStackDeployed reports whether the named CloudFormation stack exists in
+// ControlPlaneStackDeployed reports whether the named CloudFormation stack exists in
 // the account and region — i.e. whether `outfit remote bootstrap` has already
 // run. A stack that does not exist is reported as false, not an error.
-func SharedStackDeployed(ctx context.Context, cfg aws.Config, stackName string) (bool, error) {
+func ControlPlaneStackDeployed(ctx context.Context, cfg aws.Config, stackName string) (bool, error) {
 	_, err := cloudformation.NewFromConfig(cfg).DescribeStacks(ctx, &cloudformation.DescribeStacksInput{
 		StackName: aws.String(stackName),
 	})
@@ -50,28 +50,28 @@ func SharedStackDeployed(ctx context.Context, cfg aws.Config, stackName string) 
 	return true, nil
 }
 
-// SharedLayer is what `outfit remote bootstrap` deployed once for the account:
-// the control URLs every environment shares, plus the shared bucket. It is
-// discovered from the shared stack's CloudFormation outputs, so it reflects
+// ControlPlane is what `outfit remote bootstrap` deployed once for the account:
+// the control URLs every environment shares, plus the weights bucket. It is
+// discovered from the control-plane stack's CloudFormation outputs, so it reflects
 // what is actually deployed and works from any machine with account access.
-type SharedLayer struct {
+type ControlPlane struct {
 	Config        Config
 	WeightsBucket string
 }
 
-// DiscoverSharedLayer reads the shared stack's outputs. An absent stack is the
+// DiscoverControlPlane reads the control-plane stack's outputs. An absent stack is the
 // account not being bootstrapped, reported with the fix.
-func DiscoverSharedLayer(ctx context.Context, cfg aws.Config, stackName string) (SharedLayer, error) {
+func DiscoverControlPlane(ctx context.Context, cfg aws.Config, stackName string) (ControlPlane, error) {
 	out, err := cloudformation.NewFromConfig(cfg).DescribeStacks(ctx, &cloudformation.DescribeStacksInput{
 		StackName: aws.String(stackName),
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
-			return SharedLayer{}, fmt.Errorf(
-				"the shared infrastructure (stack %q) is not deployed in this account and region — run `outfit remote bootstrap` first",
+			return ControlPlane{}, fmt.Errorf(
+				"the control plane (stack %q) is not deployed in this account and region — run `outfit remote bootstrap` first",
 				stackName)
 		}
-		return SharedLayer{}, err
+		return ControlPlane{}, err
 	}
 	outputs := map[string]string{}
 	if len(out.Stacks) > 0 {
@@ -79,7 +79,7 @@ func DiscoverSharedLayer(ctx context.Context, cfg aws.Config, stackName string) 
 			outputs[aws.ToString(o.OutputKey)] = aws.ToString(o.OutputValue)
 		}
 	}
-	layer := SharedLayer{
+	layer := ControlPlane{
 		Config: Config{
 			StartURL:  outputs["StartUrl"],
 			StopURL:   outputs["StopUrl"],
@@ -91,7 +91,7 @@ func DiscoverSharedLayer(ctx context.Context, cfg aws.Config, stackName string) 
 		WeightsBucket: outputs["WeightsBucket"],
 	}
 	if layer.Config.StartURL == "" || layer.Config.StopURL == "" || layer.Config.DeployURL == "" {
-		return SharedLayer{}, fmt.Errorf(
+		return ControlPlane{}, fmt.Errorf(
 			"stack %q is missing its control-URL outputs — re-run `outfit remote bootstrap` to update it",
 			stackName)
 	}

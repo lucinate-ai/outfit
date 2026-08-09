@@ -2,26 +2,26 @@
 
 ## Purpose
 
-Define how shared, account-level AWS infrastructure for remote inference
+Define how the account-level AWS control plane for remote inference
 endpoints is provisioned through `outfit remote bootstrap`.
 
 ## Requirements
 
-### Requirement: Bootstrap deploys the shared account infrastructure
+### Requirement: Bootstrap deploys the control plane
 
-The system SHALL provide `outfit remote bootstrap`, which deploys the shared,
-account-level infrastructure that every remote environment reuses — the EC2
+The system SHALL provide `outfit remote bootstrap`, which deploys the
+account-level control plane that every remote environment reuses — the EC2
 Image Builder pipelines and baked AMIs, the environment-aware lifecycle Lambdas
 and their IAM, and the shared S3 weights bucket, IAM roles and VPC — by obtaining
-the CDK project shipped in `remote/` and driving its deploy of the shared stack.
+the CDK project shipped in `remote/` and driving its deploy of the control-plane stack.
 Bootstrap SHALL NOT create any Elastic IP or EC2 instance, and SHALL NOT register
 an environment; those belong to `outfit remote deploy`. Bootstrap SHALL NOT
 reimplement the infrastructure; it SHALL orchestrate the existing CDK project.
 
-#### Scenario: A successful bootstrap yields the shared layer
+#### Scenario: A successful bootstrap yields the control plane
 
 - **WHEN** `outfit remote bootstrap` completes
-- **THEN** the shared stack is deployed — Image Builder, the lifecycle Lambdas,
+- **THEN** the control-plane stack is deployed — Image Builder, the lifecycle Lambdas,
   and the shared bucket/roles/VPC — with no Elastic IP or instance created
 
 #### Scenario: Orchestration stops on a failed step
@@ -29,25 +29,25 @@ reimplement the infrastructure; it SHALL orchestrate the existing CDK project.
 - **WHEN** any step in the sequence fails
 - **THEN** bootstrap stops and reports which step failed rather than continuing
 
-### Requirement: Shared infrastructure is discoverable
+### Requirement: The control plane is discoverable
 
-The shared stack SHALL publish, as CloudFormation stack outputs under a
+The control-plane stack SHALL publish, as CloudFormation stack outputs under a
 well-known stack name, the values a later `outfit remote deploy` needs to create
 and drive environments: the lifecycle Lambda URLs, the weights bucket, the shared
 roles, and the region. Discovery SHALL be from those outputs rather than a file
 bootstrap writes, so it reflects what is actually deployed and works from any
 machine with account access.
 
-#### Scenario: Deploy can discover the shared layer
+#### Scenario: Deploy can discover the control plane
 
-- **WHEN** the shared stack is deployed and `outfit remote deploy` runs later
+- **WHEN** the control-plane stack is deployed and `outfit remote deploy` runs later
 - **THEN** it reads the Lambda URLs, bucket, roles and region from the stack's
   outputs, without a local file having to carry them
 
 ### Requirement: Explicit consent before creating AWS resources
 
 Before running any action that creates or modifies AWS resources, bootstrap SHALL
-present a plan naming the target AWS account and region, the shared resources it
+present a plan naming the target AWS account and region, the control-plane resources it
 will create, a qualitative cost caveat, and the exact commands it will run, then
 SHALL require explicit confirmation. A `--dry-run` flag SHALL print this plan and
 make no changes. A `--yes` flag SHALL satisfy the confirmation non-interactively.
@@ -57,7 +57,7 @@ other than an explicit yes as a decline that makes no changes.
 #### Scenario: The plan is shown before anything is deployed
 
 - **WHEN** the user runs `outfit remote bootstrap`
-- **THEN** the account, region, shared resources, cost caveat, and commands are
+- **THEN** the account, region, control-plane resources, cost caveat, and commands are
   printed before any AWS-mutating command runs
 
 #### Scenario: Dry run changes nothing
@@ -114,7 +114,7 @@ credentials. When the user has pinned a package manager (via the flag or the
 environment variable), the preflight SHALL require that specific manager on the
 path; otherwise it SHALL require at least one of `pnpm` or `npm`. It SHALL report
 the resolved AWS account and region for the plan, and SHALL note when the account
-is already bootstrapped (the shared stack exists, via CloudFormation
+is already bootstrapped (the control-plane stack exists, via CloudFormation
 `DescribeStacks`). It SHALL surface the GPU vCPU quota as a warning when it cannot
 be confirmed, without attempting to raise it.
 
@@ -136,8 +136,8 @@ be confirmed, without attempting to raise it.
 
 #### Scenario: Already bootstrapped is noted, not fatal
 
-- **WHEN** the shared stack already exists in the account and region
-- **THEN** bootstrap notes it will update the shared infrastructure, and
+- **WHEN** the control-plane stack already exists in the account and region
+- **THEN** bootstrap notes it will update the control plane, and
   continues (the deploy is idempotent)
 
 ### Requirement: A Node package manager is selected, overridable, and logged
@@ -182,9 +182,9 @@ yet runs correctly under either manager.
 - **THEN** bootstrap fails with an error naming the accepted values, before
   deploying anything
 
-### Requirement: Shared settings are collected
+### Requirement: Control-plane settings are collected
 
-Bootstrap SHALL collect the shared settings the CDK has no default for and write
+Bootstrap SHALL collect the control-plane settings the CDK has no default for and write
 them where the CDK reads them: which runner AMIs to bake (`--runners`, defaulting
 to both `llamacpp` and `vllm`) so any environment can pick its engine at deploy
 time, and an optional Hugging Face token for the shared secret used when seeding
@@ -207,8 +207,8 @@ per-environment and belongs to `deploy`, not here.
 
 Bootstrap SHALL be safe to re-run: it SHALL skip the package-manager install when
 dependencies are present and `cdk bootstrap` when the account and region are already
-bootstrapped, and SHALL not redeploy a shared stack that is unchanged. Because it
-touches only shared infrastructure and never a live instance, re-running SHALL NOT
+bootstrapped, and SHALL not redeploy a control-plane stack that is unchanged. Because it
+touches only control plane and never a live instance, re-running SHALL NOT
 require any override. Because the AMI bake is slow, by default bootstrap SHALL
 start the bake and hand off, telling the user how to wait, rather than blocking. A
 `--wait` flag SHALL block until the bake completes.
@@ -217,7 +217,7 @@ start the bake and hand off, telling the user how to wait, rather than blocking.
 
 - **WHEN** bootstrap is re-run
 - **THEN** it skips installation and CDK bootstrap that are already done and
-  no-ops the unchanged shared stack, without requiring an override
+  no-ops the unchanged control-plane stack, without requiring an override
 
 #### Scenario: The slow bake does not block by default
 

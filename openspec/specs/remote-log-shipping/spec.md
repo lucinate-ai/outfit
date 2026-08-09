@@ -90,15 +90,15 @@ SHALL be triggered by size, frequently enough that a rapidly-logging engine
 ### Requirement: The log groups are managed infrastructure
 
 Every CloudWatch log group the instances ship to — the per-engine groups and the
-boot group — SHALL be created as part of the shared, account-level
-infrastructure, with an explicit retention period and an explicit removal policy,
+boot group — SHALL be created as part of the account-level control plane,
+with an explicit retention period and an explicit removal policy,
 rather than being created implicitly by the shipping agent at first write.
 Retention SHALL bound how long logs are kept so storage does not grow without
 limit.
 
 #### Scenario: Log groups exist with managed retention
 
-- **WHEN** the shared infrastructure is deployed
+- **WHEN** the control plane is deployed
 - **THEN** each log group the instances ship to exists with a defined retention
   period
 - **AND** its lifecycle (creation and removal) is governed by the infrastructure

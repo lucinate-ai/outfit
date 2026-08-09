@@ -203,7 +203,7 @@ type DeployConfig struct {
 	ServeArgs       []string `json:"serveArgs"`
 }
 
-// Deploy creates (or updates) cfg.Environment on the shared layer and sets
+// Deploy creates (or updates) cfg.Environment on the control plane and sets
 // what its next wake will serve. The Lambda validates the config, provisions
 // the environment's own resources if absent, seeds the weights into S3 if they
 // are absent, and stores the config; deploying does not start the instance.
@@ -543,11 +543,11 @@ type (
 
 // Stats queries the stats Lambda for instance metrics: token usage, GPU, CPU,
 // and RAM utilization. Returns an error if the stats URL is not configured,
-// indicating the shared layer was deployed before stats support was added.
+// indicating the control plane was deployed before stats support was added.
 func Stats(ctx context.Context, cfg Config) (*StatsResponse, error) {
 	if cfg.StatsURL == "" {
 		return nil, fmt.Errorf(
-			"no stats_url configured: the shared layer needs re-deploying with `pnpm deploy` (or set OUTFIT_REMOTE_STATS_URL)")
+			"no stats_url configured: the control plane needs re-deploying with `pnpm deploy` (or set OUTFIT_REMOTE_STATS_URL)")
 	}
 	out, err := callStats(ctx, cfg)
 	if err != nil {

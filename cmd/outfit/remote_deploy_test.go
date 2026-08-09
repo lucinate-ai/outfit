@@ -212,8 +212,8 @@ func stubDeploySeams(t *testing.T, serverURL, statusState string) {
 	t.Cleanup(func() {
 		deployDiscoverFn, remoteStatusFn, detectPublicCIDRFn = origDiscover, origStatus, origDetect
 	})
-	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.SharedLayer, error) {
-		return remote.SharedLayer{Config: remote.Config{
+	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.ControlPlane, error) {
+		return remote.ControlPlane{Config: remote.Config{
 			StartURL: serverURL, StopURL: serverURL, DeployURL: serverURL, Region: "us-east-1",
 		}}, nil
 	}
@@ -309,8 +309,8 @@ func TestRemoteDeploy_NotBootstrapped(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)
 	stubDeploySeams(t, "https://unused", "undeployed")
-	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.SharedLayer, error) {
-		return remote.SharedLayer{}, fmt.Errorf("the shared infrastructure (stack %q) is not deployed in this account and region — run `outfit remote bootstrap` first", "cloud-vm-llm")
+	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.ControlPlane, error) {
+		return remote.ControlPlane{}, fmt.Errorf("the control plane (stack %q) is not deployed in this account and region — run `outfit remote bootstrap` first", "cloud-vm-llm")
 	}
 	writeDeployEnvOutfit(t, "testenv")
 
@@ -402,9 +402,9 @@ func TestRemoteDeploy_DryRunSendsNothing(t *testing.T) {
 	called := false
 	origDiscover := deployDiscoverFn
 	t.Cleanup(func() { deployDiscoverFn = origDiscover })
-	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.SharedLayer, error) {
+	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.ControlPlane, error) {
 		called = true
-		return remote.SharedLayer{}, fmt.Errorf("must not be called")
+		return remote.ControlPlane{}, fmt.Errorf("must not be called")
 	}
 	writeDeployEnvOutfit(t, "testenv")
 

@@ -14,7 +14,7 @@ export const AMI_ROLE_TAG_VALUE = 'runtime-ami';
 export const AMI_RUNNER_TAG_KEY = 'cloud-vm-llm:runner';
 
 /**
- * Configuration of the SHARED layer only. Everything per-environment — the
+ * Configuration of the control plane only. Everything per-environment — the
  * model, the runner, the context size, the serve args, the allowed ingress
  * CIDR — arrives later via `outfit remote deploy`, which creates environments
  * on top of this stack; none of it is stack configuration any more.
