@@ -355,7 +355,9 @@ outfit remote stop     # stop now instead of waiting for the idle timer
 Configuration is found in one of two places. A project's `Outfit` file can
 name it with a `REMOTE` instruction (`REMOTE remote.json`, resolved relative
 to the Outfit — like `PRESET`, so the pair travel together); otherwise the
-per-user `${XDG_CONFIG_HOME:-~/.config}/outfit/remote.json` is used. Either
+per-user `remote.json` in outfit's config directory
+(`${OUTFIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/outfit}`, see
+[docs/env-vars.md](docs/env-vars.md)) is used. Either
 way, paste the `OutfitRemoteConfig` output of the `remote/` deployment there:
 
 ```json

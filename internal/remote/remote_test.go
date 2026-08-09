@@ -42,7 +42,7 @@ func stubAWSEnv(t *testing.T) {
 
 func writeConfig(t *testing.T, cfg Config) {
 	t.Helper()
-	path := ConfigPath()
+	path := must1(ConfigPath())
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func envMap(m map[string]string) func(string) string {
 
 func TestConfigPath(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
-	if got, want := ConfigPath(), "/tmp/xdg/outfit/remote.json"; got != want {
+	if got, want := must1(ConfigPath()), "/tmp/xdg/outfit/remote.json"; got != want {
 		t.Errorf("ConfigPath() = %q, want %q", got, want)
 	}
 }

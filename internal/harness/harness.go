@@ -119,7 +119,7 @@ func Resolve(flag string) (Harness, string, error) {
 
 // PreferencePath returns the path to outfit's own config file, where the
 // default-harness preference is stored.
-func PreferencePath() string { return config.Path() }
+func PreferencePath() (string, error) { return config.Path() }
 
 // LoadPreference returns the stored default harness, or "" when none is set.
 func LoadPreference() (string, error) {

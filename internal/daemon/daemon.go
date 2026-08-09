@@ -15,8 +15,12 @@ import (
 // StateDir is where a daemon's own state lives: the stored deploy config and
 // the engine log. One daemon per machine is the working assumption (a second
 // one fails to bind the API port), so the directory is unkeyed.
-func StateDir() string {
-	return filepath.Join(remote.ConfigHome(), "daemon")
+func StateDir() (string, error) {
+	home, err := remote.ConfigHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "daemon"), nil
 }
 
 // Daemon ties the supervisor to what it serves: it resolves the engine

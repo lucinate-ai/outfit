@@ -287,7 +287,7 @@ func TestRemoteDeploy_PostsTheConfigAndRegisters(t *testing.T) {
 	}
 
 	// The environment is registered, owner-only, carrying the base URL and id.
-	path := remote.EnvConfigPath("testenv")
+	path := must1(remote.EnvConfigPath("testenv"))
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("environment not registered: %v", err)
@@ -318,7 +318,7 @@ func TestRemoteDeploy_NotBootstrapped(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "outfit remote bootstrap") {
 		t.Errorf("want a bootstrap-first error, got %v", err)
 	}
-	if _, statErr := os.Stat(remote.EnvConfigPath("testenv")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(must1(remote.EnvConfigPath("testenv"))); !os.IsNotExist(statErr) {
 		t.Error("nothing should be registered when the account is not bootstrapped")
 	}
 }

@@ -32,7 +32,7 @@ func stubAWSEnv(t *testing.T) {
 // writeRemoteConfig stores a remote config pointing at the test server.
 func writeRemoteConfig(t *testing.T, serverURL string) {
 	t.Helper()
-	path := remote.ConfigPath()
+	path := must1(remote.ConfigPath())
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

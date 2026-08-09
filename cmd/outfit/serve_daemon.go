@@ -63,7 +63,10 @@ func cmdDaemon(args []string) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
-	stateDir := daemon.StateDir()
+	stateDir, err := daemon.StateDir()
+	if err != nil {
+		return err
+	}
 	sup := daemon.NewSupervisor(filepath.Join(stateDir, "engine.log"))
 	d := &daemon.Daemon{
 		Sup:            sup,
@@ -143,10 +146,15 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 		return err
 	}
 
+	stateDir, err := daemon.StateDir()
+	if err != nil {
+		ln.Close()
+		return err
+	}
 	sup := daemon.NewSupervisor("") // empty LogPath: stdio stays forwarded
 	d := &daemon.Daemon{
 		Sup: sup,
-		Dir: daemon.StateDir(),
+		Dir: stateDir,
 		BuildArgv: func(*remote.DeployConfig) ([]string, error) {
 			return nil, fmt.Errorf("the engine is foreground-managed by this serve; restart `outfit serve` to change it")
 		},

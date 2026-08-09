@@ -39,19 +39,28 @@ export function daemonDeployConfig(
 }
 
 /**
+ * The daemon's config directory on the instance. The unit pins
+ * OUTFIT_CONFIG_DIR to this fixed system path so the daemon's config location
+ * does not depend on $HOME — a bare systemd service gets none, and the earlier
+ * $HOME-based default made the daemon read a different directory than the boot
+ * wrote to. The daemon's state (deploy-config.json, engine.log) lives here.
+ */
+export const DAEMON_CONFIG_DIR = '/var/lib/outfit';
+
+/**
  * The daemon boot shared by both runners: write the deploy config where the
- * daemon reads it, enable outfit-daemon.service (and the baked crash-nudge
- * timer), then request the engine's first start over the control API — the
- * daemon never auto-starts, so the boot start is the same explicit API start
- * any client performs. A 409 also counts: a re-run must not fail on an
- * engine already up.
+ * daemon reads it (its pinned OUTFIT_CONFIG_DIR), enable outfit-daemon.service
+ * (and the baked crash-nudge timer), then request the engine's first start
+ * over the control API — the daemon never auto-starts, so the boot start is
+ * the same explicit API start any client performs. A 409 also counts: a re-run
+ * must not fail on an engine already up.
  */
 export function daemonBoot(deployConfigJson: string, unitExtra: string): string {
-  return `mkdir -p /root/.config/outfit/daemon
-cat >/root/.config/outfit/daemon/deploy-config.json <<'DEPLOYCONFIG'
+  return `mkdir -p ${DAEMON_CONFIG_DIR}/daemon
+cat >${DAEMON_CONFIG_DIR}/daemon/deploy-config.json <<'DEPLOYCONFIG'
 ${deployConfigJson}
 DEPLOYCONFIG
-chmod 600 /root/.config/outfit/daemon/deploy-config.json
+chmod 600 ${DAEMON_CONFIG_DIR}/daemon/deploy-config.json
 
 cat >/etc/systemd/system/outfit-daemon.service <<'UNIT'
 [Unit]
@@ -59,6 +68,7 @@ Description=outfit daemon (engine host)
 After=network-online.target
 Wants=network-online.target
 [Service]
+Environment=OUTFIT_CONFIG_DIR=${DAEMON_CONFIG_DIR}
 ${unitExtra}ExecStart=/usr/local/bin/outfit daemon --api-addr 127.0.0.1:4242
 Restart=on-failure
 RestartSec=5

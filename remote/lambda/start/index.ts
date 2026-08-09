@@ -27,7 +27,7 @@ import {
   readEnvApiKey,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
-import { runnerSpec } from '../runners';
+import { DAEMON_CONFIG_DIR, runnerSpec } from '../runners';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
@@ -45,9 +45,9 @@ const ENGINE_LOG_GROUP = Object.fromEntries(
   RUNNERS.map((r) => [r, requireEnv(logGroupEnvVar(r))]),
 ) as Record<Runner, string>;
 // Where the outfit daemon writes the engine's stdout/stderr (tailed by the
-// CloudWatch agent): the daemon's stable engine-log path, root's config home
-// since the daemon runs as root.
-const ENGINE_LOG_FILE = '/root/.config/outfit/daemon/engine.log';
+// CloudWatch agent): under the daemon's pinned config dir (OUTFIT_CONFIG_DIR),
+// a fixed system path that does not depend on $HOME.
+const ENGINE_LOG_FILE = `${DAEMON_CONFIG_DIR}/daemon/engine.log`;
 
 const DEADLINE_MARGIN_MS = 20_000;
 const POLL_MS = 5_000;

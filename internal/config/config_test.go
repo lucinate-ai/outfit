@@ -18,11 +18,21 @@ func isolate(t *testing.T) string {
 	return dir
 }
 
+// testPath resolves the config file path, failing the test if it cannot.
+func testPath(t *testing.T) string {
+	t.Helper()
+	p, err := Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 // readRaw reads the config file as a generic JSON document, for assertions
 // about keys this package does not model.
 func readRaw(t *testing.T) map[string]any {
 	t.Helper()
-	data, err := os.ReadFile(Path())
+	data, err := os.ReadFile(testPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +89,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Errorf("AliasNames = %v, want %v (sorted)", got.AliasNames(), want)
 	}
 
-	info, err := os.Stat(Path())
+	info, err := os.Stat(testPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +142,7 @@ func TestUpdatePreservesUnknownKeys(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "outfit"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(Path(), []byte(`{"harness":"pi","future":{"x":1}}`), 0o600); err != nil {
+	if err := os.WriteFile(testPath(t), []byte(`{"harness":"pi","future":{"x":1}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -194,7 +204,7 @@ func TestUpdateStopsOnMutateError(t *testing.T) {
 	}); err != wantErr {
 		t.Fatalf("Update error = %v, want %v", err, wantErr)
 	}
-	if _, err := os.Stat(Path()); !os.IsNotExist(err) {
+	if _, err := os.Stat(testPath(t)); !os.IsNotExist(err) {
 		t.Errorf("config was written despite a mutate error (stat: %v)", err)
 	}
 }
@@ -248,7 +258,7 @@ func TestLoadMalformedJSON(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "outfit"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(Path(), []byte("{not json"), 0o600); err != nil {
+	if err := os.WriteFile(testPath(t), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -256,7 +266,7 @@ func TestLoadMalformedJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a malformed config")
 	}
-	if !strings.Contains(err.Error(), Path()) {
+	if !strings.Contains(err.Error(), testPath(t)) {
 		t.Errorf("error %q does not name the config file", err)
 	}
 }
@@ -269,10 +279,63 @@ func TestLoadWrongAliasType(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "outfit"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(Path(), []byte(`{"aliases":["q3"]}`), 0o600); err != nil {
+	if err := os.WriteFile(testPath(t), []byte(`{"aliases":["q3"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(); err == nil {
 		t.Fatal("expected an error for an aliases list")
 	}
+}
+
+// TestDirResolution covers the precedence and the loud failure of Dir.
+func TestDirResolution(t *testing.T) {
+	t.Run("override wins verbatim, no outfit segment appended", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", "/xdg")
+		t.Setenv(DirEnvVar, "/var/lib/outfit")
+		got, err := Dir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "/var/lib/outfit" {
+			t.Errorf("Dir() = %q, want /var/lib/outfit (verbatim)", got)
+		}
+	})
+
+	t.Run("XDG default when no override", func(t *testing.T) {
+		t.Setenv(DirEnvVar, "")
+		t.Setenv("XDG_CONFIG_HOME", "/xdg")
+		got, err := Dir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != filepath.Join("/xdg", "outfit") {
+			t.Errorf("Dir() = %q, want /xdg/outfit", got)
+		}
+	})
+
+	t.Run("home default when neither is set", func(t *testing.T) {
+		t.Setenv(DirEnvVar, "")
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("HOME", "/home/someone")
+		got, err := Dir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != filepath.Join("/home/someone", ".config", "outfit") {
+			t.Errorf("Dir() = %q, want /home/someone/.config/outfit", got)
+		}
+	})
+
+	t.Run("fails loudly naming the override when no home resolves", func(t *testing.T) {
+		t.Setenv(DirEnvVar, "")
+		t.Setenv("XDG_CONFIG_HOME", "")
+		t.Setenv("HOME", "")
+		_, err := Dir()
+		if err == nil {
+			t.Fatal("Dir() with no override/XDG/HOME did not error")
+		}
+		if !strings.Contains(err.Error(), DirEnvVar) {
+			t.Errorf("error %q does not name %s", err, DirEnvVar)
+		}
+	})
 }

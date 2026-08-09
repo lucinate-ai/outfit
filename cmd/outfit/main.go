@@ -607,7 +607,8 @@ func cmdAlias(args []string) error {
 	case previous != "":
 		fmt.Printf("Re-pointed alias %q to %s (was %s).\n", name, abs, previous)
 	default:
-		fmt.Printf("Added alias %q for %s (stored in %s).\n\n", name, abs, config.Path())
+		configPath, _ := config.Path()
+		fmt.Printf("Added alias %q for %s (stored in %s).\n\n", name, abs, configPath)
 		fmt.Println("Use it anywhere an Outfit path goes:")
 		fmt.Printf("  outfit apply %s\n", name)
 		fmt.Printf("  outfit serve %s\n", name)
@@ -675,7 +676,8 @@ func writeAliases(b *strings.Builder, header bool) error {
 		}
 	}
 	if header {
-		fmt.Fprintf(b, "Aliases (from %s):\n\n", config.Path())
+		configPath, _ := config.Path()
+		fmt.Fprintf(b, "Aliases (from %s):\n\n", configPath)
 	} else {
 		b.WriteString("\nAliases:\n")
 	}
@@ -914,7 +916,8 @@ func cmdHarness(args []string) error {
 		if err := harness.SavePreference(set); err != nil {
 			return err
 		}
-		fmt.Printf("Default harness set to %q (stored in %s).\n", set, harness.PreferencePath())
+		prefPath, _ := harness.PreferencePath()
+		fmt.Printf("Default harness set to %q (stored in %s).\n", set, prefPath)
 		return nil
 	}
 

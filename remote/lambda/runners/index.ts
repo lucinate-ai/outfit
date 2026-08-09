@@ -11,6 +11,7 @@ import type { RunnerSpec } from './spec';
 import { vllm } from './vllm';
 
 export type { RunnerSpec } from './spec';
+export { DAEMON_CONFIG_DIR } from './daemon-boot';
 
 const RUNNER_SPECS: Record<Runner, RunnerSpec> = {
   vllm,

@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { App } from 'aws-cdk-lib';
@@ -90,9 +91,10 @@ const DEFAULTS = {
   // ai-dock/llama.cpp-cuda release with CUDA 12.8; pin a specific build for
   // reproducible bakes. Must post-date the MTP merge (PR #22673).
   llamacppRelease: 'b10107',
-  // The first release shipping `outfit daemon`. Until it is published a bake
-  // 404s at download — publish the release, then bake.
-  outfitVersion: '1.15.0',
+  // outfitVersion is not a constant: it defaults to the latest git release tag
+  // (see latestReleaseVersion), so the release process — which creates the tag —
+  // sets it, and the baked binary can never drift from a real release. Override
+  // with `-c outfitVersion=` to pin or roll back.
   nvidiaDriverPackage: 'nvidia-driver-570-server-open',
   idleThresholdMinutes: 15,
   // Must exceed the whole cold start (S3 sync ~4 min + weight/CUDA load), or
@@ -109,6 +111,24 @@ const DEFAULTS = {
   imageVolumeGb: 80,
   logRetentionDays: 1,
 } as const;
+
+// latestReleaseVersion returns the newest git release tag with any leading
+// "v" stripped (e.g. "1.16.0"), the default for outfitVersion — so the bake
+// pulls whatever the release process last tagged, with no hard-coded version
+// to keep in step. Best-effort: it returns "" when there is no git, no tags,
+// or a shallow checkout without them (as in CI), so config always loads; the
+// bake itself guards against an empty version (see image-stack.ts) rather than
+// failing an unrelated synth or deploy.
+function latestReleaseVersion(): string {
+  try {
+    return execSync('git describe --tags --abbrev=0', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim()
+      .replace(/^v/, '');
+  } catch {
+    return '';
+  }
+}
 
 function contextString(app: App, key: string, fallback: string): string {
   const value = app.node.tryGetContext(key);
@@ -179,7 +199,7 @@ export function loadConfig(
     instanceType: contextString(app, 'instanceType', DEFAULTS.instanceType),
     vllmVersion: contextString(app, 'vllmVersion', DEFAULTS.vllmVersion),
     llamacppRelease: contextString(app, 'llamacppRelease', DEFAULTS.llamacppRelease),
-    outfitVersion: contextString(app, 'outfitVersion', DEFAULTS.outfitVersion),
+    outfitVersion: contextString(app, 'outfitVersion', latestReleaseVersion()),
     nvidiaDriverPackage: contextString(app, 'nvidiaDriverPackage', DEFAULTS.nvidiaDriverPackage),
     idleThresholdMinutes: contextNumber(app, 'idleThresholdMinutes', DEFAULTS.idleThresholdMinutes),
     gracePeriodMinutes: contextNumber(app, 'gracePeriodMinutes', DEFAULTS.gracePeriodMinutes),

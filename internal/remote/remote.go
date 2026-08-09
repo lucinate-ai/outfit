@@ -62,8 +62,12 @@ type Config struct {
 // alongside outfit's own config in the same directory. The environments
 // registry (see environments.go) supersedes it; it is still read as the
 // fallback for the default environment.
-func ConfigPath() string {
-	return filepath.Join(ConfigHome(), "remote.json")
+func ConfigPath() (string, error) {
+	home, err := ConfigHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "remote.json"), nil
 }
 
 // LoadConfig reads the per-user config file and applies environment overrides
@@ -72,16 +76,20 @@ func ConfigPath() string {
 // Function URL host). A missing file is fine — env vars alone can carry the
 // config. getenv is injectable for tests.
 func LoadConfig(getenv func(string) string) (Config, error) {
+	path, err := ConfigPath()
+	if err != nil {
+		return Config{}, err
+	}
 	var cfg Config
-	data, err := os.ReadFile(ConfigPath())
+	data, err := os.ReadFile(path)
 	if err == nil {
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			return Config{}, fmt.Errorf("parsing %s: %w", ConfigPath(), err)
+			return Config{}, fmt.Errorf("parsing %s: %w", path, err)
 		}
 	} else if !os.IsNotExist(err) {
 		return Config{}, err
 	}
-	return finishConfig(cfg, getenv, ConfigPath())
+	return finishConfig(cfg, getenv, path)
 }
 
 // LoadConfigFile reads the remote config from an explicit file — typically

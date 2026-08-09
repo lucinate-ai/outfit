@@ -148,7 +148,7 @@ func TestBootstrap_ConfirmGate(t *testing.T) {
 			t.Fatal(err)
 		}
 		var got []string
-		cdkDir := remote.SourceDir(remote.ResolveRef(version, ""))
+		cdkDir := must1(remote.SourceDir(remote.ResolveRef(version, "")))
 		for _, s := range *steps {
 			got = append(got, strings.Join(s.argv, " "))
 			if s.dir != cdkDir {
