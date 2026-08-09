@@ -323,11 +323,21 @@ func (p *startProgress) close() {
 	p.stop.Do(func() { close(p.done) })
 }
 
+// The variables a remote endpoint is addressed by. The instance is started
+// with its API key as --api-key on an OpenAI-compatible server, so these are
+// the names every consumer uses: the export lines below, and the environment
+// `outfit harness` hands the agent it launches.
+const (
+	remoteBaseURLEnv = "OPENAI_BASE_URL"
+	remoteAPIKeyEnv  = "OPENAI_API_KEY"
+)
+
 // printRemoteEnv prints the remote endpoint's environment variables as shell
-// export lines to stdout, suitable for eval.
+// export lines to stdout, suitable for eval. Nothing else on this path may
+// write to stdout, or the eval fails on the stray line.
 func printRemoteEnv(resp *remote.Response) {
-	fmt.Printf("export OPENAI_BASE_URL=%s\n", resp.BaseURL)
-	fmt.Printf("export OPENAI_API_KEY=%s\n", resp.APIKey)
+	fmt.Printf("export %s=%s\n", remoteBaseURLEnv, resp.BaseURL)
+	fmt.Printf("export %s=%s\n", remoteAPIKeyEnv, resp.APIKey)
 }
 
 func cmdRemoteEnv(args []string) error {

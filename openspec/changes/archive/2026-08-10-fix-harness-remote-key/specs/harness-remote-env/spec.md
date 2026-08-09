@@ -1,17 +1,4 @@
-# harness-remote-env Specification
-
-## Purpose
-
-Making a remote endpoint's credentials reach the launched agent without the
-user doing anything. `outfit harness` against an Outfit with a `REMOTE`
-instruction fetches the endpoint's environment variables and injects them into
-the child process, so the agent authenticates against a key that only ever
-existed in Secrets Manager. The failure mode this replaces is silent: a user
-who forgets to `eval` the exports gets an agent that cannot connect, so no way
-this can fail is allowed to pass unremarked — and when it leaves the agent with
-no key at all, it fails before the harness launches.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: harness injects remote env vars
 When `outfit harness` launches with an Outfit that contains a `REMOTE` instruction, it SHALL automatically obtain the remote endpoint's environment variables and inject them into the child process environment.

@@ -1,15 +1,4 @@
-# remote-env Specification
-
-## Purpose
-
-How a caller gets the credentials for a running remote endpoint. The API key
-is not in the local `remote.json` — it lives in AWS Secrets Manager, and the
-base URL comes from the environment's Elastic IP — so it can only be fetched,
-never read from disk. This covers `outfit remote env`, which fetches it from an
-already-running endpoint without booting one, and the `-e`/`--env` flag that
-opts `outfit remote start` into printing the same exports.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: remote env command exists
 The CLI SHALL provide `outfit remote env` as a subcommand that returns the remote endpoint's environment variables from an already-running instance.
@@ -43,28 +32,3 @@ Its stdout SHALL carry nothing but the `export` lines, so `eval "$(outfit remote
 #### Scenario: env stdout is eval-safe for an aliased Outfit
 - **WHEN** the user runs `eval "$(outfit remote env <alias>)"` and the endpoint is running
 - **THEN** every line on stdout is an `export` line, the alias note having gone to stderr, and the shell evaluates it without error
-
-### Requirement: env Lambda is fast (no boot)
-The `outfit remote env` command SHALL NOT trigger an instance boot. It only reads the API key from Secrets Manager and the base URL from the environment's Elastic IP.
-
-#### Scenario: env does not start a stopped instance
-- **WHEN** the user runs `outfit remote env` and the instance is stopped
-- **THEN** the command returns quickly with an error (not after minutes of booting)
-
-### Requirement: start -e/--env flag prints exports
-The `outfit remote start` command SHALL accept `-e` and `--env` flags that, when present, print the export lines after a successful start.
-
-#### Scenario: start with --env prints exports
-- **WHEN** the user runs `outfit remote start --env` and the instance starts successfully
-- **THEN** stdout contains the `export OPENAI_BASE_URL` and `export OPENAI_API_KEY` lines
-
-#### Scenario: start without flag suppresses exports
-- **WHEN** the user runs `outfit remote start` without `-e` or `--env`
-- **THEN** stdout does not contain export lines (only stderr progress)
-
-### Requirement: start default behaviour changed
-By default (no flags), `outfit remote start` SHALL NOT print export lines to stdout.
-
-#### Scenario: bare start produces no stdout exports
-- **WHEN** the user runs `outfit remote start` and the instance starts successfully
-- **THEN** stdout is empty (progress goes to stderr only)

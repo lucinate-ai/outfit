@@ -64,7 +64,7 @@ func (opencodeHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextW
 			notes = append(notes, warning)
 		} else if _, ok := opts["apiKey"]; ok {
 			notes = append(notes, fmt.Sprintf(
-				"API key read from %s when opencode runs (never written to the config).", p.APIKeyEnv))
+				"API key read from %s when opencode runs.", p.APIKeyEnv))
 		}
 		if b, ok := opts["baseURL"]; ok {
 			notes = append(notes, fmt.Sprintf("Base URL: %v", b))
@@ -204,7 +204,7 @@ func (lucinateHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextW
 	case missingKeyWarning(p, conn.BaseURL, resolve) != "":
 		notes = append(notes, missingKeyWarning(p, conn.BaseURL, resolve))
 	case p.APIKeyEnv != "" && !(p.APIKeyOptional && catalog.IsLocalEndpoint(conn.BaseURL)):
-		notes = append(notes, "API key read from LUCINATE_OPENAI_API_KEY when lucinate runs (never written to the config).")
+		notes = append(notes, "API key read from LUCINATE_OPENAI_API_KEY when lucinate runs.")
 	}
 	notes = append(notes, fmt.Sprintf("Base URL: %s", conn.BaseURL))
 	notes = append(notes, "Run 'lucinate' to use the configuration.")
