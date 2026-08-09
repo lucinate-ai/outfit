@@ -57,5 +57,9 @@ jobs:
       # Invoked directly rather than through `pnpm synth`: pnpm appends extra
       # arguments to the end of the script's command line, so the context values
       # never reach cdk and the synth fails on the required `runner`.
+      # outfitVersion defaults to the latest git release tag; CI's shallow
+      # checkout has none, so pass a placeholder — the image stack refuses to
+      # synth with an empty version (that guard exists to catch a real tagless
+      # deploy), and this smoke synth only needs the app to build.
       - name: Synthesize
-        run: npx cdk synth -c allowedCidr=203.0.113.7/32 -c runner=llamacpp --quiet
+        run: npx cdk synth -c allowedCidr=203.0.113.7/32 -c runner=llamacpp -c outfitVersion=0.0.0-ci --quiet
