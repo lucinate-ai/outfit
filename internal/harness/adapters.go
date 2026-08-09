@@ -5,6 +5,7 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
 	"github.com/lucinate-ai/outfit/internal/contextsize"
+	"github.com/lucinate-ai/outfit/internal/lucinate"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/pi"
@@ -150,6 +151,81 @@ func (piHarness) State() (map[string]ProviderState, string, error) {
 	for id, st := range states {
 		out[id] = ProviderState{ModelKeys: st.ModelKeys, BaseURL: st.BaseURL, Contexts: st.Contexts, Outputs: st.Outputs}
 	}
+	return out, "", nil
+}
+
+// lucinateHarness configures the lucinate chat client via
+// ~/.lucinate/connections.json, writing one managed OpenAI-compatible
+// connection per provider.
+type lucinateHarness struct{}
+
+func (lucinateHarness) Name() string { return "lucinate" }
+
+func (lucinateHarness) Command() string { return "lucinate" }
+
+func (lucinateHarness) ConfigPath() (string, error) { return lucinate.ConfigPath() }
+
+func (lucinateHarness) Apply(p *catalog.Provider, sel outfit.Selection, contextWindow, outputTokens int, resolve func(string) string) (Summary, error) {
+	conn, defaultModel, err := catalog.BuildLucinateConnection(sel.Provider, p, modelKey(sel), sel.BaseURL, resolve)
+	if err != nil {
+		return Summary{}, err
+	}
+	// lucinate speaks to a concrete OpenAI-compatible endpoint, so a connection
+	// with no URL cannot work — fail rather than write a dead entry.
+	if conn.BaseURL == "" {
+		return Summary{}, fmt.Errorf("provider %q needs a base URL for the lucinate harness; set BASEURL in the Outfit or pass --base-url", sel.Provider)
+	}
+
+	// The connection's display name is the provider's, or the selection's display
+	// name for a remote endpoint, so it reads distinctly from a local engine of
+	// the same kind — mirroring the opencode adapter.
+	name := p.Name
+	if name == "" {
+		name = sel.Provider
+	}
+	if sel.DisplayName != "" {
+		name = sel.DisplayName
+	}
+
+	if err := lucinate.Write(sel.Provider, lucinate.Connection{
+		URL:          conn.BaseURL,
+		DefaultModel: conn.Model,
+		Name:         name,
+	}); err != nil {
+		return Summary{}, err
+	}
+	configFile, err := lucinate.ConfigPath()
+	if err != nil {
+		return Summary{}, err
+	}
+
+	var notes []string
+	switch {
+	case missingKeyWarning(p, conn.BaseURL, resolve) != "":
+		notes = append(notes, missingKeyWarning(p, conn.BaseURL, resolve))
+	case p.APIKeyEnv != "" && !(p.APIKeyOptional && catalog.IsLocalEndpoint(conn.BaseURL)):
+		notes = append(notes, "API key read from LUCINATE_OPENAI_API_KEY when lucinate runs (never written to the config).")
+	}
+	notes = append(notes, fmt.Sprintf("Base URL: %s", conn.BaseURL))
+	notes = append(notes, "Run 'lucinate' to use the configuration.")
+	return Summary{ConfigPath: configFile, DefaultModel: defaultModel, Notes: notes}, nil
+}
+
+func (lucinateHarness) Remove(providerID string, modelKeys []string) (int, error) {
+	return lucinate.Remove(providerID, modelKeys)
+}
+
+func (lucinateHarness) State() (map[string]ProviderState, string, error) {
+	states, err := lucinate.State()
+	if err != nil {
+		return nil, "", err
+	}
+	out := make(map[string]ProviderState, len(states))
+	for id, st := range states {
+		out[id] = ProviderState{ModelKeys: st.ModelKeys, BaseURL: st.BaseURL, Contexts: st.Contexts, Outputs: st.Outputs}
+	}
+	// lucinate has no top-level default *model* setting distinct from the
+	// connection, so there is none to report.
 	return out, "", nil
 }
 

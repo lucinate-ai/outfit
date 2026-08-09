@@ -889,3 +889,75 @@ func TestCatalogRequiredOptionsAreNotPiCapable(t *testing.T) {
 		}
 	}
 }
+
+// TestCatalogLucinateIntegrity checks that every provider declaring a
+// `lucinate:` block can resolve a base URL (from lucinate.baseUrl or
+// options.baseURL), since lucinate needs a concrete OpenAI-compatible endpoint.
+func TestCatalogLucinateIntegrity(t *testing.T) {
+	cat, _ := Load()
+	capable := 0
+	for name, p := range cat.Providers {
+		if p.Lucinate == nil {
+			continue
+		}
+		capable++
+		if p.Lucinate.BaseURL == "" {
+			if _, ok := p.Options["baseURL"].(string); !ok {
+				t.Errorf("provider %q: lucinate block has no baseUrl and no options.baseURL fallback", name)
+			}
+		}
+	}
+	if capable == 0 {
+		t.Error("expected at least one lucinate-capable provider in the catalogue")
+	}
+}
+
+func TestBuildLucinateConnection_OpenRouter(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["openrouter"]
+
+	conn, model, err := BuildLucinateConnection("openrouter", p, "deepseek/deepseek-v4-pro", "", noEnv)
+	if err != nil {
+		t.Fatalf("BuildLucinateConnection: %v", err)
+	}
+	if model != "deepseek/deepseek-v4-pro" {
+		t.Errorf("default model = %q", model)
+	}
+	if conn.Model != "deepseek/deepseek-v4-pro" {
+		t.Errorf("conn.Model = %q", conn.Model)
+	}
+	if conn.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("baseURL = %q, want the catalogue lucinate endpoint", conn.BaseURL)
+	}
+}
+
+func TestBuildLucinateConnection_BaseURLPrecedence(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["ollama"]
+
+	// Falls back to options.baseURL when nothing else is set.
+	conn, _, err := BuildLucinateConnection("ollama", p, "llama3.2", "", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn.BaseURL != "http://localhost:11434/v1" {
+		t.Errorf("baseURL = %q, want the options.baseURL fallback", conn.BaseURL)
+	}
+
+	// The explicit override wins over everything.
+	conn, _, err = BuildLucinateConnection("ollama", p, "llama3.2", "https://flag.example/v1", noEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn.BaseURL != "https://flag.example/v1" {
+		t.Errorf("baseURL = %q, want the override", conn.BaseURL)
+	}
+}
+
+func TestBuildLucinateConnection_Unsupported(t *testing.T) {
+	cat, _ := Load()
+	p := cat.Providers["amazon-bedrock"]
+	if _, _, err := BuildLucinateConnection("amazon-bedrock", p, "some-model", "", noEnv); err == nil {
+		t.Error("a provider without a lucinate block should be unsupported")
+	}
+}

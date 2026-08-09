@@ -36,6 +36,16 @@
 #                              unsupported by the Pi harness. Pi's schema carries
 #                              no general options map, so a provider using
 #                              optionsRequired cannot declare a pi block.
+#   lucinate        optional block marking the provider as usable by the lucinate
+#                   harness (~/.lucinate/connections.json). Present only on
+#                   providers exposing an OpenAI-compatible endpoint; providers
+#                   without it are reported as unsupported by the lucinate
+#                   harness. Holds:
+#                     baseUrl  lucinate connection URL (optional; falls back to
+#                              options.baseURL, and is itself overridden by this
+#                              provider's optionsFromEnv baseURL variable). Write
+#                              `lucinate: {}` to mark a provider capable while
+#                              taking the URL from options.baseURL.
 
 providers:
   openrouter:
@@ -45,6 +55,8 @@ providers:
     apiKeyPrefix: sk-or-
     pi:
       api: openai-completions
+      baseUrl: https://openrouter.ai/api/v1
+    lucinate:
       baseUrl: https://openrouter.ai/api/v1
 
   amazon-bedrock:
@@ -93,6 +105,7 @@ providers:
       baseURL: OLLAMA_BASE_URL
     pi:
       api: openai-completions
+    lucinate: {}
 
   llamacpp:
     description: llama.cpp server (OpenAI-compatible API)
@@ -110,6 +123,7 @@ providers:
       baseURL: LLAMACPP_BASE_URL
     pi:
       api: openai-completions
+    lucinate: {}
 
   omlx:
     description: oMLX server on Apple Silicon (OpenAI-compatible API)
@@ -127,6 +141,7 @@ providers:
       baseURL: OMLX_BASE_URL
     pi:
       api: openai-completions
+    lucinate: {}
 
   vllm:
     description: vLLM server (OpenAI-compatible API)
@@ -141,6 +156,7 @@ providers:
       baseURL: VLLM_BASE_URL
     pi:
       api: openai-completions
+    lucinate: {}
 
   openai-compatible:
     description: Generic OpenAI-compatible endpoint (set base URL and key via env)
@@ -153,3 +169,4 @@ providers:
       baseURL: OPENAI_BASE_URL
     pi:
       api: openai-completions
+    lucinate: {}

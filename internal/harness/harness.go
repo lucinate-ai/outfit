@@ -1,6 +1,6 @@
-// Package harness abstracts the coding agent that outfit configures. opencode
-// and Pi are the supported harnesses; each knows how to apply, remove and read
-// back a provider selection in its own config format.
+// Package harness abstracts the coding agent that outfit configures. opencode,
+// Pi and lucinate are the supported harnesses; each knows how to apply, remove
+// and read back a provider selection in its own config format.
 //
 // The active harness is chosen at runtime — never from an Outfit file, so an
 // Outfit stays portable across harnesses — with this precedence:
@@ -74,6 +74,7 @@ type Harness interface {
 var registry = map[string]Harness{
 	"opencode": opencodeHarness{},
 	"pi":       piHarness{},
+	"lucinate": lucinateHarness{},
 }
 
 // Names returns the available harness names in stable order.
