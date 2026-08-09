@@ -1,4 +1,15 @@
-## ADDED Requirements
+# remote-env Specification
+
+## Purpose
+
+How a caller gets the credentials for a running remote endpoint. The API key
+is not in the local `remote.json` — it lives in AWS Secrets Manager, and the
+base URL comes from the environment's Elastic IP — so it can only be fetched,
+never read from disk. This covers `outfit remote env`, which fetches it from an
+already-running endpoint without booting one, and the `-e`/`--env` flag that
+opts `outfit remote start` into printing the same exports.
+
+## Requirements
 
 ### Requirement: remote env command exists
 The CLI SHALL provide `outfit remote env` as a subcommand that returns the remote endpoint's environment variables from an already-running instance.

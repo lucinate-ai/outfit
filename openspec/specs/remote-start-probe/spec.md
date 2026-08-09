@@ -1,4 +1,16 @@
-## ADDED Requirements
+# remote-start-probe Specification
+
+## Purpose
+
+Catching the case where the control plane says an endpoint is ready but the
+network will not carry inference traffic to it. The ingress security group
+admits one CIDR, so a caller who has changed networks since deploy is blocked
+— while the SigV4 Lambda URLs the control plane uses keep working. Without a
+check, the first sign is a hanging curl or an agent that cannot connect. This
+covers the post-start TCP probe, the warning it prints, and the remediation it
+suggests.
+
+## Requirements
 
 ### Requirement: Post-start TCP probe
 
