@@ -329,6 +329,12 @@ describe('ImageStack', () => {
     template = imageTemplate();
   });
 
+  it('refuses to synth when outfitVersion is empty (no release tag)', () => {
+    // Would otherwise bake a pipeline that curls a bogus /download/v/ URL and
+    // fails 20 minutes in; fail at deploy instead.
+    expect(() => imageTemplate({ outfitVersion: '' })).toThrow(/outfitVersion/);
+  });
+
   it('defines a pipeline per runner and runs no build at deploy time', () => {
     template.resourceCountIs('AWS::ImageBuilder::Component', 2);
     template.resourceCountIs('AWS::ImageBuilder::ImageRecipe', 2);

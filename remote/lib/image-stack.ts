@@ -28,7 +28,7 @@ const AMI_ROOT_DEVICE = '/dev/sda1';
 
 // Per-runner recipe/component version. Image Builder treats a version as
 // immutable, so bump a runner's version to force a fresh AMI for just it.
-const RUNNER_VERSION = { vllm: '3.3.0', llamacpp: '3.3.0' } as const;
+const RUNNER_VERSION = { vllm: '3.3.1', llamacpp: '3.3.1' } as const;
 
 /**
  * Bakes a slim, model-agnostic AMI **per runner** — vLLM (a `uv` venv) and
@@ -42,6 +42,19 @@ export class ImageStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props: ImageStackProps) {
     super(scope, id, props);
     const cfg = props.config;
+
+    // Fail fast at synth/deploy, not 20 minutes into a bake. outfitVersion
+    // defaults to the latest git release tag (see config.ts); it comes back
+    // empty when this stack is deployed from a checkout that reaches no tag
+    // (e.g. a feature branch, or one without tags fetched). The bake would
+    // then curl a bogus /download/v/ URL — so refuse to build a pipeline that
+    // bakes an empty version. Pass -c outfitVersion=<x.y.z> to override.
+    if (!cfg.outfitVersion) {
+      throw new Error(
+        'outfitVersion is empty: deploy the image stack from a checkout that reaches a release tag, ' +
+          'or pass -c outfitVersion=<x.y.z>',
+      );
+    }
 
     // Minimal public VPC for the transient builder — internet + SSM, no NAT.
     // Pinned to the first configured AZ so it doesn't default to us-east-1a,
