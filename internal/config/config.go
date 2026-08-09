@@ -26,15 +26,50 @@ import (
 // fileName is outfit's own config file, inside its config directory.
 const fileName = "config.json"
 
-// Path returns the config file's location: $XDG_CONFIG_HOME/outfit/config.json,
-// falling back to ~/.config when the variable is unset.
-func Path() string {
-	dir := os.Getenv("XDG_CONFIG_HOME")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".config")
+// DirEnvVar overrides outfit's config directory. When set, its value is that
+// directory verbatim — no "outfit" segment is appended — and it wins over
+// XDG_CONFIG_HOME and the home-directory default. It exists so a service that
+// gets no $HOME (a bare systemd unit, say) can be told exactly where its
+// config lives, rather than silently resolving to the wrong place.
+const DirEnvVar = "OUTFIT_CONFIG_DIR"
+
+// Dir returns outfit's config directory — the single root every file outfit
+// owns resolves under (this package's config.json, and, via
+// internal/remote.ConfigHome, remote.json, the environment registry, the
+// daemon state dir and the CDK source cache). Resolution order:
+//
+//  1. OUTFIT_CONFIG_DIR, used verbatim;
+//  2. ${XDG_CONFIG_HOME}/outfit;
+//  3. ~/.config/outfit.
+//
+// When none of those can be determined — no override, no XDG_CONFIG_HOME, and
+// no resolvable home — it returns an error naming OUTFIT_CONFIG_DIR, rather
+// than joining an empty home into a bogus relative ".config/outfit" as the
+// earlier silent fallback did.
+func Dir() (string, error) {
+	if dir := os.Getenv(DirEnvVar); dir != "" {
+		return dir, nil
 	}
-	return filepath.Join(dir, "outfit", fileName)
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "outfit"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf(
+			"cannot locate outfit's config directory: no home directory (%v); set %s to choose one",
+			err, DirEnvVar)
+	}
+	return filepath.Join(home, ".config", "outfit"), nil
+}
+
+// Path returns the config file's location, <config-dir>/config.json. It fails
+// only when Dir cannot resolve the directory.
+func Path() (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, fileName), nil
 }
 
 // File is outfit's config document.
@@ -62,7 +97,11 @@ const (
 // empty File, so a first run needs no special case.
 func Load() (*File, error) {
 	f := &File{}
-	data, err := os.ReadFile(Path())
+	path, err := Path()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return f, nil
@@ -72,17 +111,17 @@ func Load() (*File, error) {
 
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", Path(), err)
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	for key, raw := range doc {
 		switch key {
 		case keyHarness:
 			if err := json.Unmarshal(raw, &f.Harness); err != nil {
-				return nil, fmt.Errorf("parsing %s: %s: %w", Path(), key, err)
+				return nil, fmt.Errorf("parsing %s: %s: %w", path, key, err)
 			}
 		case keyAliases:
 			if err := json.Unmarshal(raw, &f.Aliases); err != nil {
-				return nil, fmt.Errorf("parsing %s: %s: %w", Path(), key, err)
+				return nil, fmt.Errorf("parsing %s: %s: %w", path, key, err)
 			}
 		default:
 			if f.extra == nil {
@@ -127,7 +166,10 @@ func (f *File) Save() error {
 	}
 	data = append(data, '\n')
 
-	path := Path()
+	path, err := Path()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}

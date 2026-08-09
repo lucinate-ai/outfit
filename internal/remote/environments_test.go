@@ -29,7 +29,7 @@ func TestEnvConfigPath(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", home)
 	want := filepath.Join(home, "outfit", "remotes", "prod", "remote.json")
-	if got := EnvConfigPath("prod"); got != want {
+	if got := must1(EnvConfigPath("prod")); got != want {
 		t.Errorf("EnvConfigPath = %q, want %q", got, want)
 	}
 }
@@ -37,10 +37,10 @@ func TestEnvConfigPath(t *testing.T) {
 // writeEnv registers an environment's remote.json for a test.
 func writeEnv(t *testing.T, name, body string) {
 	t.Helper()
-	if err := os.MkdirAll(EnvDir(name), 0o700); err != nil {
+	if err := os.MkdirAll(must1(EnvDir(name)), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(EnvConfigPath(name), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(must1(EnvConfigPath(name)), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -55,10 +55,10 @@ func TestListEnvironments(t *testing.T) {
 
 	writeEnv(t, "prod", `{"start_url":"https://s","stop_url":"https://x","region":"eu-west-1","base_url":"http://1.2.3.4:8000/v1"}`)
 	// A directory with an unreadable/invalid remote.json is listed, not fatal.
-	if err := os.MkdirAll(EnvDir("broken"), 0o700); err != nil {
+	if err := os.MkdirAll(must1(EnvDir("broken")), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(EnvConfigPath("broken"), []byte("not json"), 0o600); err != nil {
+	if err := os.WriteFile(must1(EnvConfigPath("broken")), []byte("not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -87,7 +87,7 @@ func TestSaveEnvironment(t *testing.T) {
 	if err := SaveEnvironment("prod", cfg); err != nil {
 		t.Fatal(err)
 	}
-	fi, err := os.Stat(EnvConfigPath("prod"))
+	fi, err := os.Stat(must1(EnvConfigPath("prod")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestSaveEnvironment(t *testing.T) {
 		t.Errorf("remote.json mode = %v, want 0600", fi.Mode().Perm())
 	}
 	// Round-trips through the loader, environment identifier included.
-	got, err := LoadConfigFile(EnvConfigPath("prod"), func(string) string { return "" })
+	got, err := LoadConfigFile(must1(EnvConfigPath("prod")), func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSaveEnvironment(t *testing.T) {
 	if err := SaveEnvironment("staging", Config{StartURL: "https://s2", StopURL: "https://x2", Region: "us-east-1", Environment: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(EnvConfigPath("prod")); err != nil {
+	if _, err := os.Stat(must1(EnvConfigPath("prod"))); err != nil {
 		t.Error("registering a second environment must not touch the first")
 	}
 }
@@ -129,10 +129,10 @@ func TestLoadDefault(t *testing.T) {
 	t.Run("legacy file fallback", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("XDG_CONFIG_HOME", home)
-		if err := os.MkdirAll(filepath.Dir(ConfigPath()), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(must1(ConfigPath())), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(ConfigPath(), []byte(cfg), 0o600); err != nil {
+		if err := os.WriteFile(must1(ConfigPath()), []byte(cfg), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		got, err := LoadDefault(getenv)

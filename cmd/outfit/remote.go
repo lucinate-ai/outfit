@@ -113,7 +113,11 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
 			return remote.Config{}, err
 		}
-		return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
+		path, err := resolveRemotePath(sel.Remote, filepath.Dir(outfitPath))
+		if err != nil {
+			return remote.Config{}, err
+		}
+		return remote.LoadConfigFile(path, os.Getenv)
 	}
 	if defaultOutfitExists() {
 		sel, outfitPath, err := readOutfit("remote", "")
@@ -124,7 +128,11 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 			if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
 				return remote.Config{}, err
 			}
-			return remote.LoadConfigFile(resolveRemotePath(sel.Remote, filepath.Dir(outfitPath)), os.Getenv)
+			path, err := resolveRemotePath(sel.Remote, filepath.Dir(outfitPath))
+			if err != nil {
+				return remote.Config{}, err
+			}
+			return remote.LoadConfigFile(path, os.Getenv)
 		}
 	}
 	return remote.LoadDefault(os.Getenv)
@@ -135,11 +143,11 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 // resolved as a file, relative to the Outfit's directory when not absolute —
 // the same rule PRESET uses. Both the control commands and apply's base-URL
 // lookup go through here, so the two never diverge.
-func resolveRemotePath(remoteValue, outfitDir string) string {
+func resolveRemotePath(remoteValue, outfitDir string) (string, error) {
 	if remote.IsEnvName(remoteValue) {
 		return remote.EnvConfigPath(remoteValue)
 	}
-	return remoteConfigPath(remoteValue, outfitDir)
+	return remoteConfigPath(remoteValue, outfitDir), nil
 }
 
 // defaultOutfitExists reports whether the working directory holds a file
@@ -173,7 +181,10 @@ func remoteConfigPath(remoteValue, outfitDir string) string {
 // before the deployment that writes it exists; only a real read or parse failure
 // is reported.
 func remoteConfig(remoteValue, outfitDir string) (remote.Config, error) {
-	path := resolveRemotePath(remoteValue, outfitDir)
+	path, err := resolveRemotePath(remoteValue, outfitDir)
+	if err != nil {
+		return remote.Config{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -226,7 +237,10 @@ func remoteEnvName(remoteValue, outfitDir string) (string, error) {
 // is already known from the parsed Outfit, so it goes straight to resolving
 // that path.
 func resolveRemoteConfigForOutfit(remoteValue, outfitDir string) (remote.Config, error) {
-	path := resolveRemotePath(remoteValue, outfitDir)
+	path, err := resolveRemotePath(remoteValue, outfitDir)
+	if err != nil {
+		return remote.Config{}, err
+	}
 	return remote.LoadConfigFile(path, os.Getenv)
 }
 
@@ -1053,8 +1067,12 @@ func cmdRemoteDeploy(args []string) error {
 
 	// Refuse to clobber silently: an environment that is already registered, or
 	// whose instance is live, needs explicit consent to redeploy over.
+	envConfigPath, err := remote.EnvConfigPath(env)
+	if err != nil {
+		return err
+	}
 	registered := false
-	if _, err := os.Stat(remote.EnvConfigPath(env)); err == nil {
+	if _, err := os.Stat(envConfigPath); err == nil {
 		registered = true
 	}
 	live := false
@@ -1095,7 +1113,7 @@ func cmdRemoteDeploy(args []string) error {
 
 	fmt.Println()
 	fmt.Printf("deployed: environment %s at %s\n", env, resp.BaseURL)
-	fmt.Printf("registered: %s\n", remote.EnvConfigPath(env))
+	fmt.Printf("registered: %s\n", envConfigPath)
 	if resp.Seeding {
 		fmt.Printf("seeding the weights on %s — this takes ~15-20 min.\n", resp.SeedInstanceID)
 		fmt.Println("Wait for it to finish before `outfit remote start`, or the instance will")

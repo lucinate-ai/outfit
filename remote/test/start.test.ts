@@ -62,6 +62,17 @@ describe('buildInferenceUserData', () => {
     }
   });
 
+  it('pins the daemon config dir so it does not depend on $HOME', () => {
+    for (const cfg of [LLAMACPP, VLLM]) {
+      const data = buildInferenceUserData('prod', cfg);
+      // The unit sets OUTFIT_CONFIG_DIR and the boot writes the deploy config
+      // under it — the same location the daemon then reads.
+      expect(data).toContain('Environment=OUTFIT_CONFIG_DIR=/var/lib/outfit');
+      expect(data).toContain('/var/lib/outfit/daemon/deploy-config.json');
+      expect(data).not.toContain('/root/.config/outfit');
+    }
+  });
+
   it('renders the daemon deploy config with cloud-owned settings resolved', () => {
     const data = buildInferenceUserData('prod', LLAMACPP);
     expect(data).toContain('deploy-config.json');
@@ -90,7 +101,7 @@ describe('buildInferenceUserData', () => {
 
   it('tails the daemon engine log into the runner log group', () => {
     const data = buildInferenceUserData('prod', LLAMACPP);
-    expect(data).toContain('/root/.config/outfit/daemon/engine.log');
+    expect(data).toContain('/var/lib/outfit/daemon/engine.log');
     expect(data).toContain('/test/llamacpp');
     expect(data).not.toContain('/var/log/llm/llama-server.log');
   });

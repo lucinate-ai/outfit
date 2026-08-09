@@ -90,9 +90,11 @@ const DEFAULTS = {
   // ai-dock/llama.cpp-cuda release with CUDA 12.8; pin a specific build for
   // reproducible bakes. Must post-date the MTP merge (PR #22673).
   llamacppRelease: 'b10107',
-  // The first release shipping `outfit daemon`. Until it is published a bake
-  // 404s at download — publish the release, then bake.
-  outfitVersion: '1.15.0',
+  // The release the baked binary is pulled from. v1.16.0 is the first that
+  // reads OUTFIT_CONFIG_DIR, which the daemon unit pins to /var/lib/outfit so
+  // the daemon's config dir does not depend on $HOME. Until it is published a
+  // bake 404s at download — publish the release, then bake.
+  outfitVersion: '1.16.0',
   nvidiaDriverPackage: 'nvidia-driver-570-server-open',
   idleThresholdMinutes: 15,
   // Must exceed the whole cold start (S3 sync ~4 min + weight/CUDA load), or

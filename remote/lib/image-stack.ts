@@ -28,7 +28,7 @@ const AMI_ROOT_DEVICE = '/dev/sda1';
 
 // Per-runner recipe/component version. Image Builder treats a version as
 // immutable, so bump a runner's version to force a fresh AMI for just it.
-const RUNNER_VERSION = { vllm: '3.2.0', llamacpp: '3.2.0' } as const;
+const RUNNER_VERSION = { vllm: '3.3.0', llamacpp: '3.3.0' } as const;
 
 /**
  * Bakes a slim, model-agnostic AMI **per runner** — vLLM (a `uv` venv) and
@@ -211,10 +211,13 @@ function commonPreamble(): string {
               # append mode; a size trigger on a 15-min timer (not the daily
               # default) so a chatty engine can't outrun it. The boot log is
               # deliberately excluded — it is written once and stays small.
+              # The engine log lives under the daemon's pinned config dir
+              # (OUTFIT_CONFIG_DIR=/var/lib/outfit — see lambda/runners/daemon-boot.ts);
+              # keep this path in step with DAEMON_CONFIG_DIR there.
               apt-get install -y logrotate
-              mkdir -p /etc/llm /var/log/llm
+              mkdir -p /etc/llm /var/log/llm /var/lib/outfit/daemon
               cat >/etc/llm/logrotate.conf <<'LOGROTATE'
-              /root/.config/outfit/daemon/engine.log {
+              /var/lib/outfit/daemon/engine.log {
                   size 200M
                   rotate 2
                   compress

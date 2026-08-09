@@ -46,15 +46,23 @@ func ResolveRef(version, override string) string {
 // SourceRoot is the parent of the ref-keyed CDK source caches,
 // <configHome>/cdk. It is named cdk/ to avoid confusion with the remotes/
 // environment registry.
-func SourceRoot() string {
-	return filepath.Join(ConfigHome(), "cdk")
+func SourceRoot() (string, error) {
+	home, err := ConfigHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "cdk"), nil
 }
 
 // SourceDir is where the remote/ sources for a given ref are placed,
 // <configHome>/cdk/<ref>. Keying by ref means a re-run at the same version
 // reuses its checkout while a new version downloads fresh.
-func SourceDir(ref string) string {
-	return filepath.Join(SourceRoot(), ref)
+func SourceDir(ref string) (string, error) {
+	root, err := SourceRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, ref), nil
 }
 
 // skipSource reports whether an extracted remote/-relative path should be

@@ -6,37 +6,47 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/lucinate-ai/outfit/internal/config"
 )
 
-// ConfigHome returns outfit's own config directory
-// (${XDG_CONFIG_HOME:-~/.config}/outfit), where both the legacy remote.json and
-// the environments registry live.
-func ConfigHome() string {
-	dir := os.Getenv("XDG_CONFIG_HOME")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".config")
-	}
-	return filepath.Join(dir, "outfit")
+// ConfigHome returns outfit's own config directory, where both the legacy
+// remote.json and the environments registry live. It delegates to
+// internal/config.Dir, so the OUTFIT_CONFIG_DIR override and the fallback
+// rules are resolved in one place; it fails when the directory cannot be
+// determined (see config.Dir).
+func ConfigHome() (string, error) {
+	return config.Dir()
 }
 
 // remotesRoot is the environments registry directory: one subdirectory per
 // named environment, each holding a remote.json.
-func remotesRoot() string {
-	return filepath.Join(ConfigHome(), "remotes")
+func remotesRoot() (string, error) {
+	home, err := ConfigHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "remotes"), nil
 }
 
-// EnvDir returns an environment's directory,
-// ${XDG_CONFIG_HOME:-~/.config}/outfit/remotes/<name>. A remote deployment's
-// state (currently just remote.json) lives here, keyed by name so several
-// instances never share a file.
-func EnvDir(name string) string {
-	return filepath.Join(remotesRoot(), name)
+// EnvDir returns an environment's directory, <config-dir>/remotes/<name>. A
+// remote deployment's state (currently just remote.json) lives here, keyed by
+// name so several instances never share a file.
+func EnvDir(name string) (string, error) {
+	root, err := remotesRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, name), nil
 }
 
 // EnvConfigPath returns the remote.json inside an environment's directory.
-func EnvConfigPath(name string) string {
-	return filepath.Join(EnvDir(name), "remote.json")
+func EnvConfigPath(name string) (string, error) {
+	dir, err := EnvDir(name)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "remote.json"), nil
 }
 
 // IsEnvName reports whether a REMOTE value is a bare environment name rather
@@ -70,7 +80,11 @@ type EnvInfo struct {
 // remote.json is read best-effort: a directory without a readable one is still
 // listed, with OK false, rather than failing the whole listing.
 func ListEnvironments() ([]EnvInfo, error) {
-	entries, err := os.ReadDir(remotesRoot())
+	root, err := remotesRoot()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -83,7 +97,11 @@ func ListEnvironments() ([]EnvInfo, error) {
 			continue
 		}
 		info := EnvInfo{Name: e.Name()}
-		if data, err := os.ReadFile(EnvConfigPath(e.Name())); err == nil {
+		envPath, err := EnvConfigPath(e.Name())
+		if err != nil {
+			return nil, err
+		}
+		if data, err := os.ReadFile(envPath); err == nil {
 			var cfg Config
 			if json.Unmarshal(data, &cfg) == nil {
 				info.BaseURL, info.Region, info.OK = cfg.BaseURL, cfg.Region, true
@@ -103,10 +121,14 @@ func SaveEnvironment(name string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(EnvDir(name), 0o700); err != nil {
+	dir, err := EnvDir(name)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(EnvConfigPath(name), append(data, '\n'), 0o600)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "remote.json"), append(data, '\n'), 0o600)
 }
 
 // LoadDefault loads the remote config used when no Outfit names an environment:
@@ -115,7 +137,15 @@ func SaveEnvironment(name string, cfg Config) error {
 // LoadConfig a missing file is not fatal — environment variables alone may carry
 // the config — and finishConfig reports where to put it otherwise.
 func LoadDefault(getenv func(string) string) (Config, error) {
-	for _, path := range []string{EnvConfigPath("default"), ConfigPath()} {
+	defaultPath, err := EnvConfigPath("default")
+	if err != nil {
+		return Config{}, err
+	}
+	legacyPath, err := ConfigPath()
+	if err != nil {
+		return Config{}, err
+	}
+	for _, path := range []string{defaultPath, legacyPath} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -129,5 +159,5 @@ func LoadDefault(getenv func(string) string) (Config, error) {
 		}
 		return finishConfig(cfg, getenv, path)
 	}
-	return finishConfig(Config{}, getenv, EnvConfigPath("default"))
+	return finishConfig(Config{}, getenv, defaultPath)
 }

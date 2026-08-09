@@ -15,14 +15,14 @@ import (
 // registerEnv writes an environment's remote.json into the registry.
 func registerEnv(t *testing.T, name string, cfg remote.Config) {
 	t.Helper()
-	if err := os.MkdirAll(remote.EnvDir(name), 0o700); err != nil {
+	if err := os.MkdirAll(must1(remote.EnvDir(name)), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(remote.EnvConfigPath(name), data, 0o600); err != nil {
+	if err := os.WriteFile(must1(remote.EnvConfigPath(name)), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -109,10 +109,10 @@ func TestRemote_LegacyFileReadThrough(t *testing.T) {
 	defer server.Close()
 
 	data, _ := json.Marshal(remote.Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"})
-	if err := os.MkdirAll(filepath.Dir(remote.ConfigPath()), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(must1(remote.ConfigPath())), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(remote.ConfigPath(), data, 0o600); err != nil {
+	if err := os.WriteFile(must1(remote.ConfigPath()), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(t.TempDir())
@@ -140,10 +140,10 @@ func TestRemoteList(t *testing.T) {
 	}
 
 	registerEnv(t, "prod", remote.Config{StartURL: "https://s", StopURL: "https://x", Region: "eu-west-1", BaseURL: "http://1.2.3.4:8000/v1"})
-	if err := os.MkdirAll(remote.EnvDir("broken"), 0o700); err != nil {
+	if err := os.MkdirAll(must1(remote.EnvDir("broken")), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(remote.EnvConfigPath("broken"), []byte("nope"), 0o600); err != nil {
+	if err := os.WriteFile(must1(remote.EnvConfigPath("broken")), []byte("nope"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 

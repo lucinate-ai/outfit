@@ -378,8 +378,9 @@ describe('ImageStack', () => {
       const data = c.Properties.Data as string;
       expect(data).toContain('amazon-cloudwatch-agent.deb');
       // The rotation is size-triggered and copytruncate (the engine holds the
-      // append fd); only the daemon's engine log is rotated, not the boot log.
-      expect(data).toContain('/root/.config/outfit/daemon/engine.log');
+      // append fd); only the daemon's engine log (under its pinned config dir)
+      // is rotated, not the boot log.
+      expect(data).toContain('/var/lib/outfit/daemon/engine.log');
       expect(data).toContain('copytruncate');
       expect(data).toContain('llm-logrotate.timer');
       expect(data).not.toContain('cloud-init-output.log');

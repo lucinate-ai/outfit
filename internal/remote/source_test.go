@@ -181,11 +181,11 @@ func TestDownloadRemoteReusesExisting(t *testing.T) {
 }
 
 func TestSourceDirLayout(t *testing.T) {
-	if base := filepath.Base(SourceRoot()); base != "cdk" {
+	if base := filepath.Base(must1(SourceRoot())); base != "cdk" {
 		t.Errorf("SourceRoot should live under cdk/, got base %q", base)
 	}
 	// A ref-keyed dir sits directly under the root, so re-runs at one version reuse it.
-	if got, want := SourceDir("v1.13.0"), filepath.Join(SourceRoot(), "v1.13.0"); got != want {
+	if got, want := must1(SourceDir("v1.13.0")), filepath.Join(must1(SourceRoot()), "v1.13.0"); got != want {
 		t.Errorf("SourceDir = %q, want %q", got, want)
 	}
 }

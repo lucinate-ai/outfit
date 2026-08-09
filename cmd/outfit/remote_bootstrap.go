@@ -165,7 +165,10 @@ func cmdRemoteBootstrap(args []string) error {
 	}
 
 	resolvedRef := remote.ResolveRef(version, *ref)
-	cdkDir := remote.SourceDir(resolvedRef)
+	cdkDir, err := remote.SourceDir(resolvedRef)
+	if err != nil {
+		return err
+	}
 	pruneAfter := true
 	if *dir != "" {
 		cdkDir = *dir
@@ -251,7 +254,11 @@ func cmdRemoteBootstrap(args []string) error {
 	}
 
 	if pruneAfter {
-		if err := remote.PruneSources(remote.SourceRoot(), resolvedRef); err != nil {
+		sourceRoot, err := remote.SourceRoot()
+		if err != nil {
+			return err
+		}
+		if err := remote.PruneSources(sourceRoot, resolvedRef); err != nil {
 			return err
 		}
 	}
