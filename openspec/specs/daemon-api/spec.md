@@ -56,22 +56,41 @@ listening on loopback without a token SHALL be allowed.
 ### Requirement: Control endpoints
 
 The API SHALL provide JSON endpoints to: report status (engine state, what is
-being served, the engine log path); start the engine; stop the engine; return
-collected metrics; and accept a deploy config. Start SHALL accept an optional
-deploy config in its request body — validated and persisted exactly as a
-config push, then started — so a client can say what to run and run it in one
-call; without a body, start uses the stored config or the Outfit. Start SHALL
-fail when an engine is already running, changing nothing — a body sent with a
-rejected start SHALL NOT be stored. Stop SHALL succeed when nothing is
-running (idempotent), and stopping the engine SHALL never terminate
-`outfit daemon` — the API keeps answering. Errors SHALL be returned as JSON
-with a message and a meaningful HTTP status.
+being served, the engine log path, and when the engine was last active); start
+the engine; stop the engine; return collected metrics; and accept a deploy
+config. Start SHALL accept an optional deploy config in its request body —
+validated and persisted exactly as a config push, then started — so a client
+can say what to run and run it in one call; without a body, start uses the
+stored config or the Outfit. Start SHALL fail when an engine is already
+running, changing nothing — a body sent with a rejected start SHALL NOT be
+stored. Stop SHALL succeed when nothing is running (idempotent), and stopping
+the engine SHALL never terminate `outfit daemon` — the API keeps answering.
+Errors SHALL be returned as JSON with a message and a meaningful HTTP status.
+
+Status SHALL report the engine's last-active time as an RFC 3339 timestamp and
+the idle duration derived from it in seconds, so a caller can judge idleness
+from a decision the daemon has already made rather than from raw counters it
+would have to compare itself. Both SHALL be omitted when no engine has ever
+run, and neither SHALL be inferred by the caller from any other field.
 
 #### Scenario: Status reports the supervised state
 
 - **WHEN** a status request is made
 - **THEN** the response reports the engine state, the model/runner being
   served (when known), and the engine log path
+
+#### Scenario: Status reports engine activity
+
+- **WHEN** a status request is made while an engine is running that has served
+  work
+- **THEN** the response reports the last-active timestamp and the number of
+  seconds since it
+
+#### Scenario: Status omits activity when there is none to report
+
+- **WHEN** a status request is made on a daemon that has never started an
+  engine
+- **THEN** the response carries no last-active timestamp and no idle duration
 
 #### Scenario: Start and stop drive the engine
 
@@ -109,7 +128,6 @@ with a message and a meaningful HTTP status.
 - **WHEN** a metrics request is made
 - **THEN** the response is the in-process collected metrics in the
   rendering-compatible stats shape
-
 ### Requirement: Deploy config push
 
 The API SHALL accept a deploy config in the same shape `outfit remote deploy`
@@ -135,4 +153,3 @@ engine.
 - **WHEN** a pushed deploy config names a runner the daemon cannot serve
   locally
 - **THEN** the push is rejected with an error naming the runner
-
