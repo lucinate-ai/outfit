@@ -1,0 +1,25 @@
+# A fleet: the machines running `outfit daemon`, and how to reach each one.
+#
+#   outfit fleet status      # one row per node
+#   outfit fleet metrics -w  # a live dashboard
+#
+# This file holds no secrets. A node that needs a bearer token names the
+# environment variable holding it (tokenEnv); the value comes from your
+# environment or the .env beside this file.
+nodes:
+  # A Mac on the LAN serving MLX models. Its daemon listens on the default
+  # port, and it is reachable over the network — so it needs a token.
+  - name: studio
+    host: studio.local
+    tokenEnv: STUDIO_TOKEN
+
+  # A GPU box reached over tailscale, on a non-default port.
+  - name: gpu-box
+    host: 198.51.100.7
+    port: 4242
+    tokenEnv: GPU_BOX_TOKEN
+
+  # This machine, where the daemon is bound to loopback. A loopback-only
+  # daemon needs no token, so this node names none.
+  - name: local
+    host: 127.0.0.1

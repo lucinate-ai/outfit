@@ -19,9 +19,14 @@ import (
 // and out of the process table.
 const TokenEnvVar = "OUTFIT_API_TOKEN"
 
+// DefaultAPIPort is the control API's port. A fleet client reaching a node
+// that states no port assumes this one, so the two sides share the constant
+// rather than repeating the number.
+const DefaultAPIPort = 4242
+
 // DefaultAPIAddr is where the control API listens unless --api-addr says
-// otherwise: port 4242 on all interfaces, so fleet clients on the network can
-// reach it (which is why a non-loopback listen demands a token).
+// otherwise: DefaultAPIPort on all interfaces, so fleet clients on the network
+// can reach it (which is why a non-loopback listen demands a token).
 const DefaultAPIAddr = ":4242"
 
 // Listen opens the control API's listener, enforcing the exposure rule: a

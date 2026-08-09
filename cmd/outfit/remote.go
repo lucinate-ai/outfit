@@ -613,46 +613,9 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 		fmt.Fprintf(w, "uptime:       %s\n", formatDuration(resp.UptimeSeconds))
 	}
 
-	if resp.Tokens != nil {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  running:          %d\n", resp.Tokens.Running)
-		fmt.Fprintf(w, "  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
-		fmt.Fprintf(w, "  generation tokens: %d\n", resp.Tokens.GenerationTokens)
-		fmt.Fprintf(w, "  requests:         %d\n", resp.Tokens.Requests)
-	}
-
-	if len(resp.GPUs) > 0 {
-		fmt.Fprintln(w)
-		for _, g := range resp.GPUs {
-			memUsed := formatBytes(g.MemoryUsed)
-			memTotal := formatBytes(g.MemoryTotal)
-			fmt.Fprintf(w, "  GPU %d: %s  util=%d%%  mem=%s/%s  temp=%dC\n",
-				g.Index, g.Name, g.Utilization, memUsed, memTotal, g.Temperature)
-		}
-		if len(resp.GPUs) > 1 {
-			var totalUtil, totalMemUsed, totalMemTotal int64
-			for _, g := range resp.GPUs {
-				totalUtil += int64(g.Utilization)
-				totalMemUsed += g.MemoryUsed
-				totalMemTotal += g.MemoryTotal
-			}
-			avgUtil := int(totalUtil) / len(resp.GPUs)
-			fmt.Fprintf(w, "  avg util: %d%%  total mem: %s/%s\n",
-				avgUtil, formatBytes(totalMemUsed), formatBytes(totalMemTotal))
-		}
-	}
-
-	if resp.CPU != nil {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  CPU: %.0f%% util\n", resp.CPU.Utilization)
-	}
-
-	if resp.Memory != nil {
-		memUsed := formatBytes(resp.Memory.Used)
-		memTotal := formatBytes(resp.Memory.Total)
-		pct := float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
-		fmt.Fprintf(w, "  RAM: %s/%s (%.0f%%)\n", memUsed, memTotal, pct)
-	}
+	renderTokenLines(w, resp.Tokens)
+	renderGPUTable(w, resp.GPUs)
+	renderCPUMemTable(w, resp.CPU, resp.Memory)
 
 	if withCost && resp.UptimeSeconds > 0 && resp.InstanceType != "" {
 		if price, err := getOnDemandPrice(ctx, cfg.Region, resp.InstanceType); err == nil {
@@ -661,12 +624,7 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 		}
 	}
 
-	if len(resp.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "metric collection errors:")
-		for _, e := range resp.Errors {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
-		}
-	}
+	renderCollectionErrors(os.Stderr, resp.Errors)
 
 	return nil
 }
@@ -703,12 +661,7 @@ func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Con
 		fmt.Fprintln(w, string(data))
 	}
 
-	if len(resp.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "metric collection errors:")
-		for _, e := range resp.Errors {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
-		}
-	}
+	renderCollectionErrors(os.Stderr, resp.Errors)
 
 	return nil
 }
@@ -727,45 +680,9 @@ func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config, w io.Writer
 		return nil
 	}
 
-	if resp.CPU != nil {
-		renderBar(w, "CPU", resp.CPU.Utilization)
-	}
-
-	if resp.Memory != nil {
-		pct := 0.0
-		if resp.Memory.Total > 0 {
-			pct = float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
-		}
-		renderBar(w, "RAM", pct)
-	}
-
-	for _, g := range resp.GPUs {
-		prefix := "GPU"
-		if len(resp.GPUs) > 1 {
-			prefix = fmt.Sprintf("GPU %d", g.Index)
-		}
-		renderBar(w, prefix+" util", float64(g.Utilization))
-		memPct := 0.0
-		if g.MemoryTotal > 0 {
-			memPct = float64(g.MemoryUsed) / float64(g.MemoryTotal) * 100
-		}
-		renderBar(w, prefix+" mem", memPct)
-	}
-
-	if resp.Tokens != nil {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  running:          %d\n", resp.Tokens.Running)
-		fmt.Fprintf(w, "  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
-		fmt.Fprintf(w, "  generation tokens: %d\n", resp.Tokens.GenerationTokens)
-		fmt.Fprintf(w, "  requests:         %d\n", resp.Tokens.Requests)
-	}
-
-	if len(resp.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "metric collection errors:")
-		for _, e := range resp.Errors {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
-		}
-	}
+	renderStatBars(w, resp.CPU, resp.Memory, resp.GPUs)
+	renderTokenLines(w, resp.Tokens)
+	renderCollectionErrors(os.Stderr, resp.Errors)
 
 	return nil
 }

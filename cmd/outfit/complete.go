@@ -150,6 +150,13 @@ var commands = map[string]command{
 		values:     map[string]candidateKind{"--api-addr": kindNone},
 		positional: kindAlias, positionals: 1,
 	},
+	"fleet": {
+		subcommands: []string{"status", "metrics", "start", "stop"},
+		flags:       []string{"--fleet", "--format", "--watch", "-w"},
+		values: map[string]candidateKind{
+			"--fleet": kindFile, "--format": kindNone,
+		},
+	},
 	"export": {
 		flags: []string{"--provider", "-p", "--providers", "--harness", "-H"},
 		values: map[string]candidateKind{
