@@ -10,15 +10,18 @@ plane SHALL NOT collect metrics by running per-metric shell commands on the
 instance.
 
 The idle check SHALL read the daemon's **status** endpoint over SSM and take
-the idle duration it reports as the answer to "has this engine been working?",
-rather than comparing counters itself or keeping activity history in the
-control plane. A daemon that reports no last-active time is one baked before
-this behaviour existed; against it the check SHALL fall back to reading the
-in-flight and cumulative counters from the daemon's metrics endpoint and
-comparing them against control-plane state, exactly as it does today, so a
-fleet part-way through a re-bake is judged correctly either way. A daemon that
-cannot be reached at all SHALL be treated as showing no activity, on both
-paths.
+the idle duration it reports as the answer to "has this engine been working?".
+It SHALL NOT compare counters itself, and the control plane SHALL keep no
+activity history of its own — no stored counter, no last-change time, no
+last-wake time.
+
+A daemon that cannot be reached, and a daemon whose reply carries no
+last-active time, SHALL both be treated as showing no activity, so an instance
+in either state is terminated once the idle threshold passes rather than left
+running. There SHALL be no second way of judging idleness for a daemon that
+does not report one: an instance running an outfit older than this behaviour
+is handled by deploying the control plane after the images that carry it, not
+by a compatibility path in the check.
 
 #### Scenario: Stats flow through the daemon
 
@@ -34,16 +37,15 @@ paths.
 - **THEN** it decides from the idle duration the daemon reports, and reads no
   counters and no stored activity history
 
-#### Scenario: An older daemon falls back to counters
-
-- **WHEN** the idle check runs against an instance whose daemon reports no
-  last-active time
-- **THEN** it decides from the daemon-reported in-flight and cumulative token
-  counters compared against the control plane's stored activity state, as
-  before
-
 #### Scenario: An unreachable daemon shows no activity
 
 - **WHEN** the idle check cannot reach the daemon on an instance
 - **THEN** the instance is treated as showing no activity and is terminated
   once the idle threshold passes
+
+#### Scenario: A daemon reporting no last-active time shows no activity
+
+- **WHEN** the idle check reaches a daemon whose reply carries no last-active
+  time
+- **THEN** the instance is treated as showing no activity, and no counters are
+  read to second-guess that

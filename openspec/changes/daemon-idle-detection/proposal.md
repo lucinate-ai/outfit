@@ -21,15 +21,21 @@ can sample far more often than any external caller.
 - `GET /v1/status` gains `lastActiveAt` (RFC 3339) and the derived
   `idleSeconds`, so a caller reads a decision rather than raw counters.
 - The stop Lambda's idle sweep reads `idleSeconds` from the daemon's status and
-  terminates when it exceeds the threshold. It no longer compares counters or
-  keeps activity history in SSM on that path.
+  terminates when it exceeds the threshold. The counter comparison is deleted,
+  not kept as a fallback.
 - The retention override, the maximum-runtime cap and the post-launch grace
   period stay in the Lambda. They are policy about the instance and the
   session, not statements about engine activity.
-- The Lambda falls back to today's counter comparison (and its SSM
-  `idle-state` writes) when a daemon reports no `lastActiveAt`, so an
-  instance running an older baked outfit behaves as it does now. No breaking
-  change.
+- **BREAKING (deployment ordering)**: the control plane no longer understands a
+  daemon that reports no `lastActiveAt`, and treats one as showing no activity
+  — the same way it already treats an unreachable daemon. The runtime AMIs must
+  therefore be re-baked with the new outfit *before* the stop Lambda is
+  deployed. There is no wire-format break: `/v1/status` only gains fields.
+- The SSM `idle-state` parameter, its seeding, and the start Lambda's
+  `last_wake_at` write are removed with the counter path. Nothing reads them
+  once the daemon owns the activity history, and the wake race they existed to
+  close is now closed on the instance, by the daemon marking an engine start as
+  activity.
 
 ## Capabilities
 
@@ -43,8 +49,8 @@ can sample far more often than any external caller.
 - `daemon-api`: the status reply additionally reports when the engine was last
   active and how long it has been idle.
 - `remote-engine-host`: the control plane's idle check reads the daemon's
-  last-active time instead of its raw counters, falling back to the counters
-  when the daemon does not report one.
+  last-active time instead of its raw counters, and keeps no activity history
+  of its own.
 - `endpoint-lifecycle`: activity is judged from continuous on-instance
   sampling rather than from a single reading taken at each sweep, so a lull
   between the sweep's ticks is no longer mistaken for idleness.
@@ -59,11 +65,16 @@ can sample far more often than any external caller.
   stop the sampler alongside the API listener, for both `outfit daemon` and
   `outfit serve --api`).
 - **Changed code (control plane)**: `remote/lambda/shared/daemon.ts` (a status
-  type and its SSM curl command), `remote/lambda/shared/idle.ts` (accept a
-  daemon-reported idle duration, keep the counter path as the fallback),
-  `remote/lambda/stop/index.ts` (scrape status, fall back to metrics).
-- **Docs**: `docs/http-api.md` (the new status fields) and
-  `remote/docs/architecture.md` (the idle flow).
-- **No breaking changes**: `/v1/status` only gains fields; the Lambda keeps
-  working against a daemon that does not report them, so a fleet part-way
-  through a re-bake behaves correctly either way.
+  type and its SSM curl command), `remote/lambda/shared/idle.ts` (take a
+  daemon-reported idle duration; the counter comparison, `IdleState` and the
+  `update` decision go away), `remote/lambda/stop/index.ts` (scrape status
+  instead of metrics; no SSM state read or write).
+- **Removed**: `ensureIdleState` and the `idle-state` parameter in
+  `remote/lambda/shared/environments.ts`, the start Lambda's `last_wake_at`
+  write, and the stop Lambda's `readState`/`writeState` use.
+- **Docs**: `docs/http-api.md` (the new status fields),
+  `remote/docs/architecture.md` (the idle flow and its key-files table) and
+  `remote/README.md` (idle behaviour).
+- **Deployment ordering matters**: re-bake the runtime AMIs before deploying
+  the stop Lambda. A new Lambda against an old daemon reads no activity at all
+  and terminates a busy instance once the idle threshold passes.

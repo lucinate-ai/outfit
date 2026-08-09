@@ -28,9 +28,10 @@ state. It just never looks unless someone calls `/v1/metrics`.
   that a lull between requests cannot read as idleness.
 - `GET /v1/status` reports a decision (`lastActiveAt`, `idleSeconds`), not raw
   counters.
-- The stop Lambda's idle path becomes "is `idleSeconds` past the threshold?".
-- A mixed fleet during a re-bake keeps working: an older daemon that reports no
-  `lastActiveAt` is judged the way it is today.
+- The stop Lambda's idle path becomes "is `idleSeconds` past the threshold?",
+  and nothing else. One way to judge idleness, not two.
+- The control plane keeps no activity history: the SSM `idle-state` parameter
+  and everything that reads or writes it goes.
 - The same idle awareness exists for a purely local `outfit daemon`.
 
 **Non-Goals:**
@@ -42,6 +43,8 @@ state. It just never looks unless someone calls `/v1/metrics`.
 - Persisting the last-active time across daemon restarts. A restarted daemon
   has no running engine, and the grace period covers the window in which that
   matters.
+- Supporting an instance whose baked outfit predates this change. Deployment
+  ordering handles that (see the migration note), not a compatibility path.
 - Changing the sweep interval, the thresholds, or the metrics/stats path.
 - Adding a new endpoint. `/v1/status` gains fields; nothing else moves.
 
@@ -83,11 +86,13 @@ double-count. Engine start itself sets `lastActive` (D5), so nothing is lost.
 
 **D5 — Starting an engine counts as activity; stopping it does not clear the
 record.** `StartEngine` stamps `lastActive = now` and drops the counter
-baseline. This is what closes the wake race the control plane currently handles
-with `last_wake_at` in SSM: a freshly booted instance reports `idleSeconds`
-counted from the engine start, so the sweep cannot terminate it for having been
-idle "since before it existed". Stop deliberately leaves `lastActive` alone, so
-a stopped engine still reports when real work last happened.
+baseline. This is what *replaces* the wake race the control plane currently
+handles with `last_wake_at` in SSM: a freshly booted instance reports
+`idleSeconds` counted from the engine start, so the sweep cannot terminate it
+for having been idle "since before it existed". That is why the start Lambda's
+`last_wake_at` write can be deleted outright rather than kept alongside (D11).
+Stop deliberately leaves `lastActive` alone, so a stopped engine still reports
+when real work last happened.
 
 **D6 — A failed sample is a non-observation.** It does not move `lastActive`
 and it does not clear the counter baseline. The "unreachable means idle" policy
@@ -111,29 +116,33 @@ convenience for a caller that would otherwise parse a timestamp in a shell
 pipeline. Both are `omitempty`, so a daemon that has never run an engine emits
 neither and the Lambda's fallback triggers on a missing `lastActiveAt`.
 
-**D9 — The Lambda reads `/v1/status`, with `/v1/metrics` as the fallback.**
-`shared/daemon.ts` gains `DAEMON_STATUS_CMD` and `parseDaemonStatus`, mirroring
-the existing metrics pair. `idleCheck` scrapes status first; when the reply
-carries `lastActiveAt`, it passes the reported idle seconds into `decideIdle`
-and no SSM state is read or written. When it does not — an older baked AMI —
-it falls back to the existing metrics scrape and counter comparison. Two SSM
-round-trips in the fallback case only, which is transient and rare.
+**D9 — The Lambda reads `/v1/status` and nothing else.** `shared/daemon.ts`
+gains `DAEMON_STATUS_CMD` and `parseDaemonStatus`, mirroring the existing
+metrics pair; `idleCheck` scrapes status and passes the reported idle seconds
+into `decideIdle`. A reply with no `lastActiveAt` is treated exactly like an
+unreachable daemon — no activity observed — which is the policy that already
+governs a failed scrape. `/v1/metrics` stays where it is for the stats path;
+the idle path simply stops using it. Rejected: keeping the counter scrape as a
+fallback for daemons baked before this change. It would double the idle logic
+permanently to smooth over a one-off deployment ordering, and a fallback nobody
+exercises is a fallback nobody notices breaking.
 
-**D10 — `decideIdle` keeps one signature, with a third `MetricsResult`
-variant.** `MetricsResult` becomes
-`{ok: true; idleSeconds: number} | {ok: true; running; counter} | {ok: false}`
-(discriminated by a `source` field). The precedence chain — retain override,
-max runtime, grace, activity, threshold — is untouched, so all twenty existing
-cases in `remote/test/idle.test.ts` keep passing; the daemon-reported variant
-short-circuits the counter comparison and returns `wait`/`stop` without an
-`update` action, since there is no state to write. Rejected: a second
-`decideIdleFromDaemon` function, which would duplicate the retain/cap/grace
-ordering — the part that is easiest to get subtly wrong.
+**D10 — `decideIdle` takes a duration, not counters.** `MetricsResult` becomes
+`{ok: true; idleSeconds: number} | {ok: false}`; `IdleState`, the `update`
+decision and the counter comparison are all deleted. The precedence chain —
+retain override, max runtime, grace, then the threshold — is untouched, and
+`decideIdle` becomes a pure function of durations with no state to thread
+through it. The existing cases in `remote/test/idle.test.ts` that drive
+counters are rewritten to drive `idleSeconds`; the retain, cap and grace cases
+are unaffected.
 
-**D11 — SSM `idle-state` stays.** The parameter, `ensureIdleState`, and the
-start Lambda's `last_wake_at` write are all left in place: they are what the
-fallback path needs. Removing them is a follow-up once every AMI in every
-environment is baked past this change, and is not worth coupling to it.
+**D11 — The SSM `idle-state` parameter goes with it.** Once the counter path is
+gone, nothing reads `IdleState`: `ensureIdleState` seeds a parameter no one
+consumes, the stop Lambda's `readState`/`writeState` calls have no subject, and
+the start Lambda's `last_wake_at` write is superseded by the daemon marking an
+engine start as activity (D5). All of it is removed, along with the
+`ssm:PutParameter` grant on the stop Lambda if nothing else needs it. Leaving
+a dead parameter behind would be the more confusing outcome, not the safer one.
 
 ## Risks / Trade-offs
 
@@ -147,11 +156,14 @@ environment is baked past this change, and is not worth coupling to it.
   serves, at 1/20th the rate of a busy client's own traffic. Negligible against
   a GPU instance.
 
-- **Two code paths for idleness in the Lambda until every AMI is re-baked.** →
-  Bounded and deliberate (D11). Both are covered by tests, and the fallback is
-  the code that ships today, so the risk is that it goes untested rather than
-  that it breaks. The status-path tests assert the fallback triggers on a
-  missing `lastActiveAt`.
+- **A stop Lambda deployed ahead of the re-baked AMI terminates busy
+  instances.** An old daemon reports no `lastActiveAt`, which the new Lambda
+  reads as no activity, so a working endpoint is terminated once the idle
+  threshold (15 minutes by default) passes. → This is the price of dropping the
+  fallback, and it is real. Mitigation is ordering, stated in the migration
+  plan: bake first, deploy second. The blast radius is bounded — a terminated
+  instance is relaunched on the next request, since the endpoint is
+  scale-to-zero by design — and a `Retain-Until` tag pins anything mid-debug.
 
 - **`/v1/status` becoming a decision rather than a report couples the control
   plane to the daemon's judgement.** → That is the point of the change, and it
@@ -162,9 +174,29 @@ environment is baked past this change, and is not worth coupling to it.
   `idleSeconds`, a duration measured entirely on the instance, so no comparison
   crosses the two clocks. `lastActiveAt` is reported for humans and logs.
 
+## Migration Plan
+
+The daemon change and the Lambda change are independent deployments, and the
+order matters because there is no compatibility path.
+
+1. Land the whole change and cut an outfit release.
+2. Bake the runtime AMIs against that release (`pnpm bake`), for every runner.
+   Until this is done, nothing has changed for a running fleet: the old Lambda
+   is still deployed and still reads counters.
+3. Verify: launch an instance from the new AMI and confirm
+   `curl 127.0.0.1:4242/v1/status` reports `lastActiveAt` and `idleSeconds`,
+   and that `idleSeconds` stays near zero under traffic.
+4. Only then `cdk deploy` the runtime stack, which ships the new stop Lambda
+   and drops the `idle-state` parameter.
+
+**Rollback:** revert the stack deploy. The old Lambda reads `/v1/metrics`,
+which the new daemon still serves unchanged, so a rolled-back control plane
+works against a new AMI — the incompatibility runs one way only. The
+`idle-state` parameter is recreated by `ensureIdleState` on the next deploy
+call, and a missing one already degrades to `{}` in `readState`.
+
 ## Open Questions
 
 None blocking. Worth revisiting after this lands: whether the sampler should
-also feed a short in-memory activity history (for a `fleet` client to show a
-sparkline), and when to delete the SSM `idle-state` parameter and the
-counter-comparison path once no old AMI remains.
+also feed a short in-memory activity history, so a `fleet` client could show
+per-node activity over time rather than a single number.

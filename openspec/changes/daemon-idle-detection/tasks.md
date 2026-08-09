@@ -78,39 +78,48 @@
   (`state`, `runner?`, `model?`, `uptimeSeconds?`, `logPath?`, `lastActiveAt?`,
   `idleSeconds?`), `DAEMON_STATUS_CMD` (curl `/v1/status` with the same
   `|| echo DAEMON_UNREACHABLE` marker), and `parseDaemonStatus`.
-- [ ] 7.2 In `remote/lambda/shared/idle.ts`, widen `MetricsResult` to a
-  discriminated union carrying either a daemon-reported `idleSeconds` or the
-  existing `running`/`counter` pair, and add `idleFromDaemonStatus(status)`
-  alongside `metricsFromDaemon`.
-- [ ] 7.3 Teach `decideIdle` the new variant: retain override, max runtime and
-  grace period are evaluated first and unchanged; the daemon-reported duration
-  then decides `stop` or `wait` directly, never `update` (no state to write).
-- [ ] 7.4 In `remote/lambda/stop/index.ts`, scrape `/v1/status` first; use the
-  daemon's idle duration when `lastActiveAt` is present; otherwise fall back to
-  the existing `/v1/metrics` scrape plus `readState`/`writeState`. Log which
-  path was taken in the existing structured log line.
-- [ ] 7.5 Leave the SSM `idle-state` parameter, `ensureIdleState` and the start
-  Lambda's `last_wake_at` write in place for the fallback path (design D11).
+- [ ] 7.2 In `remote/lambda/shared/idle.ts`, replace `MetricsResult` with
+  `{ok: true; idleSeconds: number} | {ok: false}` and swap `metricsFromDaemon`
+  for `idleFromDaemonStatus(status)`, which returns `{ok: false}` when the
+  status carries no `lastActiveAt`.
+- [ ] 7.3 Reduce `decideIdle` to a function of durations: keep the retain
+  override, max runtime and grace period in the same order, then decide `stop`
+  or `wait` from the reported idle seconds. Delete `IdleState`, the `update`
+  action, the counter comparison and the `last_wake_at` anchor.
+- [ ] 7.4 In `remote/lambda/stop/index.ts`, scrape `/v1/status` instead of
+  `/v1/metrics`, drop the `readState`/`writeState` calls and the `update`
+  branch, and keep the existing structured log line reporting the decision and
+  reason.
+- [ ] 7.5 Remove the now-dead SSM state: `ensureIdleState` and `idleStateParam`
+  in `remote/lambda/shared/environments.ts`, `readState`/`writeState` in
+  `remote/lambda/shared/aws.ts` if nothing else calls them, the start Lambda's
+  `last_wake_at` write, and the stop Lambda's `ssm:PutParameter` grant in
+  `remote/lib/llm-stack.ts` if no other statement needs it.
 
 ## 8. Control-plane tests
 
-- [ ] 8.1 Extend `remote/test/idle.test.ts`: daemon-reported idle under the
-  threshold waits; over it stops; retention, max runtime and grace still beat
-  it; the existing twenty counter cases still pass unchanged.
+- [ ] 8.1 Rewrite the counter-driven cases in `remote/test/idle.test.ts` to
+  drive `idleSeconds`: under the threshold waits, over it stops, an
+  unreachable daemon stops at the threshold. The retention, max-runtime and
+  grace cases carry over unchanged and must still pass.
 - [ ] 8.2 Extend `remote/test/stats.test.ts` (or add `daemon.test.ts`) for
   `parseDaemonStatus`: a representative reply, the unreachable marker, empty
-  output, non-JSON, and a reply with no `lastActiveAt`.
-- [ ] 8.3 `pnpm -C remote test` and `pnpm -C remote lint` (or the repo's
+  output, non-JSON, and a reply with no `lastActiveAt` (which must resolve to
+  "no activity", not to zero idle seconds).
+- [ ] 8.3 Update `remote/test/stack.test.ts` for any removed IAM statement or
+  parameter assertion.
+- [ ] 8.4 `pnpm -C remote test` and `pnpm -C remote lint` (or the repo's
   equivalent scripts) pass.
 
 ## 9. Docs and validation
 
 - [ ] 9.1 Update `docs/http-api.md`: the `GET /v1/status` field list gains
   `lastActiveAt` and `idleSeconds`, with a line on what counts as activity.
-- [ ] 9.2 Update `remote/docs/architecture.md`: the "Idle / stop" flowchart and
-  prose now read the daemon's idle time, with the counter comparison noted as
-  the compatibility fallback; update the key-files table if needed.
+- [ ] 9.2 Update `remote/docs/architecture.md`: the "Idle / stop" flowchart
+  loses the counter-comparison and state-write branches and reads the daemon's
+  idle time instead; drop the `idle-state` SSM node from the components
+  diagram; update the key-files table.
 - [ ] 9.3 Update `remote/README.md`'s "Idle behaviour" section to describe
-  on-instance sampling.
+  on-instance sampling, and record the bake-then-deploy ordering.
 - [ ] 9.4 `gofmt -w ./...` and `go vet ./...`.
 - [ ] 9.5 `openspec validate daemon-idle-detection --strict`.
