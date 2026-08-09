@@ -1,7 +1,19 @@
 # engine-metrics Specification
 
 ## Purpose
-TBD - created by archiving change serve-daemon. Update Purpose after archive.
+
+Collecting what a serving host knows about itself, in process: the engine's own
+token and request counters scraped from its Prometheus endpoint, plus the
+host's GPU, CPU and memory figures.
+
+It is the Go home of collection that first shipped as a TypeScript Lambda
+shelling `nvidia-smi`, `vmstat` and `free` onto an instance over SSM — which
+worked only for the cloud, and only from outside. Every stat is optional by
+design: a host with no source for one omits it rather than erroring, which is
+how a machine without `nvidia-smi` reports engine stats and no GPU figures. The
+shape is kept value-for-value compatible with what the existing
+`outfit remote metrics` formatters render.
+
 ## Requirements
 ### Requirement: Engine stats collection
 

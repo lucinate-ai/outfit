@@ -1,7 +1,19 @@
 # serve-daemon Specification
 
 ## Purpose
-TBD - created by archiving change serve-daemon. Update Purpose after archive.
+
+The supervised engine lifecycle behind `outfit daemon`: starting an engine on
+request rather than on boot, capturing its log, tracking whether it is running,
+stopped or crashed, and holding a stored deploy config as the source of what to
+serve.
+
+It exists so that running an engine is the same job on every machine — a
+home-lab node, a laptop, a cloud instance. Before it, `outfit serve` launched
+an engine in the foreground and knew nothing else about it, while the cloud ran
+a hand-rolled systemd unit. A crashed engine is deliberately reported and left
+alone rather than restarted: the daemon states what is true, and restarting is
+a policy for whoever is watching.
+
 ## Requirements
 ### Requirement: The daemon command
 

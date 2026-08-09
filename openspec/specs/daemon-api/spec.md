@@ -1,7 +1,18 @@
 # daemon-api Specification
 
 ## Purpose
-TBD - created by archiving change serve-daemon. Update Purpose after archive.
+
+The daemon's control HTTP API: which endpoints exist, what they accept and
+return, how they authenticate, and the rules for exposing them. This is the
+surface every remote caller speaks — the control-plane Lambdas that curl it
+over SSM, and a fleet client across the network.
+
+Two things shape it. It can start and stop processes, so exposure is guarded:
+a non-loopback listen without a bearer token refuses to start outright rather
+than serving unauthenticated. And it answers questions rather than handing out
+raw material — status reports how long the engine has been idle, not the
+counters a caller would have to compare for itself.
+
 ## Requirements
 ### Requirement: API exposure
 
