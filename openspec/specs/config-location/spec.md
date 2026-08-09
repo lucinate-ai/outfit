@@ -1,7 +1,20 @@
 # config-location Specification
 
 ## Purpose
-TBD - created by archiving change config-dir-override. Update Purpose after archive.
+
+How outfit resolves its own config directory, and why that resolution is
+explicit rather than inferred.
+
+Everything outfit owns lives under one directory — `config.json`, `remote.json`,
+the environment registry, the daemon state dir, the CDK source cache — and the
+obvious way to find it leans on `$HOME`. A systemd service does not get one. On
+the cloud instance that meant the boot script wrote to `/root/.config/outfit`
+while the daemon read a relative `.config/outfit`, so every boot start returned
+"nothing to serve" against a perfectly healthy box. This covers the
+`OUTFIT_CONFIG_DIR` override, its precedence over `XDG_CONFIG_HOME` and
+`~/.config`, and the rule that an unresolvable home fails loudly instead of
+silently resolving to a bogus relative path.
+
 ## Requirements
 ### Requirement: Single resolved config directory
 

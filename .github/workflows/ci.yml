@@ -24,6 +24,23 @@ jobs:
       - name: No cloud identifiers
         run: scripts/check-no-cloud-identifiers.sh
 
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The specs under openspec/ are the source of truth this project works
+      # from, so a malformed one is a build failure rather than a docs nit.
+      # --all covers every spec plus every unarchived change; --strict fails on
+      # warnings too. Run early: it is quick, and a spec problem should not wait
+      # behind the Go build to surface.
+      #
+      # The version is pinned deliberately. openspec adds validation rules
+      # between releases, and an unpinned CLI would fail unrelated pull requests
+      # the day one lands. Bump it on purpose, with whatever spec fixes the new
+      # rules ask for.
+      - name: Validate specs
+        run: npx --yes @fission-ai/openspec@1.8.0 validate --all --strict
+
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod

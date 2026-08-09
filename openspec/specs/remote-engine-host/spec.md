@@ -1,7 +1,18 @@
 # remote-engine-host Specification
 
 ## Purpose
-TBD - created by archiving change remote-on-daemon. Update Purpose after archive.
+
+The instance-side half of the cloud deployment: outfit baked into the runtime
+AMI, the boot writing a deploy config and starting the engine through the
+daemon's control API, and the control-plane Lambdas reaching that API over SSM.
+
+It exists to make the cloud path and every other path the same path. The
+instance used to run a hand-rolled systemd unit while the Lambdas collected
+metrics by shelling commands over SSM, duplicating in TypeScript what outfit
+already does in Go. Now the Lambdas are thin relays to the same API a fleet
+client speaks: they read metrics from it, and they read its judgement of engine
+idleness rather than forming their own.
+
 ## Requirements
 ### Requirement: Outfit is baked into the runtime AMI
 
