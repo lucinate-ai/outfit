@@ -80,3 +80,9 @@ changelog:
 release:
   draft: false
   prerelease: auto
+  # The daemon's control API contract, attached per release so a consumer can
+  # pin it to the outfit version it talks to rather than reading whatever is
+  # currently on the default branch. Kept honest by
+  # internal/daemon/openapi_test.go.
+  extra_files:
+    - glob: docs/openapi.yaml

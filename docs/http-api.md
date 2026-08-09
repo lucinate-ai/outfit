@@ -2,6 +2,18 @@
 
 When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a control API is exposed on `:4242` (or the address specified by `--api-addr`) that allows management of the engine via JSON requests.
 
+> **The machine-readable contract is [`openapi.yaml`](openapi.yaml)** — every route, its
+> auth, its request body and the schemas of its replies. Point a client generator
+> at that rather than at this page, and use this page for the behaviour a schema
+> cannot express. It is also attached to each [GitHub
+> release](https://github.com/lucinate-ai/outfit/releases), so a consumer can pin
+> the contract to the outfit version it talks to.
+>
+> It cannot silently fall behind: `internal/daemon/openapi_test.go` compares it
+> against the routes the handler registers and the JSON fields of the structs it
+> serialises, and fails the build when they disagree. Change a route or a
+> response field and the spec has to change with it.
+
 All requests must include a bearer token in the `Authorization` header:
 `Authorization: Bearer $OUTFIT_API_TOKEN`
 

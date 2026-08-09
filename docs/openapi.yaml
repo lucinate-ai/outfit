@@ -1,0 +1,363 @@
+openapi: 3.1.0
+
+# The daemon's HTTP control API — what `outfit daemon` always exposes, and what
+# `outfit serve --api` exposes alongside a foreground engine.
+#
+# This file is checked against the implementation by
+# internal/daemon/openapi_test.go: the routes here must match the ones the
+# handler registers, and each schema's properties must match the JSON tags of
+# the Go struct it describes. The test compares names, not types — where the two
+# could still disagree, the Go code is the source of truth.
+#
+# Prose on the behaviour a schema cannot express lives in docs/http-api.md.
+
+info:
+  title: outfit daemon control API
+  summary: Supervise and observe a local inference engine.
+  description: |
+    The control API drives one supervised inference engine: start it, stop it,
+    ask what it is doing, and set what it serves next.
+
+    It listens on `:4242` by default (`--api-addr` overrides). A non-loopback
+    listen with no bearer token configured refuses to start, since the API can
+    start and stop processes; a loopback listen may go tokenless.
+
+    Under `outfit daemon` nothing runs until a start request asks, and stopping
+    the engine never ends the daemon — the API keeps answering. Under
+    `outfit serve --api` the engine is foreground-managed, so start always
+    fails as already-running and stopping the engine ends serve itself.
+  license:
+    name: MIT
+    identifier: MIT
+  version: "1"
+
+servers:
+  - url: http://127.0.0.1:4242
+    description: The daemon's default loopback address.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: engine
+    description: Driving and observing the supervised engine.
+  - name: config
+    description: What the engine serves.
+
+paths:
+  /v1/status:
+    get:
+      tags: [engine]
+      operationId: getStatus
+      summary: Report the supervised engine's state and idle time.
+      description: |
+        `lastActiveAt` and `idleSeconds` are the daemon's own answer to whether
+        the engine is busy, derived from token counters it samples every 15
+        seconds. Both are absent until an engine has run.
+      responses:
+        "200":
+          description: The engine's current state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/start:
+    post:
+      tags: [engine]
+      operationId: startEngine
+      summary: Start the engine.
+      description: |
+        The body may carry a deploy config naming what to run — validated and
+        persisted exactly as a push, then started. With no body, the stored
+        deploy config is served, else the Outfit the daemon sits beside.
+
+        A body sent with a rejected start is not stored.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeployConfig"
+      responses:
+        "200":
+          description: The engine started; the reply is its new state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          description: The config is invalid, the engine failed to start, or there is nothing to serve.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: An engine is already running. Nothing changed, and a carried config was not stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/stop:
+    post:
+      tags: [engine]
+      operationId: stopEngine
+      summary: Stop the engine.
+      description: |
+        Idempotent: stopping when nothing runs succeeds. Under `outfit daemon`
+        this never ends the daemon itself.
+      responses:
+        "200":
+          description: The engine is stopped; the reply is its new state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          description: The engine could not be stopped.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/metrics:
+    get:
+      tags: [engine]
+      operationId: getMetrics
+      summary: Return collected engine and host metrics.
+      description: |
+        Engine token counters scraped from the engine's own Prometheus endpoint,
+        plus host GPU, CPU and memory figures. Every stat is optional: a host
+        with no source for one simply omits it, so a machine without
+        `nvidia-smi` reports engine stats and no GPU figures.
+      responses:
+        "200":
+          description: The collected stats.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stats"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/deploy-config:
+    put:
+      tags: [config]
+      operationId: putDeployConfig
+      summary: Set what the next start serves.
+      description: |
+        A running engine is deliberately untouched — the config takes effect on
+        the next start, which the reply says.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeployConfig"
+      responses:
+        "200":
+          description: The config was stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "400":
+          description: The config is invalid or names a runner this host cannot serve.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        The token comes from the `OUTFIT_API_TOKEN` environment variable —
+        reachable through the Outfit's adjacent `.env` — never from a flag, so
+        the secret stays out of the process table. When no token is configured
+        the API is unauthenticated, which `Listen` permits only on loopback.
+
+  responses:
+    Unauthorized:
+      description: The bearer token is missing or wrong.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    StatusResponse:
+      type: object
+      description: The supervised engine's state. Mirrors Go's daemon.StatusResponse.
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [idle, running, stopped, crashed]
+          description: |
+            `idle` means nothing has been started yet; `crashed` means the
+            engine exited unprompted, and is reported rather than restarted.
+        runner:
+          type: string
+          description: The engine being served, when known.
+          examples: [llamacpp, vllm]
+        model:
+          type: string
+          description: What it is serving, when known.
+        uptimeSeconds:
+          type: integer
+          description: How long the engine has been running. Zero unless running.
+        logPath:
+          type: string
+          description: The engine's log file, when running under the daemon.
+        lastActiveAt:
+          type: string
+          format: date-time
+          description: |
+            When the engine last did any work, RFC 3339. Moved forward by a
+            sample showing requests in flight or a moved counter, and by an
+            engine start. Absent until an engine has run.
+        idleSeconds:
+          type: integer
+          description: Seconds since `lastActiveAt`. Absent when that is.
+
+    Stats:
+      type: object
+      description: Collected engine and host metrics. Mirrors Go's metrics.Stats.
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [idle, running, stopped, crashed]
+        runner:
+          type: string
+        modelId:
+          type: string
+        uptimeSeconds:
+          type: integer
+        tokens:
+          $ref: "#/components/schemas/TokenStats"
+        gpus:
+          type: array
+          items:
+            $ref: "#/components/schemas/GpuStat"
+        cpu:
+          $ref: "#/components/schemas/CpuStat"
+        memory:
+          $ref: "#/components/schemas/MemoryStat"
+        errors:
+          type: array
+          description: Collection failures. An absent source is omitted rather than reported here.
+          items:
+            type: string
+
+    TokenStats:
+      type: object
+      description: Per-engine token and request counters, read from its Prometheus endpoint.
+      properties:
+        running:
+          type: integer
+          description: Requests in flight (processing plus waiting/deferred).
+        counter:
+          type: integer
+          description: The sum of the engine's cumulative counters — the activity signal.
+        promptTokens:
+          type: integer
+        generationTokens:
+          type: integer
+        requests:
+          type: integer
+
+    GpuStat:
+      type: object
+      description: One GPU's figures, from nvidia-smi.
+      properties:
+        index:
+          type: integer
+        name:
+          type: string
+          examples: ["NVIDIA L40S"]
+        utilization:
+          type: integer
+          description: Percent.
+        memoryUsed:
+          type: integer
+          description: Bytes.
+        memoryTotal:
+          type: integer
+          description: Bytes.
+        temperature:
+          type: integer
+          description: Degrees Celsius.
+
+    CpuStat:
+      type: object
+      description: Whole-host CPU utilisation.
+      properties:
+        utilization:
+          type: number
+          description: Percent.
+
+    MemoryStat:
+      type: object
+      description: System memory, in bytes.
+      properties:
+        total:
+          type: integer
+        used:
+          type: integer
+
+    DeployConfig:
+      type: object
+      description: |
+        What to serve, in the same shape `outfit remote deploy` derives from an
+        Outfit. Mirrors Go's remote.DeployConfig. There is no default runner: an
+        unset or invalid one fails loudly rather than guessing.
+      required: [runner]
+      properties:
+        runner:
+          type: string
+          enum: [llamacpp, vllm]
+        modelId:
+          type: string
+          description: The weights to serve — a Hugging Face repo, or a local path on the instance.
+        quant:
+          type: string
+          description: The quantisation to select, where the runner takes one.
+        contextSize:
+          type: integer
+        servedModelName:
+          type: string
+          description: The name the endpoint advertises the model under.
+        serveArgs:
+          type: array
+          description: Runner-specific flags, pre-tokenised.
+          items:
+            type: string
+
+    Message:
+      type: object
+      description: A plain acknowledgement, where there is nothing to report but acceptance.
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    Error:
+      type: object
+      description: The failure reply. Every non-2xx status carries one.
+      required: [error]
+      properties:
+        error:
+          type: string

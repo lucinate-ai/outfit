@@ -54,61 +54,75 @@ func loopbackAddr(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// Route names one endpoint of the control API: the ServeMux pattern it is
+// registered under, and the OpenAPI schema its success reply carries.
+type Route struct {
+	// Pattern is the Go 1.22 method pattern, e.g. "GET /v1/status".
+	Pattern string
+	// ResponseSchema names this route's success reply in docs/openapi.yaml.
+	ResponseSchema string
+}
+
+// Routes is the control API's surface, in one list. Handler registers from it
+// and the OpenAPI drift test checks docs/openapi.yaml against it, so the mux,
+// the spec and this list cannot disagree — a ServeMux cannot enumerate its own
+// patterns, which is why the list exists at all. Adding an endpoint means
+// adding a line here, a handler in Handler, and a path in the spec; leaving any
+// of the three out fails the test.
+func Routes() []Route {
+	return []Route{
+		{"GET /v1/status", "StatusResponse"},
+		{"POST /v1/start", "StatusResponse"},
+		{"POST /v1/stop", "StatusResponse"},
+		{"GET /v1/metrics", "Stats"},
+		{"PUT /v1/deploy-config", "Message"},
+	}
+}
+
 // Handler builds the control API: status, start, stop, metrics, and deploy
 // config, all JSON, all behind the bearer token (when one is set).
 func (d *Daemon) Handler(token string) http.Handler {
+	handlers := map[string]http.HandlerFunc{
+		"GET /v1/status":        d.handleStatus,
+		"POST /v1/start":        d.handleStart,
+		"POST /v1/stop":         d.handleStop,
+		"GET /v1/metrics":       d.handleMetrics,
+		"PUT /v1/deploy-config": d.handleDeployConfig,
+	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, d.Status())
-	})
-	mux.HandleFunc("POST /v1/start", func(w http.ResponseWriter, r *http.Request) {
-		// A start may carry its own deploy config: push-then-start in one
-		// call. The already-running check comes first so a 409 stores
-		// nothing.
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err)
+	for _, route := range Routes() {
+		handler, ok := handlers[route.Pattern]
+		if !ok {
+			// Routes() and the table above are edited together; a mismatch is
+			// a programming error, not a runtime condition.
+			panic("daemon: no handler for route " + route.Pattern)
+		}
+		mux.HandleFunc(route.Pattern, handler)
+	}
+	return authenticated(token, mux)
+}
+
+func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, d.Status())
+}
+
+func (d *Daemon) handleStart(w http.ResponseWriter, r *http.Request) {
+	// A start may carry its own deploy config: push-then-start in one
+	// call. The already-running check comes first so a 409 stores
+	// nothing.
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if len(bytes.TrimSpace(body)) > 0 {
+		if state, engine, _ := d.Sup.Status(); state == StateRunning {
+			writeError(w, http.StatusConflict,
+				fmt.Errorf("an engine is already running (%s); stop it first", engine))
 			return
 		}
-		if len(bytes.TrimSpace(body)) > 0 {
-			if state, engine, _ := d.Sup.Status(); state == StateRunning {
-				writeError(w, http.StatusConflict,
-					fmt.Errorf("an engine is already running (%s); stop it first", engine))
-				return
-			}
-			var dc remote.DeployConfig
-			if err := json.Unmarshal(body, &dc); err != nil {
-				writeError(w, http.StatusBadRequest, fmt.Errorf("decoding deploy config: %w", err))
-				return
-			}
-			if err := d.Push(dc); err != nil {
-				writeError(w, http.StatusBadRequest, err)
-				return
-			}
-		}
-		if err := d.StartEngine(); err != nil {
-			status := http.StatusBadRequest
-			if state, _, _ := d.Sup.Status(); state == StateRunning {
-				status = http.StatusConflict
-			}
-			writeError(w, status, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, d.Status())
-	})
-	mux.HandleFunc("POST /v1/stop", func(w http.ResponseWriter, r *http.Request) {
-		if err := d.Sup.Stop(); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, d.Status())
-	})
-	mux.HandleFunc("GET /v1/metrics", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, d.Metrics(r.Context()))
-	})
-	mux.HandleFunc("PUT /v1/deploy-config", func(w http.ResponseWriter, r *http.Request) {
 		var dc remote.DeployConfig
-		if err := json.NewDecoder(r.Body).Decode(&dc); err != nil {
+		if err := json.Unmarshal(body, &dc); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("decoding deploy config: %w", err))
 			return
 		}
@@ -116,13 +130,56 @@ func (d *Daemon) Handler(token string) http.Handler {
 			writeError(w, http.StatusBadRequest, err)
 			return
 		}
-		msg := "stored"
+	}
+	if err := d.StartEngine(); err != nil {
+		status := http.StatusBadRequest
 		if state, _, _ := d.Sup.Status(); state == StateRunning {
-			msg = "stored; the running engine is untouched — it takes effect on next start"
+			status = http.StatusConflict
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"message": msg})
-	})
-	return authenticated(token, mux)
+		writeError(w, status, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d.Status())
+}
+
+func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
+	if err := d.Sup.Stop(); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d.Status())
+}
+
+func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, d.Metrics(r.Context()))
+}
+
+func (d *Daemon) handleDeployConfig(w http.ResponseWriter, r *http.Request) {
+	var dc remote.DeployConfig
+	if err := json.NewDecoder(r.Body).Decode(&dc); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decoding deploy config: %w", err))
+		return
+	}
+	if err := d.Push(dc); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	msg := "stored"
+	if state, _, _ := d.Sup.Status(); state == StateRunning {
+		msg = "stored; the running engine is untouched — it takes effect on next start"
+	}
+	writeJSON(w, http.StatusOK, Message{Message: msg})
+}
+
+// Message is the control API's plain acknowledgement reply, used where there
+// is nothing to report but that the request was accepted.
+type Message struct {
+	Message string `json:"message"`
+}
+
+// Error is the control API's failure reply. Every non-2xx status carries one.
+type Error struct {
+	Error string `json:"error"`
 }
 
 // authenticated gates every request behind the bearer token. An empty token
@@ -149,5 +206,5 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 func writeError(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	writeJSON(w, status, Error{Error: err.Error()})
 }
