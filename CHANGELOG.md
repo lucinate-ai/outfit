@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.17.0] - 2026-08-10
+### Added
+- feat(daemon): own idle detection, and publish an API contract (#64)
+- feat: add lucinate harness
+
+### Changed
+- build(deps): bump the github-actions group with 2 updates
+- build(deps): bump the go-dependencies group with 2 updates
+- build: add opencode config for openspec
+- refactor: rename 'shared infrastructure' to 'control plane'
+
+### Fixed
+- fix(remote): bump image recipe to 3.3.1 and refuse an empty outfitVersion
+
 ## [1.16.0] - 2026-08-09
 ### Added
 - feat: add OUTFIT_CONFIG_DIR to override outfit's config directory
