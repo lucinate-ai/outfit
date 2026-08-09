@@ -315,13 +315,20 @@ func TestApply_ByAlias(t *testing.T) {
 	registerOutfit(t, "PROVIDER llamacpp\nMODEL gemma\nALIAS q3\n")
 	t.Chdir(t.TempDir()) // somewhere else entirely
 
-	out := captureStdout(t, func() {
-		if err := cmdApply([]string{"q3"}); err != nil {
-			t.Fatalf("cmdApply by alias: %v", err)
-		}
+	// The alias line goes to stderr, so `outfit remote env` can be eval'd.
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			if err := cmdApply([]string{"q3"}); err != nil {
+				t.Fatalf("cmdApply by alias: %v", err)
+			}
+		})
 	})
-	if !strings.Contains(out, `Using alias "q3"`) {
-		t.Errorf("the alias was not reported:\n%s", out)
+	if !strings.Contains(stderr, `Using alias "q3"`) {
+		t.Errorf("the alias was not reported:\n%s", stderr)
+	}
+	if strings.Contains(stdout, "Using alias") {
+		t.Errorf("the alias line belongs on stderr:\n%s", stdout)
 	}
 
 	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))

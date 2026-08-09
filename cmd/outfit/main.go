@@ -61,6 +61,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
 	"github.com/lucinate-ai/outfit/internal/config"
@@ -282,7 +283,7 @@ func cmdAdd(args []string) error {
 	if err != nil {
 		return err
 	}
-	return applySelection(sel, h, "")
+	return applySelection(sel, h, "", opencode.EnvResolver(""))
 }
 
 // applySelection writes a single provider selection into the active harness's
@@ -291,7 +292,10 @@ func cmdAdd(args []string) error {
 // envDir is the directory of the Outfit the selection came from, which is where
 // a `.env` holding its API key belongs; it is empty when no Outfit is involved
 // (an `outfit add` from flags), leaving only the process environment.
-func applySelection(sel outfit.Selection, h harness.Harness, envDir string) error {
+// resolve looks up API key variables — normally opencode.EnvResolver(envDir),
+// but `outfit harness` widens it with the key it fetched from a remote
+// endpoint, which it is about to put in the launched agent's environment.
+func applySelection(sel outfit.Selection, h harness.Harness, envDir string, resolve func(string) string) error {
 	if sel.Model == "" && sel.Alias == "" {
 		return fmt.Errorf("a provider selection needs a model or an alias")
 	}
@@ -364,7 +368,7 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string) erro
 		}
 	}
 
-	summary, err := h.Apply(p, sel, contextSize, outputSize, opencode.EnvResolver(envDir))
+	summary, err := h.Apply(p, sel, contextSize, outputSize, resolve)
 	if err != nil {
 		return err
 	}
@@ -395,9 +399,11 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string) erro
 // path, which callers use to locate files referenced relative to the Outfit.
 //
 // It prints when an alias decided the path, which is against this file's
-// convention that only cmdX functions write to stdout. The alternative is to
+// convention that only cmdX functions report anything. The alternative is to
 // repeat that reporting at all four call sites, where one omission would leave
-// the user guessing which file was read.
+// the user guessing which file was read. The line goes to stderr because
+// `outfit remote env` writes shell exports to stdout for `eval`, which a stray
+// prose line would break.
 func readOutfit(usage, path string) (outfit.Selection, string, error) {
 	if path == "" {
 		path = outfit.DefaultFile
@@ -405,7 +411,7 @@ func readOutfit(usage, path string) (outfit.Selection, string, error) {
 	if aliased, ok, err := resolveAlias(path); err != nil {
 		return outfit.Selection{}, path, err
 	} else if ok {
-		fmt.Printf("Using alias %q (%s)\n\n", path, aliased)
+		fmt.Fprintf(os.Stderr, "Using alias %q (%s)\n\n", path, aliased)
 		path = aliased
 	}
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
@@ -492,7 +498,8 @@ func cmdApply(args []string) error {
 	if output != "" {
 		sel.Output = output
 	}
-	return applySelection(sel, h, filepath.Dir(outfitPath))
+	envDir := filepath.Dir(outfitPath)
+	return applySelection(sel, h, envDir, opencode.EnvResolver(envDir))
 }
 
 // cmdUnapply reads an Outfit file and removes what it selects — the inverse of
@@ -963,28 +970,21 @@ func cmdHarness(args []string) error {
 	// A .env beside the applied Outfit is where its keys live, so the launched
 	// agent is given the same ones. Without an Outfit there is no such file and
 	// only the environment (plus any provider key outfit resolves) is passed on.
+	// remoteResp carries the live key of a remote endpoint, fetched while
+	// applying so the config is written knowing it will be there.
 	var envDir string
 	var sel outfit.Selection
+	var remoteResp *remote.Response
 	if outfitPath.set {
 		var err error
-		sel, envDir, err = applyBeforeLaunch(outfitPath, providers, h, rest)
+		sel, envDir, remoteResp, err = applyBeforeLaunch(outfitPath, providers, h, rest)
 		if err != nil {
 			return err
 		}
 	}
-
-	// For a remote Outfit, fetch the live API key and base URL from the
-	// running endpoint so the harness can reach it without the user having
-	// to export anything by hand.
-	var remoteResp *remote.Response
-	if sel.Remote != "" {
-		cfg, cfgErr := resolveRemoteConfigForOutfit(sel.Remote, envDir)
-		if cfgErr == nil {
-			if resp, envErr := remote.Env(context.Background(), cfg); envErr == nil {
-				remoteResp = resp
-			}
-		}
-	}
+	// The resolver the launch uses knows the remote key too, so every key the
+	// agent is given comes from the same place the apply step reported.
+	resolve := remoteLaunchResolver(opencode.EnvResolver(envDir), remoteResp)
 
 	// Launch the harness, forwarding stdio and any trailing args.
 	bin := h.Command()
@@ -992,7 +992,7 @@ func cmdHarness(args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = harnessEnv(providers, opencode.EnvResolver(envDir), remoteResp)
+	cmd.Env = harnessEnv(providers, resolve, remoteResp)
 	// A worn Outfit brings its whole local environment to the launched agent:
 	// its adjacent .env fills any gaps left above, and its ENV instructions
 	// override everything. These shape only the child's environment — outfit
@@ -1007,7 +1007,7 @@ func cmdHarness(args []string) error {
 	// agent can authenticate the model it boots into, without ever writing it to
 	// lucinate's config. An explicit setting already in the child's env wins.
 	if h.Name() == "lucinate" {
-		if key, ok := lucinateLaunchKey(providers, opencode.EnvResolver(envDir), sel, outfitPath.set); ok {
+		if key, ok := lucinateLaunchKey(providers, resolve, sel, outfitPath.set); ok {
 			cmd.Env = setEnvIfAbsent(cmd.Env, "LUCINATE_OPENAI_API_KEY", key)
 		}
 	}
@@ -1201,29 +1201,117 @@ func namesAnOutfitOrAlias(arg string) bool {
 // can dress the harness and then run it. rest is what will be forwarded to the
 // harness, inspected only to catch a path that was meant for the flag.
 // It returns the applied Outfit's directory and selection, so the launched
-// agent can be given the same keys the apply resolved, and the caller can
-// detect if the Outfit targets a remote endpoint.
-func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) (outfit.Selection, string, error) {
+// agent can be given the same keys the apply resolved, along with the remote
+// endpoint's live environment when the Outfit names one.
+//
+// The remote key is fetched before the apply, not after, so the apply resolves
+// against the environment the agent will actually run with. Fetching it
+// afterwards left the apply warning that no key was set while the launch was
+// about to supply one.
+func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) (outfit.Selection, string, *remote.Response, error) {
 	// The flag's value has to be attached, so `--outfit ./dev/Outfit` (or
 	// `--outfit q3`) would otherwise apply ./Outfit and quietly hand the path
 	// or alias to the harness.
 	if f.path == "" && len(rest) > 0 && namesAnOutfitOrAlias(rest[0]) {
-		return outfit.Selection{}, "", fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
+		return outfit.Selection{}, "", nil, fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
 	}
 	sel, path, err := readOutfit("outfit harness --outfit=<file>", f.path)
 	if err != nil {
-		return outfit.Selection{}, "", err
+		return outfit.Selection{}, "", nil, err
 	}
 	// As for apply, --providers overrides the catalogue the selection resolves
 	// against (an Outfit never names one).
 	sel.Providers = providers
 	fmt.Printf("Applying %s\n\n", path)
 	envDir := filepath.Dir(path)
-	if err := applySelection(sel, h, envDir); err != nil {
-		return outfit.Selection{}, "", err
+	localResolve := opencode.EnvResolver(envDir)
+	// Before the apply, so a launch that cannot authenticate stops without
+	// having rewritten the harness config.
+	remoteResp, err := fetchRemoteEnv(sel, envDir, localResolve)
+	if err != nil {
+		return outfit.Selection{}, "", nil, err
+	}
+	if err := applySelection(sel, h, envDir, remoteLaunchResolver(localResolve, remoteResp)); err != nil {
+		return outfit.Selection{}, "", nil, err
 	}
 	fmt.Println()
-	return sel, envDir, nil
+	return sel, envDir, remoteResp, nil
+}
+
+// remoteEnvTimeout bounds the call that fetches a remote endpoint's key, so a
+// control plane that never answers delays the launch rather than blocking it.
+const remoteEnvTimeout = 30 * time.Second
+
+// fetchRemoteEnv returns the live base URL and API key of the endpoint an
+// Outfit's REMOTE names, or nil when it states no REMOTE. The endpoint is
+// started with a key that only the control plane knows, so this is the one
+// place it can come from; `outfit harness` puts it in the environment of the
+// agent it launches.
+//
+// Whether a failure is fatal depends on whether the key is needed. With nothing
+// else supplying one, launching is pointless — the endpoint refuses every
+// request — so the command stops and says what to do about it. When the key is
+// already to hand (exported, in the `.env` beside the Outfit, or set by an ENV
+// instruction) the fetch was only a convenience, so it warns and carries on.
+func fetchRemoteEnv(sel outfit.Selection, envDir string, resolve func(string) string) (*remote.Response, error) {
+	if sel.Remote == "" {
+		return nil, nil
+	}
+	// The call crosses the network, and a cold control plane is not instant.
+	fmt.Fprintf(os.Stderr, "Fetching the endpoint's environment from %s...\n", sel.Remote)
+	cfg, err := resolveRemoteConfigForOutfit(sel.Remote, envDir)
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), remoteEnvTimeout)
+		defer cancel()
+		var resp *remote.Response
+		if resp, err = remote.Env(ctx, cfg); err == nil {
+			return resp, nil
+		}
+	}
+	if localKey(sel, resolve) == "" {
+		return nil, fmt.Errorf(
+			"could not fetch the API key for %s: %w\n"+
+				"Start the endpoint with `outfit remote start %s` if it is stopped, or export %s yourself",
+			sel.Remote, err, sel.Remote, remoteAPIKeyEnv)
+	}
+	fmt.Fprintf(os.Stderr,
+		"Warning: could not fetch the API key for %s (%v).\nCarrying on with the %s already set here.\n",
+		sel.Remote, err, remoteAPIKeyEnv)
+	return nil, nil
+}
+
+// localKey returns the API key the launch can supply without the control
+// plane: an ENV instruction in the Outfit, which overrides everything at launch
+// (see overlayLocalEnv), otherwise whatever the environment or the adjacent
+// `.env` holds.
+func localKey(sel outfit.Selection, resolve func(string) string) string {
+	for _, e := range sel.Env {
+		if e.Key == remoteAPIKeyEnv {
+			return e.Value
+		}
+	}
+	return resolve(remoteAPIKeyEnv)
+}
+
+// remoteLaunchResolver extends an environment-variable lookup with the key
+// fetched from a running remote endpoint. `outfit harness` gives that key to
+// the agent it launches, so an apply on the same path should resolve it too:
+// the config it writes is complete, and the missing-key warning is left for
+// the case where the key really is missing. resp is nil when the Outfit names
+// no remote, or the fetch failed, and the lookup is then unchanged.
+func remoteLaunchResolver(base func(string) string, resp *remote.Response) func(string) string {
+	if resp == nil || resp.APIKey == "" {
+		return base
+	}
+	return func(name string) string {
+		if v := base(name); v != "" {
+			return v
+		}
+		if name == remoteAPIKeyEnv {
+			return resp.APIKey
+		}
+		return ""
+	}
 }
 
 // namesAnOutfit reports whether arg points at an Outfit file, or at a directory
