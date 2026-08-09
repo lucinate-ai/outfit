@@ -3,7 +3,7 @@
 The deployment [`outfit remote`](../docs/commands/remote.md) drives:
 scale-to-zero, self-hosted LLM endpoints on AWS, each exposing an
 OpenAI-compatible API for use as a coding-agent backend. It is split into two
-layers. A **shared layer** — the lifecycle Lambdas, the weights bucket, the
+layers. A **control plane** — the lifecycle Lambdas, the weights bucket, the
 VPC and the AMI bake pipelines — is deployed **once per account** by
 `outfit remote bootstrap`. **Environments** — one per endpoint, each with its
 own Elastic IP, API key and allowed CIDR — are created on it by
@@ -41,7 +41,7 @@ engine, and the start Lambda launches the **newest AMI matching the engine it
 was told to run**. A failed bake produces no new AMI and changes nothing.
 
 ```
-outfit remote bootstrap ─▶ shared stack (Lambdas, S3, VPC, roles) + bake pipelines
+outfit remote bootstrap ─▶ control-plane stack (Lambdas, S3, VPC, roles) + bake pipelines
      pnpm bake llamacpp ─▶ Image Builder pipeline ─(async)─▶ AMI (driver + engine), tagged
 outfit remote deploy ─▶ deploy Lambda ─▶ creates env <name>: EIP, SG (your CIDR),
                                       │  API key, deploy-config (what to serve)
@@ -108,7 +108,7 @@ deploy and the AMI bakes. Endpoints come after it, one `outfit remote deploy`
 per environment:
 
 ```sh
-outfit remote bootstrap   # once per account: shared stack + pipelines + bakes
+outfit remote bootstrap   # once per account: control-plane stack + pipelines + bakes
 outfit remote deploy      # creates the Outfit's REMOTE environment and says
                           # what it serves; seeds the weights if missing
 ```
@@ -121,7 +121,7 @@ pnpm install
 pnpm cdk bootstrap     # once per account/region
 pnpm deploy:image      # creates the bake pipelines — instant, no build yet
 pnpm bake llamacpp     # bakes that engine's AMI — ~15-25 min, in the background
-pnpm run deploy        # deploys the shared stack (Lambdas, VPC, S3 bucket)
+pnpm run deploy        # deploys the control-plane stack (Lambdas, VPC, S3 bucket)
 ```
 
 - `pnpm deploy:image` only creates the pipelines, so it deploys in seconds and
@@ -130,7 +130,7 @@ pnpm run deploy        # deploys the shared stack (Lambdas, VPC, S3 bucket)
   the build runs asynchronously — check it with the `aws imagebuilder get-image`
   command the script prints. Re-bake only when the engine version or the driver
   changes; the model is **not** baked in.
-- `pnpm run deploy` deploys the **shared stack** — VPC, the lifecycle Lambdas,
+- `pnpm run deploy` deploys the **control-plane stack** — VPC, the lifecycle Lambdas,
   the S3 weights bucket, roles — and publishes its outputs for discovery. It
   creates no Elastic IP and no environment.
 - `outfit remote deploy` reads the [`Outfit`](Outfit) and its

@@ -27,7 +27,7 @@
 //	outfit completion <bash|zsh|powershell> # print the tab-completion script
 //	outfit remote bootstrap|start|stop|status|metrics|deploy|env|ls # control the remote GPU
 //	                                      # inference instance (bootstrap does the
-//	                                      # once-per-account shared setup; deploy
+//	                                      # once-per-account control-plane setup; deploy
 //	                                      # sets what it serves; env returns the
 //	                                      # running endpoint's env vars; ls lists
 //	                                      # registered environments)
@@ -158,7 +158,7 @@ Usage:
   outfit completion <shell>         (tab completion: bash, zsh, powershell)
    outfit remote <bootstrap|start|stop|status|metrics|deploy|env|ls> [path]
                                     (control the remote GPU instance; bootstrap
-                                     does the once-per-account shared setup;
+                                     does the once-per-account control-plane setup;
                                      deploy sets what it serves, from the Outfit;
                                      env returns the running endpoint's env vars;
                                      ls lists registered environments)
@@ -227,7 +227,7 @@ completion: prints a tab-completion script for bash, zsh, or powershell. Add
       TAB then completes commands, flags, providers, harnesses, and your
       registered aliases.
 remote: runs the model on a cloud GPU that exists only while you use it, from
-       the same Outfit. bootstrap does the once-per-account shared setup (Image
+       the same Outfit. bootstrap does the once-per-account control-plane setup (Image
        Builder, the lifecycle Lambdas, shared bucket/roles/VPC) with a consent
        gate; deploy creates the environment the Outfit's REMOTE names — its own
        address, API key and allowed CIDR — and says what it serves (PROVIDER

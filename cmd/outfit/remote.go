@@ -976,7 +976,7 @@ func presetValue(key string, layers ...[]preset.Param) string {
 
 // Seams for the deploy flow, so tests drive it without AWS or a network.
 var (
-	deployDiscoverFn   = remote.DiscoverSharedLayer
+	deployDiscoverFn   = remote.DiscoverControlPlane
 	remoteDeployFn     = remote.Deploy
 	remoteStatusFn     = remote.Status
 	detectPublicCIDRFn = detectPublicCIDR
@@ -998,7 +998,7 @@ func cmdRemoteDeploy(args []string) error {
 	fs.BoolVar(&dryRun, "n", false, "print the config without sending it (shorthand)")
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
 	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
-	fs.StringVar(&region, "region", "", "AWS region of the shared layer (default: AWS_REGION or us-east-1)")
+	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
 	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
 		return err
 	}
@@ -1051,14 +1051,14 @@ func cmdRemoteDeploy(args []string) error {
 		return nil
 	}
 
-	// The control URLs come from the shared layer's stack outputs — the
+	// The control URLs come from the control plane's stack outputs — the
 	// environment may not exist yet, so there is nothing local to resolve.
 	ctx := context.Background()
 	awsCfg, err := remote.LoadAWSConfig(ctx, resolveRegion(region))
 	if err != nil {
 		return err
 	}
-	layer, err := deployDiscoverFn(ctx, awsCfg, sharedStackName)
+	layer, err := deployDiscoverFn(ctx, awsCfg, controlPlaneStackName)
 	if err != nil {
 		return err
 	}

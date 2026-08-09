@@ -37,7 +37,7 @@ const CIDR = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/;
 /**
  * The control plane `outfit remote deploy` calls (SigV4 Function URL). POST
  * `{environment, allowedCidr, ...deployConfig}` and the environment is created
- * on the shared layer if it does not exist — its Elastic IP, security group
+ * on the control plane if it does not exist — its Elastic IP, security group
  * (ingress = its own allowed CIDR), API-key secret and SSM state — the weights
  * are seeded if missing, and the config is written to the environment's
  * deploy-config parameter. GET `?env=<name>` returns the current config. This

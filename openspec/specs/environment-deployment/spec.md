@@ -2,15 +2,15 @@
 
 ## Purpose
 
-Define how `outfit remote deploy` creates a named environment on the shared,
-account-level infrastructure: discovering the shared layer, provisioning per-environment resources, registering the environment, and guarding against accidental overwrites.
+Define how `outfit remote deploy` creates a named environment on the
+account-level control plane: discovering it, provisioning per-environment resources, registering the environment, and guarding against accidental overwrites.
 
 ## Requirements
 
-### Requirement: Deploy creates an environment on the shared layer
+### Requirement: Deploy creates an environment on the control plane
 
-`outfit remote deploy` SHALL create a named environment on top of the shared
-infrastructure: it SHALL discover the shared layer, then provision the
+`outfit remote deploy` SHALL create a named environment on top of the control
+plane: it SHALL discover it, then provision the
 environment's own Elastic IP, EC2 instance configuration, per-environment API
 key, per-environment allowed-ingress rule, and per-environment SSM state
 (deploy-config and idle-state), all tagged by the environment name. It SHALL set
@@ -31,15 +31,15 @@ start the instance.
 - **THEN** the environment is configured and registered but no instance is
   running until `outfit remote start`
 
-### Requirement: Discovering the shared layer
+### Requirement: Discovering the control plane
 
-Deploy SHALL discover the shared infrastructure from the bootstrap stack's
+Deploy SHALL discover the control plane from the bootstrap stack's
 CloudFormation outputs (a well-known stack name) — the lifecycle Lambda URLs, the
 weights bucket, the shared roles, and the region — rather than from any local
-file. When the shared stack is absent, deploy SHALL fail telling the user to run
+file. When the control-plane stack is absent, deploy SHALL fail telling the user to run
 `outfit remote bootstrap` first, rather than attempting to create an environment.
 
-#### Scenario: The shared layer is discovered
+#### Scenario: The control plane is discovered
 
 - **WHEN** deploy runs against a bootstrapped account
 - **THEN** it reads the Lambda URLs, bucket, roles and region from the stack
@@ -47,7 +47,7 @@ file. When the shared stack is absent, deploy SHALL fail telling the user to run
 
 #### Scenario: Not bootstrapped
 
-- **WHEN** deploy runs against an account with no shared stack
+- **WHEN** deploy runs against an account with no control-plane stack
 - **THEN** it fails saying to run `outfit remote bootstrap` first, and creates
   nothing
 

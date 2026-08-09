@@ -5,7 +5,7 @@ Run a model too big for your laptop on a GPU in the cloud, from the same
 while you're using it.
 
 ```sh
-outfit remote bootstrap  # once per account: deploy the shared infrastructure
+outfit remote bootstrap  # once per account: deploy the control plane
 outfit remote deploy     # create an endpoint (environment) and tell it what to serve
 outfit remote start      # boot it; prints the exports your agent needs (progress on stderr)
 outfit remote status     # is it up? is it healthy?
@@ -18,10 +18,10 @@ you stop.
 
 ## Bootstrapping the account
 
-Before any endpoint can run, the shared, account-level infrastructure has to
+Before any endpoint can run, the account-level control plane has to
 exist — much like `cdk bootstrap`. `outfit remote bootstrap` does it once per
 account: it downloads the `remote/` CDK project (version-matched to your binary)
-and deploys the shared layer — the EC2 Image Builder pipelines and baked AMIs,
+and deploys the control plane — the EC2 Image Builder pipelines and baked AMIs,
 the lifecycle Lambdas, and the shared weights bucket, roles and VPC — publishing
 them as CloudFormation outputs that `outfit remote deploy` discovers later.
 
@@ -34,10 +34,10 @@ outfit remote bootstrap --package-manager npm  # use npm instead of pnpm
 ```
 
 Before deploying, bootstrap prints a plan — the target account and region, the
-shared resources, the cost, and the exact commands — and asks you to confirm
+control-plane resources, the cost, and the exact commands — and asks you to confirm
 (`--yes` skips the prompt). It creates **no** Elastic IP or instance and **no**
 environment; those come from `outfit remote deploy`. Re-running is safe: it
-updates the shared stack and doesn't touch any live instance. It needs Node 22, a
+updates the control-plane stack and doesn't touch any live instance. It needs Node 22, a
 Node package manager, AWS credentials, and enough GPU vCPU quota for a later
 launch.
 
@@ -118,8 +118,8 @@ URLs.
 
 ## Creating an endpoint: `deploy`
 
-`outfit remote deploy` creates an **environment** on the bootstrapped shared
-layer and tells it what to serve. It reads the Outfit and its preset:
+`outfit remote deploy` creates an **environment** on the bootstrapped control
+plane and tells it what to serve. It reads the Outfit and its preset:
 `PROVIDER` picks the engine (so the file that runs a model locally under
 [`outfit serve`](serve.md) deploys the same model remotely), and `REMOTE` names
 the environment — the committed link between the Outfit and its deployment:
@@ -132,7 +132,7 @@ PRESET   ./preset.ini    # the model and its flags
 REMOTE   qwen3.6-27b     # the environment deploy creates and registers
 ```
 
-Deploy discovers the shared layer from the bootstrap stack's outputs, then
+Deploy discovers the control plane from the bootstrap stack's outputs, then
 provisions the environment's own Elastic IP, API key, ingress rule and state,
 registers it under `~/.config/outfit/remotes/<env>/`, and stores what to serve.
 Everything the endpoint sets itself — host, port, where the weights live, the

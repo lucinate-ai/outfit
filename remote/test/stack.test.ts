@@ -42,7 +42,7 @@ function tempDotEnv(content: string): string {
 }
 
 describe('config', () => {
-  it('needs no per-environment settings (shared layer only)', () => {
+  it('needs no per-environment settings (control plane only)', () => {
     // allowedCidr, runner, model settings all moved to `outfit remote deploy`.
     expect(() => loadConfig(new cdk.App(), NO_DOTENV)).not.toThrow();
   });
@@ -111,7 +111,7 @@ describe('environments (pure helpers)', () => {
   });
 });
 
-describe('LlmStack (shared layer)', () => {
+describe('LlmStack (control plane)', () => {
   let template: Template;
   beforeAll(() => {
     template = sharedTemplate();
@@ -316,7 +316,7 @@ describe('LlmStack (shared layer)', () => {
       expect(Object.keys(template.findOutputs(name))).toHaveLength(1);
     }
     // An environment's base URL is its own EIP, allocated at deploy — the
-    // shared stack has no address to output.
+    // control-plane stack has no address to output.
     expect(Object.keys(template.findOutputs('BaseUrl'))).toHaveLength(0);
     expect(Object.keys(template.findOutputs('EipAddress'))).toHaveLength(0);
     expect(Object.keys(template.findOutputs('InitialDeployConfig'))).toHaveLength(0);
@@ -338,7 +338,7 @@ describe('ImageStack', () => {
   it('defines a pipeline per runner and runs no build at deploy time', () => {
     template.resourceCountIs('AWS::ImageBuilder::Component', 2);
     template.resourceCountIs('AWS::ImageBuilder::ImageRecipe', 2);
-    // One shared infrastructure config; a distribution + pipeline per runner.
+    // One control plane config; a distribution + pipeline per runner.
     template.resourceCountIs('AWS::ImageBuilder::InfrastructureConfiguration', 1);
     template.resourceCountIs('AWS::ImageBuilder::DistributionConfiguration', 2);
     template.resourceCountIs('AWS::ImageBuilder::ImagePipeline', 2);

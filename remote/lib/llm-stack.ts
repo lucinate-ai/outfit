@@ -31,7 +31,7 @@ const TAG_KEY = 'cloud-vm-llm';
 const TAG_VALUE = 'endpoint';
 
 /**
- * The shared, account-level layer — deployed once by `outfit remote bootstrap`,
+ * The account-level control plane — deployed once by `outfit remote bootstrap`,
  * analogous to `cdk bootstrap`. It holds what every environment reuses: the
  * weights bucket, the VPC, the shared IAM roles, and the environment-aware
  * lifecycle Lambdas (start/stop/deploy). It creates NO Elastic IP and NO
@@ -432,7 +432,7 @@ export class LlmStack extends cdk.Stack {
     });
 
     // Discovery: `outfit remote deploy` reads these stack outputs (by the
-    // well-known stack name) to find the shared layer from any machine with
+    // well-known stack name) to find the control plane from any machine with
     // account access — no local file carries them.
     new cdk.CfnOutput(this, 'StartUrl', { value: startUrl.url });
     new cdk.CfnOutput(this, 'StopUrl', { value: stopUrl.url });
