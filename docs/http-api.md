@@ -2,6 +2,18 @@
 
 When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a control API is exposed on `:4242` (or the address specified by `--api-addr`) that allows management of the engine via JSON requests.
 
+> **The machine-readable contract is [`openapi.yaml`](openapi.yaml)** — every route, its
+> auth, its request body and the schemas of its replies. Point a client generator
+> at that rather than at this page, and use this page for the behaviour a schema
+> cannot express. It is also attached to each [GitHub
+> release](https://github.com/lucinate-ai/outfit/releases), so a consumer can pin
+> the contract to the outfit version it talks to.
+>
+> It cannot silently fall behind: `internal/daemon/openapi_test.go` compares it
+> against the routes the handler registers and the JSON fields of the structs it
+> serialises, and fails the build when they disagree. Change a route or a
+> response field and the spec has to change with it.
+
 All requests must include a bearer token in the `Authorization` header:
 `Authorization: Bearer $OUTFIT_API_TOKEN`
 
@@ -16,6 +28,20 @@ Returns the current state of the engine:
 - `state`: `idle`, `running`, `stopped`, or `crashed`
 - `runner` / `model`: what is being served, when known
 - `logPath`: the path to the engine's log file (when running under the daemon)
+- `lastActiveAt`: when the engine last did any work, RFC 3339
+- `idleSeconds`: how long it has been since then
+
+While an engine runs, the daemon reads its token counters every 15 seconds on
+its own, whether or not anything is calling this API. A reading counts as
+activity when it shows requests in flight or when the cumulative counter has
+moved since the last one — so a request that starts and finishes between two
+readings still counts. Starting an engine counts as activity too, and stopping
+one leaves the record alone, so a stopped engine still reports when work last
+happened. Both fields are omitted until an engine has run.
+
+This is the daemon answering "is this engine busy?" once, on the box, rather
+than each caller re-deriving it from raw counters at whatever rate it polls.
+The cloud deployment's idle check reads exactly these two fields.
 
 ### POST `/v1/start`
 Starts the engine. The request body may carry a deploy config (same JSON as `PUT /v1/deploy-config`) naming what to run — it is validated and persisted exactly like a push, then started. With no body, the stored deploy config, else the Outfit the daemon sits beside, is served.

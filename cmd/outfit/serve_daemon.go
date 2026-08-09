@@ -121,10 +121,17 @@ func cmdDaemon(args []string) error {
 	fmt.Printf("control API on %s\n", ln.Addr())
 	go srv.Serve(ln)
 
+	// Activity sampling runs for as long as the daemon does, independently of
+	// anyone calling the API — that frequent, unprompted sampling is what
+	// makes the idle time in /v1/status trustworthy.
+	sampleCtx, stopSampling := context.WithCancel(context.Background())
+	go d.SampleActivity(sampleCtx)
+
 	// Foreground until signalled; a running engine is stopped before the
 	// daemon exits. Backgrounding is the user's business (tmux, systemd,
 	// launchd).
 	<-sigCh
+	stopSampling()
 	sup.Stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	srv.Shutdown(shutdownCtx)
@@ -186,11 +193,17 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 		}
 		return err
 	}
+	// The engine started through the supervisor directly rather than through
+	// StartEngine, so the activity record is stamped here instead.
+	d.MarkActive()
 	srv := &http.Server{Handler: d.Handler(token)}
 	fmt.Printf("control API on %s\n\n", ln.Addr())
 	go srv.Serve(ln)
+	sampleCtx, stopSampling := context.WithCancel(context.Background())
+	go d.SampleActivity(sampleCtx)
 
 	waitErr := sup.Wait()
+	stopSampling()
 	signal.Stop(sigCh)
 	// Graceful shutdown: a stop requested over the API lands here while its
 	// response is still in flight — let it finish rather than cutting the

@@ -12,7 +12,6 @@ import {
   baseUrlFor,
   deployConfigParam,
   environmentFrom,
-  idleStateParam,
   isValidEnvironmentName,
 } from '../lambda/shared/environments';
 
@@ -105,7 +104,6 @@ describe('environments (pure helpers)', () => {
 
   it('derives per-environment resource names', () => {
     expect(deployConfigParam('prod')).toBe('/cloud-vm-llm/prod/deploy-config');
-    expect(idleStateParam('prod')).toBe('/cloud-vm-llm/prod/idle-state');
     expect(apiKeySecretName('prod')).toBe('cloud-vm-llm/prod/api-key');
     expect(baseUrlFor('203.0.113.10', 8000)).toBe('http://203.0.113.10:8000/v1');
   });

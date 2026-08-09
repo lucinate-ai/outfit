@@ -153,11 +153,12 @@ of you exits. Two related surfaces build on it:
   foreground itself; background it with tmux, systemd, launchd or similar.
 
 The API listens on `:4242` (change with `--api-addr`) and speaks JSON.
-See [HTTP Control API](../http-api.md) for details:
+See [HTTP Control API](../http-api.md) for details, or
+[`openapi.yaml`](../openapi.yaml) for the full contract:
 
 | Endpoint | Meaning |
 | -------- | ------- |
-| `GET /v1/status` | Engine state, what is served, the engine log path |
+| `GET /v1/status` | Engine state, what is served, the engine log path, and how long it has been idle |
 | `POST /v1/start` | Start the engine (optional deploy-config body; 409 while one runs) |
 | `POST /v1/stop` | Stop the engine (idempotent; never ends the daemon) |
 | `GET /v1/metrics` | Engine token counters plus host GPU/CPU/RAM |
@@ -169,6 +170,10 @@ first), never from a flag; a non-loopback listen with no token refuses to
 start. A supervised engine gets its own `/metrics` endpoint switched on
 (llama.cpp `--metrics`), which is where the token counters come from; GPU
 readings need `nvidia-smi` (no Apple GPU source yet).
+
+Those counters are also read every 15 seconds in the background, so
+`/v1/status` can report `lastActiveAt` and `idleSeconds` — how long it has
+been since the engine last had a request in flight or moved a counter.
 
 ## Flags
 

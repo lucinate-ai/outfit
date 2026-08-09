@@ -19,7 +19,6 @@ import {
 } from '@aws-sdk/client-ssm';
 import { randomUUID } from 'node:crypto';
 import { type DeployConfig, parseDeployConfig } from './deploy-config';
-import type { IdleState } from './idle';
 
 const ec2 = new EC2Client({});
 const ssm = new SSMClient({});
@@ -276,36 +275,6 @@ export async function runShellCommand(
     }
   }
   return { status: 'Timeout', stdout: '' };
-}
-
-export async function readState(paramName: string): Promise<IdleState> {
-  let raw = '{}';
-  try {
-    const result = await ssm.send(new GetParameterCommand({ Name: paramName }));
-    raw = result.Parameter?.Value ?? '{}';
-  } catch (err) {
-    // A missing parameter is empty state, not an error — so an instance whose
-    // environment never wrote one is still judged (and terminated) normally.
-    if (errorName(err) !== 'ParameterNotFound') {
-      throw err;
-    }
-  }
-  try {
-    return JSON.parse(raw) as IdleState;
-  } catch {
-    return {};
-  }
-}
-
-export async function writeState(paramName: string, state: IdleState): Promise<void> {
-  await ssm.send(
-    new PutParameterCommand({
-      Name: paramName,
-      Value: JSON.stringify(state),
-      Type: 'String',
-      Overwrite: true,
-    }),
-  );
 }
 
 /**

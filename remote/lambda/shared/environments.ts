@@ -4,7 +4,7 @@
  * weights bucket, roles and the VPC; an environment is created by the deploy
  * Lambda on demand and owns everything specific to one endpoint — its Elastic
  * IP (stable address), its security group (per-env allowed CIDR), its API-key
- * secret, and its deploy-config/idle-state SSM parameters.
+ * secret, and its deploy-config SSM parameter.
  *
  * Everything is keyed by the environment name, carried on resources as tags
  * (or encoded in names for the secret and SSM parameters), so one shared set
@@ -26,13 +26,11 @@ import {
   GetSecretValueCommand,
   SecretsManagerClient,
 } from '@aws-sdk/client-secrets-manager';
-import { GetParameterCommand, PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { randomBytes } from 'node:crypto';
 import { errorName } from './aws';
 
 const ec2 = new EC2Client({});
 const secretsManager = new SecretsManagerClient({});
-const ssm = new SSMClient({});
 
 /** Tag naming which environment a resource (instance, EIP, SG) belongs to. */
 export const ENV_TAG_KEY = 'cloud-vm-llm:env';
@@ -70,11 +68,6 @@ export function environmentFrom(
 /** SSM parameter holding what an environment serves. */
 export function deployConfigParam(env: string): string {
   return `/cloud-vm-llm/${env}/deploy-config`;
-}
-
-/** SSM parameter holding an environment's idle-tracking state. */
-export function idleStateParam(env: string): string {
-  return `/cloud-vm-llm/${env}/idle-state`;
 }
 
 /** Secrets Manager name of an environment's API key. */
@@ -245,21 +238,3 @@ export async function readEnvApiKey(env: string): Promise<string> {
   return result.SecretString ?? '';
 }
 
-/** Ensure the environment's idle-state parameter exists (empty state). */
-export async function ensureIdleState(env: string): Promise<void> {
-  try {
-    await ssm.send(new GetParameterCommand({ Name: idleStateParam(env) }));
-  } catch (err) {
-    if (errorName(err) !== 'ParameterNotFound') {
-      throw err;
-    }
-    await ssm.send(
-      new PutParameterCommand({
-        Name: idleStateParam(env),
-        Value: '{}',
-        Type: 'String',
-        Overwrite: false,
-      }),
-    );
-  }
-}

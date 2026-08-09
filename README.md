@@ -332,6 +332,11 @@ asks, and the request can carry the deploy config (runner, model, flags) to
 run — or fall back to a previously pushed config, or the Outfit the daemon
 sits beside. Stopping the engine leaves the daemon answering.
 
+It also keeps an eye on whether the engine is actually doing anything: it
+reads the engine's counters every 15 seconds and reports `lastActiveAt` and
+`idleSeconds` on `/v1/status`. Ask the daemon how busy it is rather than
+working it out from raw counters yourself.
+
 ```sh
 OUTFIT_API_TOKEN=…  outfit daemon           # control API on :4242
 outfit daemon --api-addr 127.0.0.1:4242     # loopback-only needs no token
@@ -342,6 +347,10 @@ The API is bearer-token authenticated (`OUTFIT_API_TOKEN`, e.g. from the
 start. `outfit serve -a/--api` exposes the same API beside an ordinary
 foreground serve. This is the building block for managing a fleet of engines
 across machines — the daemon on each box, one `outfit` observing them.
+
+Writing a client? [`docs/openapi.yaml`](docs/openapi.yaml) is the full
+contract, and it ships with every release. See
+[`docs/http-api.md`](docs/http-api.md) for the endpoints in prose.
 
 ## Remote inference instance
 

@@ -1,37 +1,38 @@
 /**
  * Pure idle-detection logic, kept free of AWS calls so it can be unit tested.
+ *
+ * Engine activity is not judged here: the on-instance daemon samples its
+ * engine's counters every few seconds and reports how long it has been idle,
+ * and this decides what to do about that. What stays here is the policy the
+ * daemon cannot know — a retention override, the maximum-runtime cap, and the
+ * post-launch grace period, all of which are about the instance and the
+ * session rather than about the engine.
  */
 
+import type { DaemonStatus } from './daemon';
 
-export interface IdleState {
-  /** Last observed activity counter (sum of vLLM token/request counters). */
-  counter?: number;
-  /** When the counter last changed. */
-  last_change_at?: string;
-  /** When the start Lambda last reported the endpoint ready. */
-  last_wake_at?: string;
-}
+// The idle signal the check runs on: how long the daemon says its engine has
+// been idle. ok: false means nothing was observed — the daemon was
+// unreachable, or answered without a last-active time (an outfit older than
+// daemon-owned idle detection). Both are treated as "no activity observed", so
+// a wedged or mismatched instance still stops at the threshold rather than
+// burning GPU-hours.
+export type MetricsResult = { ok: true; idleSeconds: number } | { ok: false };
 
-// The activity signals the idle check runs on: in-flight requests plus the
-// cumulative token counter, read from the on-instance daemon's metrics reply
-// (its engine scrape). ok: false means the daemon (or its engine scrape) was
-// unreachable — treated as "no activity observed" so a wedged server still
-// stops at the threshold.
-export type MetricsResult = { ok: true; running: number; counter: number } | { ok: false };
-
-/** Lift the idle signals out of a daemon metrics reply. */
-export function metricsFromDaemon(tokens?: { running: number; counter: number }): MetricsResult {
-  if (!tokens) {
+/** Lift the idle signal out of a daemon status reply. */
+export function idleFromDaemonStatus(status?: DaemonStatus | null): MetricsResult {
+  if (!status || status.lastActiveAt === undefined) {
     return { ok: false };
   }
-  return { ok: true, running: tokens.running, counter: tokens.counter };
+  // idleSeconds is omitted rather than sent as 0 when the engine is active
+  // right now, so an absent value with a present lastActiveAt means zero.
+  return { ok: true, idleSeconds: status.idleSeconds ?? 0 };
 }
 
 export interface IdleDecisionInput {
   now: Date;
   launchTime: Date;
   metrics: MetricsResult;
-  state: IdleState;
   idleThresholdMinutes: number;
   gracePeriodMinutes: number;
   /** Hard cap: stop this long after launch even if requests are in flight. */
@@ -45,7 +46,6 @@ export interface IdleDecisionInput {
 
 export type IdleDecision =
   | { action: 'wait'; reason: string }
-  | { action: 'update'; reason: string; newState: IdleState }
   | { action: 'stop'; reason: string };
 
 export function decideIdle(input: IdleDecisionInput): IdleDecision {
@@ -53,7 +53,6 @@ export function decideIdle(input: IdleDecisionInput): IdleDecision {
     now,
     launchTime,
     metrics,
-    state,
     idleThresholdMinutes,
     gracePeriodMinutes,
     maxRuntimeMinutes,
@@ -89,56 +88,25 @@ export function decideIdle(input: IdleDecisionInput): IdleDecision {
     };
   }
 
-  if (metrics.ok) {
-    // "Changed" rather than "increased": a counter that reset to zero after a
-    // container restart still counts as activity and renews the grace window.
-    if (metrics.running > 0 || state.counter === undefined || metrics.counter !== state.counter) {
-      return {
-        action: 'update',
-        reason:
-          metrics.running > 0
-            ? `${metrics.running} request(s) in flight`
-            : `activity counter moved (${state.counter ?? 'unset'} -> ${metrics.counter})`,
-        newState: {
-          counter: metrics.counter,
-          last_change_at: now.toISOString(),
-          last_wake_at: state.last_wake_at,
-        },
-      };
-    }
-  }
-
-  // The instance is only ever considered idle relative to the most recent
-  // sign of life. last_wake_at closes the race where the start Lambda reports
-  // "ready" moments before an idle tick would otherwise stop the instance.
-  const anchor = Math.max(
-    parseTime(state.last_change_at),
-    parseTime(state.last_wake_at),
-    launchTime.getTime(),
-  );
-  const idleMinutes = (now.getTime() - anchor) / 60_000;
+  // Nothing observed: fall back to how long the instance has been up. The
+  // daemon marks an engine start as activity, so on a healthy instance this
+  // never decides anything — it is what stops a wedged or unreachable one.
+  const idleMinutes = metrics.ok
+    ? metrics.idleSeconds / 60
+    : minutesSinceLaunch;
+  const unobserved = metrics.ok ? '' : '; no activity reported';
   if (idleMinutes > idleThresholdMinutes) {
     return {
       action: 'stop',
-      reason: `idle for ${idleMinutes.toFixed(1)} min (threshold ${idleThresholdMinutes})${
-        metrics.ok ? '' : '; metrics scrape failed'
-      }`,
+      reason: `idle for ${idleMinutes.toFixed(1)} min (threshold ${idleThresholdMinutes})${unobserved}`,
     };
   }
   return {
     action: 'wait',
-    reason: `idle for ${idleMinutes.toFixed(1)} min (threshold ${idleThresholdMinutes})`,
+    reason: `idle for ${idleMinutes.toFixed(1)} min (threshold ${idleThresholdMinutes})${unobserved}`,
   };
 }
 
 function minutesBetween(from: Date, to: Date): number {
   return (to.getTime() - from.getTime()) / 60_000;
-}
-
-function parseTime(iso: string | undefined): number {
-  if (!iso) {
-    return 0;
-  }
-  const parsed = Date.parse(iso);
-  return Number.isNaN(parsed) ? 0 : parsed;
 }

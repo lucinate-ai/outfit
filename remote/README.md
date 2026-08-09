@@ -254,16 +254,26 @@ curl "$OPENAI_BASE_URL/chat/completions" \
 
 ### Idle behaviour
 
-Every 5 minutes the stop Lambda scrapes the engine's request/token counters
-(via SSM, on the instance — it reads whichever metric names the deployed engine
-exposes). If nothing has moved for `idleThresholdMinutes`, the instance is
-**terminated**. With defaults, expect that **15–20 minutes** after the last
-request. Terminated means $0 compute and no volume left behind — the next
-`outfit remote start` launches a fresh one from the AMI.
+The on-instance outfit daemon reads its engine's request/token counters every
+15 seconds and keeps track of when the engine was last doing work, which it
+reports as `lastActiveAt` and `idleSeconds` on `/v1/status`. Every 5 minutes
+the stop Lambda asks for that (via SSM) and **terminates** the instance once
+`idleSeconds` passes `idleThresholdMinutes`. With defaults, expect that
+**15–20 minutes** after the last request. Terminated means $0 compute and no
+volume left behind — the next `outfit remote start` launches a fresh one from
+the AMI.
 
-If the metrics scrape fails (e.g. the engine crashed), the instance is still
-terminated at the threshold — deliberately, so a wedged box does not run up
-GPU-hours unnoticed.
+Sampling on the box is what makes this reliable: a busy endpoint that happens
+to have nothing in flight at the moment a 5-minute sweep lands used to read as
+idle, because that single sample was the entire signal. Sixty samples between
+sweeps cannot miss traffic the way one can.
+
+If the daemon cannot be reached, or answers without a last-active time, the
+instance is treated as showing no activity and is still terminated at the
+threshold — deliberately, so a wedged box does not run up GPU-hours unnoticed.
+That second case is also why the **runtime AMIs must be re-baked before the
+control plane is deployed**: an outfit older than daemon-owned idle detection
+reports no last-active time, and there is no fallback to counter scraping.
 
 There is also a hard cap: `maxRuntimeMinutes` (default 4 hours) terminates the
 instance that long after it started **even if requests are still flowing**, as

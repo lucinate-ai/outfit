@@ -7,7 +7,6 @@ import {
   ensureEnvApiKey,
   ensureEnvEip,
   ensureEnvSecurityGroup,
-  ensureIdleState,
   environmentFrom,
   findEnvSecurityGroup,
 } from '../shared/environments';
@@ -123,7 +122,6 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
       });
     }
     await ensureEnvApiKey(env);
-    await ensureIdleState(env);
   } catch (err) {
     console.log(JSON.stringify({ action: 'deploy', environment: env, error: errorName(err) }));
     return jsonResponse(502, {

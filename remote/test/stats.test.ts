@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   DAEMON_METRICS_CMD,
+  DAEMON_STATUS_CMD,
   DAEMON_UNREACHABLE,
   parseDaemonMetrics,
+  parseDaemonStatus,
 } from '../lambda/shared/daemon';
 
 // A representative /v1/metrics reply from the on-instance outfit daemon —
@@ -74,5 +76,59 @@ describe('DAEMON_METRICS_CMD', () => {
   it('curls the loopback daemon and marks failure', () => {
     expect(DAEMON_METRICS_CMD).toContain('http://127.0.0.1:4242/v1/metrics');
     expect(DAEMON_METRICS_CMD).toContain(DAEMON_UNREACHABLE);
+  });
+});
+
+// A representative /v1/status reply — the Go side's daemon.StatusResponse.
+// This is what the idle check reads, so its parsing is tested alongside the
+// metrics reply the stats path reads.
+const statusReply = JSON.stringify({
+  state: 'running',
+  runner: 'llamacpp',
+  model: '/opt/llm/model/model.gguf',
+  uptimeSeconds: 1234,
+  logPath: '/var/lib/outfit/daemon/engine.log',
+  lastActiveAt: '2026-08-09T12:00:00Z',
+  idleSeconds: 42,
+});
+
+describe('parseDaemonStatus', () => {
+  it('parses a daemon status reply', () => {
+    const parsed = parseDaemonStatus(statusReply);
+    expect(parsed).not.toBeNull();
+    expect(parsed!.state).toBe('running');
+    expect(parsed!.lastActiveAt).toBe('2026-08-09T12:00:00Z');
+    expect(parsed!.idleSeconds).toBe(42);
+  });
+
+  it('parses a reply from a daemon that has never run an engine', () => {
+    const parsed = parseDaemonStatus(JSON.stringify({ state: 'idle' }));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.lastActiveAt).toBeUndefined();
+    expect(parsed!.idleSeconds).toBeUndefined();
+  });
+
+  it('returns null for the unreachable marker', () => {
+    expect(parseDaemonStatus(`${DAEMON_UNREACHABLE}\n`)).toBeNull();
+  });
+
+  it('returns null for empty output', () => {
+    expect(parseDaemonStatus('')).toBeNull();
+  });
+
+  it('returns null for non-JSON output', () => {
+    expect(parseDaemonStatus('curl: (7) Failed to connect')).toBeNull();
+  });
+
+  it('returns null for JSON that is not a daemon reply', () => {
+    expect(parseDaemonStatus('42')).toBeNull();
+    expect(parseDaemonStatus('{"error":"missing bearer token"}')).toBeNull();
+  });
+});
+
+describe('DAEMON_STATUS_CMD', () => {
+  it('curls the loopback daemon and marks failure', () => {
+    expect(DAEMON_STATUS_CMD).toContain('http://127.0.0.1:4242/v1/status');
+    expect(DAEMON_STATUS_CMD).toContain(DAEMON_UNREACHABLE);
   });
 });

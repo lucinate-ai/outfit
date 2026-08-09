@@ -187,10 +187,17 @@ export class LlmStack extends cdk.Stack {
         resources: [runShellScriptDocArn],
       }),
     ];
-    // The per-environment SSM state (deploy-config, idle-state) lives under
+    // The per-environment SSM state (the deploy-config) lives under
     // /cloud-vm-llm/<env>/ — created and read at runtime, not by CDK.
     const envParamsStatement = new iam.PolicyStatement({
       actions: ['ssm:GetParameter', 'ssm:PutParameter'],
+      resources: [envParamArn],
+    });
+
+    // The idle sweep only reads the deploy-config: activity history lives on
+    // the instance now, so nothing in the stop path writes a parameter.
+    const readEnvParamsStatement = new iam.PolicyStatement({
+      actions: ['ssm:GetParameter'],
       resources: [envParamArn],
     });
 
@@ -296,7 +303,7 @@ export class LlmStack extends cdk.Stack {
     );
     stopFn.addToRolePolicy(describeStatement);
     sendCommandStatements().forEach((s) => stopFn.addToRolePolicy(s));
-    stopFn.addToRolePolicy(envParamsStatement);
+    stopFn.addToRolePolicy(readEnvParamsStatement);
 
     // The control plane `outfit remote deploy` calls: it creates the named
     // environment's resources (EIP, security group, API key, SSM state) if
