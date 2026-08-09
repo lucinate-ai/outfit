@@ -26,7 +26,10 @@ function sharedTemplate(context: Record<string, unknown> = {}): Template {
 }
 
 function imageTemplate(context: Record<string, unknown> = {}): Template {
-  const app = new cdk.App({ context });
+  // Pin outfitVersion so the image assertions do not depend on the build
+  // machine's git tags (its real default is the latest release tag). Callers
+  // can still override via context.
+  const app = new cdk.App({ context: { outfitVersion: '9.9.9', ...context } });
   const config = loadConfig(app, NO_DOTENV);
   return Template.fromStack(new ImageStack(app, 'test-image', { config, env: { region: config.region } }));
 }
@@ -65,6 +68,18 @@ describe('config', () => {
   it('parses a comma-separated availabilityZones override', () => {
     const app = new cdk.App({ context: { availabilityZones: 'us-east-1b, us-east-1c' } });
     expect(loadConfig(app, NO_DOTENV).availabilityZones).toEqual(['us-east-1b', 'us-east-1c']);
+  });
+
+  it('takes outfitVersion from context, overriding the git-tag default', () => {
+    const app = new cdk.App({ context: { outfitVersion: '2.3.4' } });
+    expect(loadConfig(app, NO_DOTENV).outfitVersion).toBe('2.3.4');
+  });
+
+  it('defaults outfitVersion to the latest git tag (or "" without one)', () => {
+    // No hard-coded version: it is the latest release tag, or empty on a
+    // checkout without tags — never a stale constant.
+    const version = loadConfig(new cdk.App(), NO_DOTENV).outfitVersion;
+    expect(version === '' || /^\d+\.\d+\.\d+/.test(version)).toBe(true);
   });
 });
 
@@ -396,6 +411,9 @@ describe('ImageStack', () => {
       expect(data).toContain('outfit_linux_amd64.tar.gz');
       expect(data).toContain('sha256sum -c');
       expect(data).toContain('install -m 0755 /tmp/outfit-dl/outfit /usr/local/bin/outfit');
+      // An unresolved version fails the bake with a clear message rather than
+      // curling a bogus /download/v/ URL.
+      expect(data).toContain('test -n "$OUTFIT_VERSION"');
       // The nudge acts only on a crashed engine.
       expect(data).toContain('outfit-nudge.timer');
       expect(data).toContain('"state":"crashed"');

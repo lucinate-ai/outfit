@@ -246,8 +246,12 @@ function commonPreamble(): string {
 
               # outfit itself — the daemon that hosts the engine and answers the
               # control Lambdas over its loopback API. A pinned release,
-              # checksum-verified against the release's own manifest.
+              # checksum-verified against the release's own manifest. The version
+              # defaults to the latest git release tag; if it could not be
+              # resolved (no tags on the build machine) fail here with a clear
+              # message rather than curling a bogus /download/v/ URL.
               OUTFIT_VERSION='{{ OutfitVersion }}'
+              test -n "$OUTFIT_VERSION" || { echo "outfitVersion unresolved — publish a release (git tag) or bake with -c outfitVersion=<x.y.z>" >&2; exit 1; }
               OUTFIT_URL="https://github.com/lucinate-ai/outfit/releases/download/v$OUTFIT_VERSION"
               mkdir -p /tmp/outfit-dl
               curl -fsSL "$OUTFIT_URL/outfit_linux_amd64.tar.gz" -o /tmp/outfit-dl/outfit_linux_amd64.tar.gz
