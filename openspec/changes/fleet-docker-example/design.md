@@ -65,11 +65,15 @@ the daemon unit on the cloud instance already pins this for the same reason.
 Setting it in the image keeps the container's state deterministic and exercises
 the same resolution path production uses.
 
-**D5 — Nodes differ deliberately, so the fleet is worth looking at.** The stack
-brings up several nodes that are not clones: at least one with a token and one
-without (loopback-style), and the test additionally stops one container to
-produce a genuinely unreachable node. A fleet view of three identical rows
-would demonstrate little.
+**D5 — Every node carries a token; variety comes from state, not from auth.**
+Implementation corrected an earlier assumption here. A node *without* a token
+cannot be part of a runnable fleet at all: the daemon refuses to listen on a
+non-loopback address without one, so a tokenless daemon can only bind loopback
+and is by construction unreachable from the client. The stack therefore gives
+all three nodes tokens, which is also what a real networked fleet looks like.
+The fleet view stays worth looking at because state differs — start some nodes
+and not others — and because stopping a container produces a genuinely
+unreachable node on demand.
 
 **D6 — Build outfit from the working tree.** The node image builds outfit from
 the repository being tested, so CI verifies *this commit* rather than a

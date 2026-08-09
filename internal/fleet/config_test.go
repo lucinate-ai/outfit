@@ -33,7 +33,7 @@ nodes:
   - name: studio
     host: studio.local
   - name: gpu-box
-    host: 100.64.0.7
+    host: 198.51.100.7
     port: 5252
     tokenEnv: GPU_BOX_TOKEN
 `, "")
@@ -59,7 +59,7 @@ nodes:
 		t.Errorf("kind = %q, want %q", studio.Kind, KindDaemon)
 	}
 
-	if got := cfg.Nodes[1].BaseURL(); got != "http://100.64.0.7:5252" {
+	if got := cfg.Nodes[1].BaseURL(); got != "http://198.51.100.7:5252" {
 		t.Errorf("explicit port BaseURL = %q", got)
 	}
 	if got := cfg.Names(); len(got) != 2 || got[0] != "studio" || got[1] != "gpu-box" {

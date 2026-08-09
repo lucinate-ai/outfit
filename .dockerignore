@@ -1,0 +1,11 @@
+# Keep the build context small: without this, the context includes git history,
+# agent worktrees and node_modules trees, which is gigabytes and can exhaust the
+# builder's disk.
+.git
+.claude
+**/node_modules
+remote/cdk.out
+remote/.env
+**/.env
+*.log
+outfit

@@ -12,6 +12,19 @@ outfit fleet start gpu-box   # start one node's engine
 outfit fleet stop gpu-box    # stop it
 ```
 
+## Try it without any hardware
+
+[`examples/fleet-docker/`](../../examples/fleet-docker/) brings up a real
+three-node fleet in containers — real daemons, real auth, a fake engine — so
+you can see all of this working before setting up a single machine:
+
+```sh
+cd examples/fleet-docker && cp .env.example .env
+docker compose up -d --build
+set -a && . ./.env && set +a
+outfit fleet status --fleet ./fleet.yaml
+```
+
 ## `fleet.yaml`
 
 A list of nodes and how to reach each one. It holds **no secrets** — a node
@@ -119,6 +132,7 @@ conflict, and stopping one that is not running succeeds quietly.
 
 ## See also
 
+- [`examples/fleet-docker/`](../../examples/fleet-docker/) — a runnable fleet
 - [`outfit daemon`](serve.md) — what runs on each node
 - [HTTP Control API](../http-api.md) — the API the fleet client speaks
 - [Environment variables](../env-vars.md)

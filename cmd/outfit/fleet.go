@@ -54,7 +54,7 @@ func fleetFlags(name string) (*flag.FlagSet, *string) {
 // renders and the command still succeeds.
 func cmdFleetStatus(args []string) error {
 	fs, path := fleetFlags("status")
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	cfg, err := fleet.Resolve(*path)
@@ -114,7 +114,7 @@ func cmdFleetMetrics(args []string) error {
 	fs.StringVar(&format, "format", "bar", "output format: bar (default), table or json")
 	fs.BoolVar(&watch, "watch", false, "redraw the fleet every 60 seconds")
 	fs.BoolVar(&watch, "w", false, "shorthand for --watch")
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	if format != "bar" && format != "table" && format != "json" {
@@ -257,7 +257,7 @@ func cmdFleetStop(args []string) error {
 // anything.
 func driveOneNode(verb string, args []string, call fleet.Call) error {
 	fs, path := fleetFlags(verb)
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	cfg, err := fleet.Resolve(*path)

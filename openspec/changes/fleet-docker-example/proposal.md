@@ -51,7 +51,11 @@ test-only branch is needed in outfit itself).
   image, the Imposter engine config, the `llama-server` shim, `fleet.yaml`,
   `.env.example`, `run-tests.sh`, and a README.
 - New CI job running `run-tests.sh`; adds Docker as a CI dependency.
-- No Go or `remote/` changes — deliberately, since the point is to test outfit
-  as shipped.
+- One Go fix the harness immediately earned: `sortFlagsBeforeArgs` moved a
+  value-taking flag without its value, so `outfit fleet start <node> --fleet
+  <path>` bound the node name to `--fleet`. The same latent bug affected
+  `remote`/`serve` (`--format json` after a positional). Fixed with the flag
+  set consulted for which flags consume a following argument, plus test cases.
+  No other production changes — the example otherwise tests outfit as shipped.
 - `examples/fleet/` stays as the "real machines" example; the two are
   complementary and cross-link.

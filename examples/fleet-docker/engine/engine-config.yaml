@@ -1,0 +1,40 @@
+# What the fake engine serves. Only two endpoints matter to outfit: /health,
+# which the readiness probe hits, and /metrics, which the daemon's collector
+# scrapes and parses in llama.cpp's dialect.
+plugin: rest
+resources:
+  - path: /health
+    method: GET
+    response:
+      statusCode: 200
+      headers:
+        Content-Type: application/json
+      content: '{"status":"ok"}'
+
+  # The llamacpp: counters internal/metrics parses. Static values keep the
+  # assertions deterministic; what is being tested is the collection path, not
+  # the arithmetic of a real engine.
+  - path: /metrics
+    method: GET
+    response:
+      statusCode: 200
+      headers:
+        Content-Type: text/plain
+      content: |
+        # HELP llamacpp:prompt_tokens_total Number of prompt tokens processed.
+        llamacpp:prompt_tokens_total 4096
+        llamacpp:tokens_predicted_total 1024
+        llamacpp:n_decode_total 900
+        llamacpp:requests_processing 2
+        llamacpp:requests_deferred 1
+        llamacpp:request_success_total 17
+
+  # An OpenAI-compatible route, so the node looks like a real endpoint if you
+  # curl it while exploring.
+  - path: /v1/models
+    method: GET
+    response:
+      statusCode: 200
+      headers:
+        Content-Type: application/json
+      content: '{"object":"list","data":[{"id":"fake-model","object":"model"}]}'
