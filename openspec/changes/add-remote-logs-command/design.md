@@ -105,10 +105,20 @@ with `eventId` as the tiebreak so ordering is stable, then the last `--limit`
 events are kept.
 
 `FilterLogEvents` returns oldest-first and offers no "last N" mode, so a cap has
-to be applied after paging. To stop `--since 720h --limit 100` from paging an
-entire retention period into memory, paging stops once the accumulated event
-count for a group reaches a ceiling well above `--limit` and the excess is
-dropped from the front — with the omission reported, as the spec requires.
+to be applied while paging. Each group's events are accumulated and the front is
+trimmed once the buffer reaches twice `--limit`, so memory stays bounded by
+`--limit` however large the window is, the trimming costs amortised constant
+work, and what survives is genuinely the most recent — with the dropped count
+reported, as the spec requires.
+
+An earlier version of this design stopped paging at a ceiling above `--limit`.
+That was wrong: because pages arrive oldest-first, stopping early leaves the
+*oldest* part of the window, so "the most recent events" would have come from
+its middle. Paging therefore runs to the end of the window, and the guard
+against an unbounded `--since` is a separate cap on the number of requests
+(`maxLogPages`). Hitting that cap is an error asking for a narrower window
+rather than a silent truncation — the pages read by then are the wrong end of
+the window to present as the tail.
 
 Instance id comes from the stream name (`<env>/<instance-id>`), so `--instance`
 is a post-filter on the parsed stream rather than a second API concept, and it
@@ -129,6 +139,20 @@ outfit remote logs [flags] [path]
 `--since`/`--format` mirror what `outfit remote metrics` already does, and
 `sortFlagsBeforeArgs` plus `outfitArg(fs)` give the same "flags anywhere,
 optional Outfit path last" behaviour as the other subcommands.
+
+Implementing this exposed a bug in that shared helper: it classified any token
+starting with `-` as a flag and everything else as positional, then moved the
+flags to the front, which separates a flag from its value. With one
+value-taking flag the order happens to survive, which is why no existing
+subcommand hit it; `logs` has four, so `--source boot --limit 5` became
+`--source --limit boot 5` and `--source` swallowed `--limit`.
+
+`outfit fleet` hit the same bug and fixed it on main first, so this change
+carries no fix of its own — it adopts main's, which takes the `*flag.FlagSet`,
+keeps each flag with its value, and is the better of the two: it preserves the
+`--` terminator in the flag section (dropping it, as this change's version did,
+would leave the flag package parsing what follows `--` as flags) and treats an
+unknown flag as taking no value rather than letting it swallow a positional.
 
 `--follow` polls rather than using the newer live-tail API: live tail is a
 separate, differently-priced API with its own IAM action, and polling

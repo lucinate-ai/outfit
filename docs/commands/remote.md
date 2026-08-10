@@ -9,6 +9,7 @@ outfit remote bootstrap  # once per account: deploy the control plane
 outfit remote deploy     # create an endpoint (environment) and tell it what to serve
 outfit remote start      # boot it; prints the exports your agent needs (progress on stderr)
 outfit remote status     # is it up? is it healthy?
+outfit remote logs       # what did it say? (readable after it's gone)
 outfit remote stop       # shut it down now, rather than waiting for the idle timer
 ```
 
@@ -115,6 +116,53 @@ Requests are signed with **your** AWS credentials (the usual profile, SSO
 session, or environment variables), and the endpoint's URLs require it. Outfit
 stores no credentials of its own and needs no permission beyond invoking those
 URLs.
+
+## Reading the logs
+
+```sh
+outfit remote logs                      # the last hour of engine output
+outfit remote logs --source boot        # the start-up log, before the engine ran
+outfit remote logs --since 6h --limit 500
+outfit remote logs -f                   # follow, until you interrupt it
+```
+
+Instances ship two logs to CloudWatch: the inference engine's own output, and
+the boot log covering everything that runs before the engine starts (the
+weights download, credential setup). `logs` reads them from CloudWatch with
+your AWS credentials, not from the instance — so **the logs outlive the
+instance**. An environment that is stopped, or whose instance terminated hours
+ago, still has readable logs, which is exactly when `status` and `metrics` have
+nothing left to tell you.
+
+Use `--source boot` when a start failed and the engine log is empty: the
+failure happened before the engine existed, so only the boot log saw it.
+`--source all` interleaves both in time order.
+
+Output is oldest first, one event per line with its local timestamp. When more
+than one instance or both sources are in play, each line is prefixed with
+`source/instance`; with a single origin that prefix is left off. `--format
+json` emits the same events as an array for scripting.
+
+| Flag | Meaning |
+| ---- | ------- |
+| `--source` | `engine` (default), `boot`, or `all` |
+| `--since` | How far back to look, as a duration (default `1h`) |
+| `--limit` | Most events to print, keeping the most recent (default 200) |
+| `--instance` | Only this instance's events |
+| `-f`, `--follow` | Keep printing new events until interrupted |
+| `--format` | `text` (default) or `json` |
+
+If more events match than `--limit`, the earlier ones are dropped and the count
+is reported — raise `--limit` to see them.
+
+Reading logs needs one permission beyond the usual endpoint access:
+`logs:FilterLogEvents` on `/cloud-vm-llm/*`. Without it the command says so
+rather than reporting an empty log.
+
+If it reports that no log group exists, the control plane was deployed before
+log shipping existed; `outfit remote bootstrap` re-deploys it and the next
+instance will ship. Logs already lost with a terminated instance can't be
+recovered — only what's shipped from then on.
 
 ## Creating an endpoint: `deploy`
 

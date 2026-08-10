@@ -194,7 +194,7 @@ outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
 outfit completion <shell>                # tab completion (bash, zsh, powershell)
-outfit remote <start|stop|status|deploy> [path]
+outfit remote <start|stop|status|logs|deploy> [path]
                                          # control the remote GPU inference instance
                                          #   (deploy sets what it serves, from the Outfit)
 ```
@@ -410,8 +410,14 @@ while you are using it, and stops itself after a period of idleness.
 outfit remote start    # boot the instance, wait for the model to load,
                        # then print OPENAI_BASE_URL / OPENAI_API_KEY exports
 outfit remote status   # instance state and endpoint health
+outfit remote logs     # what the engine (or the boot) said, even after it's gone
 outfit remote stop     # stop now instead of waiting for the idle timer
 ```
+
+Instances ship their engine and boot output to CloudWatch, so `outfit remote
+logs` still works once the instance has terminated — including for a start that
+failed before the engine came up (`--source boot`). See
+[docs/commands/remote.md](docs/commands/remote.md#reading-the-logs).
 
 Configuration is found in one of two places. A project's `Outfit` file can
 name it with a `REMOTE` instruction (`REMOTE remote.json`, resolved relative

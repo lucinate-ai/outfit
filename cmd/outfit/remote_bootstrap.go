@@ -20,8 +20,10 @@ import (
 )
 
 // controlPlaneStackName is the CloudFormation stack holding the account-level
-// control plane that bootstrap deploys and `outfit remote deploy` discovers.
-const controlPlaneStackName = "cloud-vm-llm"
+// control plane that bootstrap deploys and `outfit remote deploy` discovers. It
+// is also the namespace the control plane's log groups sit under, so the name
+// has one home in internal/remote rather than one per caller.
+const controlPlaneStackName = remote.ControlPlaneStackName
 
 // Seams: package variables so tests drive the flow without AWS, a network, or
 // spawning a package manager/cdk.

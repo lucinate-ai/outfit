@@ -33,7 +33,7 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|metrics|deploy|env|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -47,6 +47,8 @@ func cmdRemote(args []string) error {
 		return cmdRemoteStatus(rest)
 	case "metrics":
 		return cmdRemoteMetrics(rest)
+	case "logs":
+		return cmdRemoteLogs(rest)
 	case "deploy":
 		return cmdRemoteDeploy(rest)
 	case "env":
@@ -55,7 +57,7 @@ func cmdRemote(args []string) error {
 		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, deploy, env or ls)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, logs, deploy, env or ls)", sub)
 	}
 }
 
