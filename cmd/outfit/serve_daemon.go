@@ -111,6 +111,7 @@ func cmdDaemon(args []string) error {
 		Collector:      &metrics.Collector{},
 		ValidateConfig: validateDeployConfig,
 		Logger:         logger,
+		Version:        version,
 	}
 	d.BuildArgv = func(dc *remote.DeployConfig) ([]string, error) {
 		if dc == nil {
@@ -204,6 +205,7 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 		ValidateConfig: validateDeployConfig,
 		Collector:      &metrics.Collector{},
 		Logger:         logger,
+		Version:        version,
 	}
 	model := sel.Model
 	if model == "" {

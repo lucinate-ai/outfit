@@ -741,3 +741,15 @@ while true; do sleep 0.05; done`)
 		t.Errorf("an ungated engine reported %+v", got.Engine)
 	}
 }
+
+// The daemon's version is a build-time string, set by the CLI. The status
+// endpoint reports it so a remote caller can verify the release.
+func TestStatusReportsVersion(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	d.Version = "1.18.0"
+	got := d.Status()
+	if got.Version != "1.18.0" {
+		t.Errorf("version = %q, want %q", got.Version, "1.18.0")
+	}
+}

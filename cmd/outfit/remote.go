@@ -542,6 +542,14 @@ func cmdRemoteStatus(args []string) error {
 	if resp.Healthy != nil {
 		fmt.Printf("healthy: %t\n", *resp.Healthy)
 	}
+	// Version comes from the stats Lambda, which reads the daemon over SSM.
+	// Only attempt it when the instance is running — the daemon won't answer
+	// when the instance is stopped, so the version is naturally unavailable.
+	if resp.State == "running" || resp.State == "ready" {
+		if stats, err := remote.Stats(context.Background(), cfg); err == nil && stats.Version != "" {
+			fmt.Printf("version: %s\n", stats.Version)
+		}
+	}
 	if resp.BaseURL != "" {
 		fmt.Printf("base_url: %s\n", resp.BaseURL)
 	}
@@ -661,6 +669,9 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 	if resp.ModelID != "" {
 		fmt.Fprintf(w, "model:        %s\n", resp.ModelID)
 	}
+	if resp.Version != "" {
+		fmt.Fprintf(w, "version:      %s\n", resp.Version)
+	}
 	if resp.UptimeSeconds > 0 {
 		fmt.Fprintf(w, "uptime:       %s\n", formatDuration(resp.UptimeSeconds))
 	}
@@ -726,6 +737,9 @@ func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config, w io.Writer
 	}
 	if resp.ModelID != "" {
 		fmt.Fprintf(w, "  %s", resp.ModelID)
+	}
+	if resp.Version != "" {
+		fmt.Fprintf(w, "  %s", resp.Version)
 	}
 	fmt.Fprintln(w)
 

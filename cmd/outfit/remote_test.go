@@ -245,6 +245,49 @@ func TestRemoteStatus_PrintsState(t *testing.T) {
 	}
 }
 
+// Remote status includes the outfit version from the stats Lambda when the
+// instance is running, so the operator can verify the release without SSH.
+func TestRemoteStatus_PrintsVersion(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/start":
+			w.Write([]byte(`{"state":"running","healthy":true,"base_url":"http://198.51.100.1:8000/v1"}`))
+		default:
+			w.Write([]byte(`{"state":"running","version":"1.18.0"}`))
+		}
+	}))
+	defer server.Close()
+	path := must1(remote.ConfigPath())
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(remote.Config{
+		StartURL: server.URL + "/start",
+		StopURL:  server.URL + "/stop",
+		EnvURL:   server.URL + "/env",
+		StatsURL: server.URL + "/stats",
+		Region:   "eu-west-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteStatus(nil); err != nil {
+			t.Errorf("cmdRemoteStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "version: 1.18.0") {
+		t.Errorf("status output missing version:\n%s", out)
+	}
+}
+
 func TestRemoteStop_PrintsState(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)

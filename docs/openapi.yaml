@@ -319,6 +319,11 @@ components:
           description: |
             Where the running engine answers inference requests. Absent unless
             an engine is running.
+        version:
+          type: string
+          description: |
+            The outfit binary's build-time version string, from
+            `main.version`. Set to "dev" when not overridden at build time.
 
     EngineEndpoint:
       type: object
