@@ -30,6 +30,11 @@ const (
 	// OutcomeFailed means the daemon answered with an error (a refused start,
 	// an unservable config). The node is healthy; the request was not.
 	OutcomeFailed Outcome = "failed"
+	// OutcomeUnsupported means the daemon does not serve the endpoint asked
+	// for — it predates it. Distinct from failed: the fix is upgrading that
+	// node, not retrying or reconfiguring it, and a fleet mid-rollout will
+	// legitimately hold a mix.
+	OutcomeUnsupported Outcome = "unsupported"
 )
 
 // Node is one member of the fleet. Only daemonNode implements it today; the
@@ -43,6 +48,7 @@ type Node interface {
 	Metrics(ctx context.Context) (metrics.Stats, error)
 	Start(ctx context.Context) (daemon.StatusResponse, error)
 	Stop(ctx context.Context) (daemon.StatusResponse, error)
+	Logs(ctx context.Context, offset int64, limit int) (daemon.LogsResponse, error)
 }
 
 // daemonNode is a machine running `outfit daemon`, reached over its control
@@ -68,6 +74,10 @@ func (n *daemonNode) Start(ctx context.Context) (daemon.StatusResponse, error) {
 
 func (n *daemonNode) Stop(ctx context.Context) (daemon.StatusResponse, error) {
 	return n.client.Stop(ctx)
+}
+
+func (n *daemonNode) Logs(ctx context.Context, offset int64, limit int) (daemon.LogsResponse, error) {
+	return n.client.Logs(ctx, offset, limit)
 }
 
 // NewNode builds the live Node for one fleet-file entry, resolving its token.
@@ -96,9 +106,10 @@ type NodeResult struct {
 	Outcome Outcome
 	Err     error
 
-	// Status and Metrics hold the answer, whichever the call asked for.
+	// Status, Metrics and Logs hold the answer, whichever the call asked for.
 	Status  daemon.StatusResponse
 	Metrics metrics.Stats
+	Logs    daemon.LogsResponse
 }
 
 // OK reports whether the node answered.
@@ -123,6 +134,11 @@ func classify(err error) Outcome {
 	if errors.As(err, &he) {
 		if he.status == http.StatusUnauthorized {
 			return OutcomeUnauthorized
+		}
+		if he.status == http.StatusNotFound {
+			// The daemon answered, but has no such endpoint: it is older than
+			// the client. Naming that beats reporting a bare 404.
+			return OutcomeUnsupported
 		}
 		return OutcomeFailed
 	}

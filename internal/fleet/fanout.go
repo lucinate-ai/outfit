@@ -3,6 +3,8 @@ package fleet
 import (
 	"context"
 	"sync"
+
+	"github.com/lucinate-ai/outfit/internal/daemon"
 )
 
 // Call is one node operation, as fanned out over the fleet.
@@ -22,6 +24,23 @@ func MetricsCall(ctx context.Context, n Node) NodeResult {
 	r := result(n.Name(), err)
 	r.Metrics = stats
 	return r
+}
+
+// LogsCall reads a slice of a node's engine log. offsets says where to resume
+// each node from, by node name; a node absent from it is read from the tail.
+// The cursor is per node because each node's log is its own file with its own
+// position — there is no fleet-wide position to hold.
+func LogsCall(offsets map[string]int64, limit int) Call {
+	return func(ctx context.Context, n Node) NodeResult {
+		offset, ok := offsets[n.Name()]
+		if !ok {
+			offset = daemon.TailLog
+		}
+		logs, err := n.Logs(ctx, offset, limit)
+		r := result(n.Name(), err)
+		r.Logs = logs
+		return r
+	}
 }
 
 // FanOut runs call against every node concurrently and returns one result per

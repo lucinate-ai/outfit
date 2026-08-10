@@ -38,6 +38,7 @@ func schemaFor() map[string]any {
 	return map[string]any{
 		"StatusResponse": StatusResponse{},
 		"Message":        Message{},
+		"LogsResponse":   LogsResponse{},
 		"Error":          Error{},
 		"Stats":          metrics.Stats{},
 		"TokenStats":     metrics.TokenStats{},

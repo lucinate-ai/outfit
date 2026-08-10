@@ -147,6 +147,59 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /v1/logs:
+    get:
+      tags: [engine]
+      operationId: getLogs
+      summary: Return a slice of the engine's captured output.
+      description: |
+        The supervised engine's stdout and stderr, as captured to the file
+        `/v1/status` reports as `logPath`. Read-only: it never touches the
+        engine, so it answers whether the engine is running, stopped or
+        crashed — the last of which is when it is wanted most.
+
+        Reads are always bounded. Omit `offset` to read the **end** of the log;
+        pass the `nextOffset` from a previous reply to receive only what has
+        been appended since, which makes following exact — no overlap window
+        and no de-duplication. Nothing rotates this file, so it grows for the
+        daemon's lifetime and a full read is never offered.
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          description: |
+            Byte position to read from, normally the `nextOffset` of a previous
+            reply. Omitted, the end of the log is returned.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: limit
+          in: query
+          required: false
+          description: |
+            Maximum bytes to return. Capped by the daemon regardless of what is
+            asked for; omitted, a default slice is returned.
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: The requested slice of the log.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogsResponse"
+        "400":
+          description: A query parameter was not a whole number, or was negative.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /v1/deploy-config:
     put:
       tags: [config]
@@ -365,6 +418,42 @@ components:
       properties:
         message:
           type: string
+
+    LogsResponse:
+      type: object
+      description: |
+        A bounded slice of the engine's captured output, with the cursor needed
+        to read on from it.
+      required: [content, nextOffset, size]
+      properties:
+        content:
+          type: string
+          description: The slice of the log that was read.
+        nextOffset:
+          type: integer
+          format: int64
+          description: |
+            The position immediately after `content`. Pass it back as `offset`
+            to receive only what has been appended since.
+        size:
+          type: integer
+          format: int64
+          description: The log's current length, so a caller can see how far behind it is.
+        path:
+          type: string
+          description: The log file being read, matching `logPath` from status.
+        missing:
+          type: boolean
+          description: |
+            There is no log file: no engine has ever run here, or the daemon
+            forwards engine output to its own stdio. Distinct from a log that
+            exists and is empty.
+        staleOffset:
+          type: boolean
+          description: |
+            The requested `offset` is past the end of the log — it was truncated
+            or replaced — so resume from `nextOffset` rather than waiting for a
+            position that will never arrive.
 
     Error:
       type: object

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/daemon"
@@ -110,6 +112,30 @@ func (c *Client) Status(ctx context.Context) (daemon.StatusResponse, error) {
 func (c *Client) Metrics(ctx context.Context) (metrics.Stats, error) {
 	var out metrics.Stats
 	err := c.do(ctx, http.MethodGet, "/v1/metrics", nil, &out)
+	return out, err
+}
+
+// Logs reads a slice of the node's engine log. offset is where to read from —
+// daemon.TailLog for the end, or the NextOffset of a previous reply to receive
+// only what has been appended since. limit bounds the read; zero takes the
+// daemon's default. A daemon predating the endpoint answers 404, which classify
+// turns into a "needs upgrading" outcome rather than a generic failure.
+func (c *Client) Logs(ctx context.Context, offset int64, limit int) (daemon.LogsResponse, error) {
+	q := url.Values{}
+	// The endpoint reads the tail when no offset is given; sending the
+	// sentinel would be rejected as a negative offset.
+	if offset != daemon.TailLog {
+		q.Set("offset", strconv.FormatInt(offset, 10))
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/logs"
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out daemon.LogsResponse
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
 	return out, err
 }
 

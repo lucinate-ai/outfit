@@ -72,6 +72,38 @@ A scrape made to serve this endpoint feeds the shared record exactly as the
 background sampler's does. Reading it is not itself activity, so polling in a
 loop does not keep an idle engine looking busy.
 
+### GET `/v1/logs`
+Returns a slice of the supervised engine's captured output — the file
+`/v1/status` reports as `logPath`. Read-only: it never touches the engine, so
+it answers whether the engine is running, stopped or crashed, the last of which
+is when it is wanted most.
+
+Query parameters, both optional:
+- `offset` — byte position to read from, normally the `nextOffset` of a previous
+  reply. Omitted, the **end** of the log is returned, since the recent end is
+  what diagnosis wants.
+- `limit` — maximum bytes to return, capped by the daemon regardless of what is
+  asked for.
+
+The reply carries `content`, the `nextOffset` immediately after it, and the
+log's current `size`. Passing `nextOffset` back returns only what has been
+appended since, which makes following exact — no overlap window and no
+de-duplication, because a byte offset means what it says.
+
+Reads are always bounded and a full read is never offered: nothing rotates this
+file, so it grows for the daemon's lifetime.
+
+Two states are reported distinctly rather than as an empty log:
+- `missing` — there is no log file at all: no engine has ever run, or the
+  daemon forwards engine output to its own stdio. Not the same as a log that
+  exists and is empty.
+- `staleOffset` — the requested `offset` is past the end, so the file was
+  truncated or replaced. Resume from the `nextOffset` in the reply rather than
+  waiting for a position that will never arrive.
+
+Returns `400 Bad Request` if `offset` or `limit` is not a whole number, or if
+`offset` is negative.
+
 ### PUT `/v1/deploy-config`
 Updates the configuration for the *next* engine start.
 - Request body: `remote.DeployConfig` JSON

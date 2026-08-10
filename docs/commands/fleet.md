@@ -121,6 +121,52 @@ silently missing whatever was down:
 ]
 ```
 
+## Logs
+
+`outfit fleet logs` prints what your engines actually said — the answer to the
+question `fleet status` raises when it reports a node as `crashed`.
+
+```sh
+outfit fleet logs              # the tail of every node's engine log
+outfit fleet logs gpu-box      # just that node
+outfit fleet logs -f           # follow, until you interrupt it
+outfit fleet logs --limit 500  # more backlog per node
+```
+
+Each node's daemon captures its engine's stdout and stderr to a file, and
+serves a slice of it over [`GET /v1/logs`](../http-api.md). Reading is safe, so
+unlike `start` and `stop` this fans out across the whole fleet by default;
+naming a node narrows it to one.
+
+With more than one node talking, every line is prefixed with the node it came
+from. Reading a single node leaves the prefix off, so it reads like that node's
+own log. Lines are **not** interleaved between nodes: engine output carries no
+timestamp we can trust, so merging several machines' lines would invent a
+chronology that isn't there. Each node's output stays in its own order.
+
+Following resumes each node from a byte offset that node reported, so a line is
+never printed twice and none is missed — no overlap window, no guessing. Nodes
+are polled independently, because each log is its own file with its own
+position.
+
+Nodes with nothing to give say so rather than vanishing: one that has never run
+an engine, one that is unreachable, and one whose daemon is older than the
+endpoint (which names itself as needing an upgrade — a fleet mid-rollout will
+legitimately hold a mix).
+
+| Flag | Meaning |
+| ---- | ------- |
+| `--limit` | Lines of backlog per node (default 200) |
+| `-f`, `--follow` | Keep printing new output until interrupted |
+| `--format` | `text` (default) or `json` |
+
+Two things worth knowing. Engine output can carry prompts and model output, and
+it crosses the network to whoever holds the node's token — the same trust
+boundary as `start` and `stop`, but the content is more revealing. And the
+daemon does **not** rotate its engine log: it grows for the daemon's lifetime,
+so a long-lived node accumulates. Reads are always bounded, so this costs disk
+on the node rather than anything at the client.
+
 ## Starting and stopping
 
 `fleet start` and `fleet stop` take **one node**:
@@ -140,8 +186,10 @@ conflict, and stopping one that is not running succeeds quietly.
 | Flag | Meaning |
 | ---- | ------- |
 | `--fleet <path>` | The fleet file (default `./fleet.yaml`) |
-| `--format` | `metrics` only: `bar` (default), `table`, or `json` |
+| `--format` | `metrics`: `bar` (default), `table`, or `json`; `logs`: `text` (default) or `json` |
 | `-w`, `--watch` | `metrics` only: redraw on an interval until interrupted |
+| `-f`, `--follow` | `logs` only: keep printing new output until interrupted |
+| `--limit` | `logs` only: lines of backlog per node (default 200) |
 
 ## See also
 

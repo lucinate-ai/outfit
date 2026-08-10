@@ -23,7 +23,7 @@ import (
 // cmdFleet dispatches the fleet subcommands.
 func cmdFleet(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit fleet <status|metrics|start|stop> [node] [--fleet <path>]")
+		return fmt.Errorf("usage: outfit fleet <status|metrics|logs|start|stop> [node] [--fleet <path>]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -31,13 +31,15 @@ func cmdFleet(args []string) error {
 		return cmdFleetStatus(rest)
 	case "metrics":
 		return cmdFleetMetrics(rest)
+	case "logs":
+		return cmdFleetLogs(rest)
 	case "start":
 		return cmdFleetStart(rest)
 	case "stop":
 		return cmdFleetStop(rest)
 	default:
 		return fmt.Errorf(
-			"unknown fleet subcommand %q (expected status, metrics, start or stop)", sub)
+			"unknown fleet subcommand %q (expected status, metrics, logs, start or stop)", sub)
 	}
 }
 
