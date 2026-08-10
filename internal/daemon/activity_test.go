@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -524,5 +525,38 @@ while true; do sleep 0.05; done`)
 	if stats.LastActiveAt != worked.Format(time.RFC3339) || stats.IdleSeconds != 600 {
 		t.Errorf("a stopped engine reported %q/%d, want %q/600",
 			stats.LastActiveAt, stats.IdleSeconds, worked.Format(time.RFC3339))
+	}
+}
+
+// TestMetricsReportsScrapeFailure covers the diagnosability half of the same
+// bug: a scrape that fails must say so. Omitting the token block silently is
+// what let a scraper pointed at the wrong port go unnoticed.
+func TestMetricsReportsScrapeFailure(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	clock := &fakeClock{t: baseTime}
+	d.Now = clock.now
+	// A target nothing is listening on — the shape of the real failure.
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: "http://127.0.0.1:1", Engine: "llamacpp"})
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateRunning)
+	defer d.Sup.Stop()
+
+	stats := d.Metrics(context.Background())
+	if stats.Tokens != nil {
+		t.Errorf("a failed scrape still reported tokens: %+v", stats.Tokens)
+	}
+	if len(stats.Errors) == 0 {
+		t.Fatal("a failed scrape reported no error — the silence this bug hid behind")
+	}
+	// The message names where it tried, so a wrong address is obvious rather
+	// than something to infer from an absent block.
+	if !strings.Contains(stats.Errors[0], "127.0.0.1:1") {
+		t.Errorf("error %q does not name the address it tried", stats.Errors[0])
 	}
 }

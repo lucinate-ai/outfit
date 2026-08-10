@@ -229,6 +229,14 @@ func (d *Daemon) Metrics(ctx context.Context) metrics.Stats {
 		if scrape.BaseURL != "" {
 			tokens, err := metrics.ScrapeTokenStats(ctx, scrape)
 			if err != nil {
+				// Reported, not swallowed. A silent omission here once hid a
+				// scraper pointed at the wrong port for every cloud llama.cpp
+				// deployment: the token block simply never appeared, and with
+				// no observation to make, the activity record never moved.
+				// An absent *source* is omitted quietly; a source that is
+				// there and failing is an error worth showing.
+				stats.Errors = append(stats.Errors,
+					fmt.Sprintf("engine metrics scrape (%s): %v", scrape.BaseURL, err))
 				tokens = nil
 			}
 			// Feed it through the same path the background sampler uses: one

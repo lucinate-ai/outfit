@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -289,20 +290,25 @@ func withMetricsArgs(argv []string, engine serveEngine) []string {
 	return append(argv, engine.metricsArgs...)
 }
 
-// scrapeTargetFor locates the engine's own /metrics for the collector: the
-// Outfit's BASEURL when it states one, the engine's default bind otherwise,
-// with the API key lifted from the command — a literal --api-key, or the
-// contents of an --api-key-file (how the cloud delivers it) — so a gated
-// /metrics still answers. An engine with no metrics endpoint yields the zero
-// target (no scrape).
+// scrapeTargetFor locates the engine's own /metrics for the collector, with
+// the API key lifted from the command — a literal --api-key, or the contents
+// of an --api-key-file (how the cloud delivers it) — so a gated /metrics still
+// answers. An engine with no metrics endpoint yields the zero target (no
+// scrape).
+//
+// The address is taken from the engine's own --host/--port when it states
+// them, because that is where the process actually binds. Only then the
+// Outfit's BASEURL, and only then the engine's compiled-in default. Getting
+// this order wrong is not hypothetical: a cloud llama.cpp instance is driven
+// by a deploy config rather than an Outfit, so it stated no BASEURL, and the
+// scraper fell back to llama.cpp's default 8080 while the engine sat on the
+// deploy config's --port 8000. Every scrape was refused, silently, and the
+// activity record — derived from those counters — never moved.
 func scrapeTargetFor(engine serveEngine, baseURL string, argv []string) metrics.ScrapeTarget {
 	if engine.metricsEngine == "" {
 		return metrics.ScrapeTarget{}
 	}
-	if baseURL == "" {
-		baseURL = engine.defaultBaseURL
-	}
-	key := ""
+	key, host, port := "", "", ""
 	for i, a := range argv {
 		if i+1 >= len(argv) {
 			break
@@ -314,7 +320,36 @@ func scrapeTargetFor(engine serveEngine, baseURL string, argv []string) metrics.
 			if data, err := os.ReadFile(argv[i+1]); err == nil {
 				key = strings.TrimSpace(string(data))
 			}
+		case "--host":
+			host = argv[i+1]
+		case "--port":
+			port = argv[i+1]
 		}
 	}
+	if bind := bindBaseURL(host, port); bind != "" {
+		baseURL = bind
+	}
+	if baseURL == "" {
+		baseURL = engine.defaultBaseURL
+	}
 	return metrics.ScrapeTarget{BaseURL: baseURL, Engine: engine.metricsEngine, APIKey: key}
+}
+
+// bindBaseURL turns the engine's --host/--port into the URL to scrape it on,
+// or "" when the command says neither and there is nothing to improve on.
+//
+// A wildcard bind is rewritten to loopback: the scrape is always to an engine
+// on this host, and 0.0.0.0 names every interface rather than one to dial.
+func bindBaseURL(host, port string) string {
+	if host == "" && port == "" {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]", "*":
+		host = "127.0.0.1"
+	}
+	if port == "" {
+		return "http://" + host
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }

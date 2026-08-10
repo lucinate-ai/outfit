@@ -411,3 +411,59 @@ func TestCmdServe_ForegroundWithoutAPIListensNowhere(t *testing.T) {
 		t.Fatal("plain serve left a control API listening")
 	}
 }
+
+// TestScrapeTargetForHonoursTheEngineBind pins the regression that left every
+// cloud llama.cpp deployment without token stats: the engine was started with
+// the deploy config's --port 8000 while the scraper used llama.cpp's built-in
+// 8080, so every scrape was refused and the activity record never moved.
+func TestScrapeTargetForHonoursTheEngineBind(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The cloud's shape: a deploy config, so no Outfit BASEURL, and the bind
+	// stated on the command line.
+	cloud := []string{"llama-server", "--host", "0.0.0.0", "--port", "8000", "--metrics"}
+	target := scrapeTargetFor(engine, "", cloud)
+	if target.BaseURL != "http://127.0.0.1:8000" {
+		t.Errorf("BaseURL = %q, want the engine's actual bind on loopback", target.BaseURL)
+	}
+	// A wildcard bind names every interface; it is not something to dial.
+	if strings.Contains(target.BaseURL, "0.0.0.0") {
+		t.Errorf("BaseURL = %q, want the wildcard rewritten to loopback", target.BaseURL)
+	}
+
+	// The bind wins over an Outfit BASEURL too: the scrape is local, and the
+	// port the process bound is the truth about where to find it.
+	target = scrapeTargetFor(engine, "http://example.com:9999/v1", cloud)
+	if target.BaseURL != "http://127.0.0.1:8000" {
+		t.Errorf("BaseURL = %q, want the engine's bind to win over BASEURL", target.BaseURL)
+	}
+
+	// With no bind stated, the previous precedence is untouched.
+	if got := scrapeTargetFor(engine, "http://127.0.0.1:9000/v1", []string{"llama-server"}); got.BaseURL != "http://127.0.0.1:9000/v1" {
+		t.Errorf("BaseURL = %q, want the Outfit's BASEURL when no bind is given", got.BaseURL)
+	}
+	if got := scrapeTargetFor(engine, "", []string{"llama-server"}); got.BaseURL != engine.defaultBaseURL {
+		t.Errorf("BaseURL = %q, want the engine default when nothing else says", got.BaseURL)
+	}
+
+	// A port alone is enough — host defaults to loopback.
+	if got := scrapeTargetFor(engine, "", []string{"llama-server", "--port", "1234"}); got.BaseURL != "http://127.0.0.1:1234" {
+		t.Errorf("BaseURL = %q, want loopback on the stated port", got.BaseURL)
+	}
+	// A host alone keeps the engine's own default port out of it entirely.
+	if got := scrapeTargetFor(engine, "", []string{"llama-server", "--host", "127.0.0.5"}); got.BaseURL != "http://127.0.0.5" {
+		t.Errorf("BaseURL = %q, want the stated host", got.BaseURL)
+	}
+
+	// vLLM takes the same flags and must behave the same way.
+	vllm, err := engineFor("vllm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := scrapeTargetFor(vllm, "", []string{"vllm", "--host", "0.0.0.0", "--port", "7000"}); got.BaseURL != "http://127.0.0.1:7000" {
+		t.Errorf("vLLM BaseURL = %q, want its stated bind", got.BaseURL)
+	}
+}
