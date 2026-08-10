@@ -1,3 +1,13 @@
+## Purpose
+
+Define how an operator reads the logs a remote environment's instances have
+shipped: which environment and which of the two sources (the inference engine's
+output and the boot output) are read, how much is fetched and in what order,
+following output as it arrives, and the failures that are named so they can be
+fixed. Reading is deliberately independent of the instance and of the control
+plane, so the logs are still there once the instance that wrote them is gone —
+which is when they are wanted most.
+
 ## ADDED Requirements
 
 ### Requirement: An environment's shipped logs are readable from the CLI
