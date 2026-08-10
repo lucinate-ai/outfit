@@ -35,9 +35,18 @@
 
 - [x] 5.1 `gofmt -l .` clean and `go build ./...` passes
 - [x] 5.2 `go test ./... -cover` passes with coverage at or above 80%
-- [ ] 5.3 Manually verify against a real environment: engine logs for a running instance, boot logs, `--follow` during a start, and logs for an environment whose instance has terminated
-  - Not done: needs a deployed environment and AWS credentials for the account.
-    Verified offline instead — flag parsing and environment resolution end to
-    end against a registered environment, and the "config names no environment"
-    and expired-credential messages from the real binary.
+- [x] 5.3 Manually verify against a real environment: engine logs for a running instance, boot logs, `--follow` during a start, and logs for an environment whose instance has terminated
+  - Verified against a deployed account. The three log groups exist under
+    exactly the derived names, and streams are named `<environment>/<instance>`
+    as assumed. Engine and boot logs both read; `--source all` merges them in
+    time order and labels every line once the output spans two instances;
+    `--instance` narrows to one; `--format json` carries the fields; the cap
+    reports what it dropped. `--follow` printed the backlog, polled for ten
+    seconds without repeating a line, and exited 0 on SIGINT. An environment
+    that has never logged reports the empty window and exits 0.
+  - The headline case is real: an instance that no longer exists in EC2 still
+    has readable engine and boot logs.
+  - Not covered live: the access-denied and no-log-group messages, which would
+    need credentials without log permission and an account whose shared layer
+    predates log shipping. Both are covered by unit tests.
 - [x] 5.4 Run `openspec validate add-remote-logs-command` and confirm the spec's scenarios are all covered by tests or the manual check
