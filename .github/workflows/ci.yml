@@ -73,3 +73,20 @@ jobs:
       # upload, so the release config is validated on every push and PR.
       - name: GoReleaser (dry run)
         run: curl -sfL https://goreleaser.com/static/run | bash -s -- release --snapshot --clean
+
+  # The dockerised fleet example, driven end to end: real daemons, a real
+  # supervised engine process, real auth over the network. Runs per-PR — it is
+  # the only coverage of the fleet client against something other than a stub,
+  # and it doubles as the example, so a break here means the example is broken.
+  fleet-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Fleet integration test
+        run: examples/fleet-docker/run-tests.sh

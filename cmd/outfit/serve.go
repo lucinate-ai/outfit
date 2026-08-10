@@ -153,7 +153,7 @@ func cmdServe(args []string) error {
 	fs.BoolVar(&apiOn, "api", false, "expose the control API beside the foreground engine")
 	fs.BoolVar(&apiOn, "a", false, "expose the control API (shorthand)")
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 

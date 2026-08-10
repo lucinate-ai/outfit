@@ -144,7 +144,9 @@ of you exits. Two related surfaces build on it:
   running), and stop terminates the engine, after which serve exits as it
   always has.
 - `outfit daemon` is the long-lived agent: it supervises one engine, writes
-  its output to `~/.config/outfit/daemon/engine.log`, tracks its state
+  its output to `daemon/engine.log` under
+  [outfit's config directory](../env-vars.md#config-directory-resolution),
+  tracks its state
   (`idle`, `running`, `stopped`, `crashed` — a crash is reported, never
   auto-restarted), and starts **nothing** until a start request asks. The
   start can carry the deploy config to run; otherwise a previously pushed
@@ -192,5 +194,7 @@ been since the engine last had a request in flight or moved a counter.
 
 ## See also
 
+- [`outfit fleet`](fleet.md) — one outfit observing the daemons on every
+  machine you run
 - Worked examples with real models: [`examples/`](../../examples/)
 - [The `Outfit` file](../outfit-file.md) — full syntax

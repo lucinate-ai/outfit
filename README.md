@@ -186,6 +186,8 @@ outfit serve  [path] [--dry-run] [-a]    # run llama-server from the Outfit's PR
                                          #   (-a/--api serves the control API beside it)
 outfit daemon [path] [--api-addr <addr>] # supervise an engine via the control API
                                          #   (starts nothing until asked over the API)
+outfit fleet <status|metrics|start|stop> # observe and drive the engines in fleet.yaml
+                                         #   (one outfit watching every machine you run)
 outfit export [--provider <name>]        # print the current config as an Outfit
 outfit init-providers [path]             # write the built-in catalogue out to edit
 outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
@@ -345,8 +347,54 @@ outfit daemon --api-addr 127.0.0.1:4242     # loopback-only needs no token
 The API is bearer-token authenticated (`OUTFIT_API_TOKEN`, e.g. from the
 `.env` beside the Outfit); a non-loopback listen without a token refuses to
 start. `outfit serve -a/--api` exposes the same API beside an ordinary
-foreground serve. This is the building block for managing a fleet of engines
-across machines — the daemon on each box, one `outfit` observing them.
+foreground serve.
+
+### The fleet
+
+With a daemon on each machine, `outfit fleet` observes them all. A
+`fleet.yaml` names the nodes — and holds no secrets, referencing each node's
+token by environment-variable name:
+
+```yaml
+nodes:
+  - name: studio
+    host: studio.local
+    tokenEnv: STUDIO_TOKEN
+  - name: gpu-box
+    host: 198.51.100.7    # e.g. a tailscale address
+    tokenEnv: GPU_BOX_TOKEN
+```
+
+```sh
+outfit fleet status          # one row per node: state and what it serves
+outfit fleet metrics -w      # a live dashboard across the fleet
+outfit fleet start gpu-box   # start one node's engine
+```
+
+```
+NODE     STATE         SERVING
+studio   running       llamacpp  org/qwen  (up 1h 2m 5s)  (last active 12s ago)
+gpu-box  idle          llamacpp  org/qwen
+offline  unreachable   dial tcp 10.0.0.9:4242: connect: connection refused
+```
+
+A node that cannot be reached is a row, not a failure — one bad box never
+blanks the view, and "last active" answers the question you actually opened the
+thing for: which machine is doing nothing?
+
+No spare machines to hand? [`examples/fleet-docker/`](examples/fleet-docker/)
+brings up a three-node fleet in containers — real daemons, real auth, a fake
+engine — in about a minute:
+
+```sh
+cd examples/fleet-docker && cp .env.example .env
+docker compose up -d --build
+set -a && . ./.env && set +a
+outfit fleet status --fleet ./fleet.yaml
+```
+
+Details in [`docs/commands/fleet.md`](docs/commands/fleet.md); a `fleet.yaml`
+for machines you own in [`examples/fleet/`](examples/fleet/).
 
 Writing a client? [`docs/openapi.yaml`](docs/openapi.yaml) is the full
 contract, and it ships with every release. See

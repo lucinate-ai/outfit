@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Stands in for llama-server so `outfit serve`/`outfit daemon` can start an
+# "engine" with no GPU and no model. The daemon execs this exactly as it would
+# the real binary, so process supervision, log capture and crash detection are
+# genuinely exercised.
+#
+# It execs the Imposter ENGINE BINARY directly, never `imposter up`. The CLI
+# wrapper exits 0 when its own child dies, which the daemon would correctly
+# record as a clean stop — a crash assertion would then pass while testing
+# nothing. Exec'ing the engine makes it the daemon's direct child, so an
+# abnormal death is a real non-zero exit and reads as `crashed`.
+set -euo pipefail
+
+port=8080
+# llama-server takes many flags; only the port matters here. Everything else is
+# ignored on purpose, so new engine flags can never break the shim.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --port) port="${2:-8080}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+
+echo "llama-server shim: starting the Imposter engine on port ${port}"
+export IMPOSTER_PORT="${port}"
+exec imposter-go /opt/engine

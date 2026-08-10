@@ -113,6 +113,8 @@ func run(args []string) error {
 		return cmdServe(rest)
 	case "daemon":
 		return cmdDaemon(rest)
+	case "fleet":
+		return cmdFleet(rest)
 	case "export":
 		return cmdExport(rest)
 	case "init-providers":
@@ -152,6 +154,8 @@ Usage:
   outfit unalias <name>                    (drop a registered name)
   outfit serve  [path] [--dry-run] [--api]  (run the PROVIDER's inference server)
   outfit daemon [path] [--api-addr <addr>]  (supervise an engine via the control API)
+  outfit fleet  <status|metrics|start|stop> [node] [--fleet <path>]
+                                    (observe and drive the engines in fleet.yaml)
   outfit export [--provider <name>]
   outfit init-providers [path]      (defaults to ./providers.yaml)
   outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]

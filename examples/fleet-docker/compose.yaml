@@ -1,0 +1,41 @@
+# A fleet you can actually run: three nodes, each a real `outfit daemon`
+# supervising a fake engine.
+#
+#   cp .env.example .env
+#   docker compose up -d --build
+#   outfit fleet status
+#   outfit fleet metrics -w
+#
+# Every node carries a token: the daemon refuses to listen on a non-loopback
+# address without one, so any node reachable across the network necessarily has
+# one. Variety in the fleet view comes from state — start some nodes and not
+# others, or `docker compose stop gpu-box` to watch a node degrade to
+# `unreachable` while the rest keep reporting.
+name: outfit-fleet-example
+
+services:
+  studio:
+    build:
+      context: ../..
+      dockerfile: examples/fleet-docker/Dockerfile
+    image: outfit-fleet-node:example
+    environment:
+      OUTFIT_API_TOKEN: ${STUDIO_TOKEN:?set STUDIO_TOKEN (copy .env.example to .env)}
+    ports:
+      - "14242:4242"
+
+  gpu-box:
+    image: outfit-fleet-node:example
+    depends_on: [studio]
+    environment:
+      OUTFIT_API_TOKEN: ${GPU_BOX_TOKEN:?set GPU_BOX_TOKEN (copy .env.example to .env)}
+    ports:
+      - "14243:4242"
+
+  laptop:
+    image: outfit-fleet-node:example
+    depends_on: [studio]
+    environment:
+      OUTFIT_API_TOKEN: ${LAPTOP_TOKEN:?set LAPTOP_TOKEN (copy .env.example to .env)}
+    ports:
+      - "14244:4242"

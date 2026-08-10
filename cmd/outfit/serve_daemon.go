@@ -36,7 +36,7 @@ func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	var apiAddr string
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	var path string

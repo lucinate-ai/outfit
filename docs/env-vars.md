@@ -9,10 +9,11 @@ from the environment or a `.env` beside the Outfit — never written into an
 | Variable | Used by | Meaning |
 | --- | --- | --- |
 | `OUTFIT_CONFIG_DIR` | everything | outfit's config directory, used **verbatim** (no `outfit` segment appended). Overrides `XDG_CONFIG_HOME` and `~/.config`. Everything outfit owns lives here: `config.json` (default-harness preference + alias registry), `remote.json`, the `remotes/<name>/` environment registry, the daemon state dir, and the CDK source cache. Set it when there is no usable `$HOME` — e.g. a systemd service. See [config resolution](#config-directory-resolution). |
-| `OUTFIT_HARNESS` | all harness commands | Which harness to configure/launch (`opencode` or `pi`). Precedence: `--harness`/`-H` flag > `OUTFIT_HARNESS` > stored preference > `opencode`. |
+| `OUTFIT_HARNESS` | all harness commands | Which harness to configure/launch (`opencode`, `pi` or `lucinate`). Precedence: `--harness`/`-H` flag > `OUTFIT_HARNESS` > stored preference > `opencode`. |
 | `OUTFIT_PROVIDERS` | `list`, `add`, `apply`, … | Path to a `providers.yaml` that overrides the built-in catalogue. Precedence: `--providers` flag > `OUTFIT_PROVIDERS` > embedded. |
 | `OUTFIT_BASE_URL` | `add`, `apply` | Base-URL override for the provider being configured. Precedence: `--base-url`/`-u` > `OUTFIT_BASE_URL` > the provider's own option var > the catalogue default. |
-| `OUTFIT_API_TOKEN` | `outfit daemon`, `outfit serve --api`, fleet client | Bearer token for the daemon control API. Read from the environment (or the `.env` beside the Outfit), never a flag. A non-loopback API listen without it refuses to start. |
+| `OUTFIT_API_TOKEN` | `outfit daemon`, `outfit serve --api` | Bearer token for the daemon control API. Read from the environment (or the `.env` beside the Outfit), never a flag. A non-loopback API listen without it refuses to start. |
+| *(per-node, named by `tokenEnv`)* | `outfit fleet` | A fleet node's bearer token. `fleet.yaml` names the variable rather than holding the value; it resolves from the environment, then the `.env` beside the fleet file. See [fleet](commands/fleet.md). |
 
 ## Remote (`outfit remote`)
 

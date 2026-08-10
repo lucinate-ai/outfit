@@ -342,7 +342,7 @@ func printRemoteEnv(resp *remote.Response) {
 
 func cmdRemoteEnv(args []string) error {
 	fs := flag.NewFlagSet("remote env", flag.ContinueOnError)
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -361,16 +361,53 @@ func cmdRemoteEnv(args []string) error {
 // arguments, so Go's flag package parses them regardless of order. The stdlib
 // flag package stops at the first non-flag argument, so flags after a positional
 // arg are silently ignored.
-func sortFlagsBeforeArgs(args []string) []string {
+//
+// fs is consulted so a flag written in the separated form (--fleet path) keeps
+// its value: without it, the value is left behind with the positionals and the
+// next token — often the positional itself — is bound to the flag instead.
+// Boolean flags never consume a following token, so they are moved alone.
+func sortFlagsBeforeArgs(fs *flag.FlagSet, args []string) []string {
 	flags, pos := []string{}, []string{}
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			flags = append(flags, a)
-		} else {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") || a == "-" {
 			pos = append(pos, a)
+			continue
+		}
+		flags = append(flags, a)
+		// "--" ends flag parsing; everything after it is positional.
+		if a == "--" {
+			pos = append(pos, args[i+1:]...)
+			break
+		}
+		// An inline value (--flag=value) is already self-contained.
+		if strings.Contains(a, "=") {
+			continue
+		}
+		if i+1 < len(args) && flagTakesValue(fs, a) {
+			i++
+			flags = append(flags, args[i])
 		}
 	}
 	return append(flags, pos...)
+}
+
+// flagTakesValue reports whether the named flag consumes the following
+// argument. Unknown flags are assumed not to: guessing wrong would swallow a
+// positional, and the flag package reports the unknown flag anyway.
+func flagTakesValue(fs *flag.FlagSet, arg string) bool {
+	if fs == nil {
+		return false
+	}
+	name := strings.TrimLeft(arg, "-")
+	f := fs.Lookup(name)
+	if f == nil {
+		return false
+	}
+	// The flag package treats a flag whose value implements IsBoolFlag as
+	// standalone (-v), so only non-boolean flags take the next argument.
+	bf, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return !ok || !bf.IsBoolFlag()
 }
 
 func cmdRemoteStart(args []string) error {
@@ -382,7 +419,7 @@ func cmdRemoteStart(args []string) error {
 	var printEnv bool
 	fs.BoolVar(&printEnv, "env", false, "print export lines to stdout for eval")
 	fs.BoolVar(&printEnv, "e", false, "print export lines to stdout for eval (shorthand)")
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -462,7 +499,7 @@ func cmdRemoteList(args []string) error {
 
 func cmdRemoteStop(args []string) error {
 	fs := flag.NewFlagSet("remote stop", flag.ContinueOnError)
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -479,7 +516,7 @@ func cmdRemoteStop(args []string) error {
 
 func cmdRemoteStatus(args []string) error {
 	fs := flag.NewFlagSet("remote status", flag.ContinueOnError)
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
@@ -516,7 +553,7 @@ func cmdRemoteMetrics(args []string) error {
 	fs.StringVar(&format, "format", "bar", "output format: bar (default), table or json")
 	fs.BoolVar(&watch, "watch", false, "poll metrics every 60 seconds")
 	fs.BoolVar(&watch, "w", false, "shorthand for --watch")
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	if format != "table" && format != "json" && format != "bar" {
@@ -613,46 +650,9 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 		fmt.Fprintf(w, "uptime:       %s\n", formatDuration(resp.UptimeSeconds))
 	}
 
-	if resp.Tokens != nil {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  running:          %d\n", resp.Tokens.Running)
-		fmt.Fprintf(w, "  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
-		fmt.Fprintf(w, "  generation tokens: %d\n", resp.Tokens.GenerationTokens)
-		fmt.Fprintf(w, "  requests:         %d\n", resp.Tokens.Requests)
-	}
-
-	if len(resp.GPUs) > 0 {
-		fmt.Fprintln(w)
-		for _, g := range resp.GPUs {
-			memUsed := formatBytes(g.MemoryUsed)
-			memTotal := formatBytes(g.MemoryTotal)
-			fmt.Fprintf(w, "  GPU %d: %s  util=%d%%  mem=%s/%s  temp=%dC\n",
-				g.Index, g.Name, g.Utilization, memUsed, memTotal, g.Temperature)
-		}
-		if len(resp.GPUs) > 1 {
-			var totalUtil, totalMemUsed, totalMemTotal int64
-			for _, g := range resp.GPUs {
-				totalUtil += int64(g.Utilization)
-				totalMemUsed += g.MemoryUsed
-				totalMemTotal += g.MemoryTotal
-			}
-			avgUtil := int(totalUtil) / len(resp.GPUs)
-			fmt.Fprintf(w, "  avg util: %d%%  total mem: %s/%s\n",
-				avgUtil, formatBytes(totalMemUsed), formatBytes(totalMemTotal))
-		}
-	}
-
-	if resp.CPU != nil {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  CPU: %.0f%% util\n", resp.CPU.Utilization)
-	}
-
-	if resp.Memory != nil {
-		memUsed := formatBytes(resp.Memory.Used)
-		memTotal := formatBytes(resp.Memory.Total)
-		pct := float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
-		fmt.Fprintf(w, "  RAM: %s/%s (%.0f%%)\n", memUsed, memTotal, pct)
-	}
+	renderTokenLines(w, resp.Tokens)
+	renderGPUTable(w, resp.GPUs)
+	renderCPUMemTable(w, resp.CPU, resp.Memory)
 
 	if withCost && resp.UptimeSeconds > 0 && resp.InstanceType != "" {
 		if price, err := getOnDemandPrice(ctx, cfg.Region, resp.InstanceType); err == nil {
@@ -661,12 +661,7 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 		}
 	}
 
-	if len(resp.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "metric collection errors:")
-		for _, e := range resp.Errors {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
-		}
-	}
+	renderCollectionErrors(os.Stderr, resp.Errors)
 
 	return nil
 }
@@ -703,12 +698,7 @@ func formatMetricsJSON(resp *remote.StatsResponse, withCost bool, cfg remote.Con
 		fmt.Fprintln(w, string(data))
 	}
 
-	if len(resp.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "metric collection errors:")
-		for _, e := range resp.Errors {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
-		}
-	}
+	renderCollectionErrors(os.Stderr, resp.Errors)
 
 	return nil
 }
@@ -727,45 +717,9 @@ func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config, w io.Writer
 		return nil
 	}
 
-	if resp.CPU != nil {
-		renderBar(w, "CPU", resp.CPU.Utilization)
-	}
-
-	if resp.Memory != nil {
-		pct := 0.0
-		if resp.Memory.Total > 0 {
-			pct = float64(resp.Memory.Used) / float64(resp.Memory.Total) * 100
-		}
-		renderBar(w, "RAM", pct)
-	}
-
-	for _, g := range resp.GPUs {
-		prefix := "GPU"
-		if len(resp.GPUs) > 1 {
-			prefix = fmt.Sprintf("GPU %d", g.Index)
-		}
-		renderBar(w, prefix+" util", float64(g.Utilization))
-		memPct := 0.0
-		if g.MemoryTotal > 0 {
-			memPct = float64(g.MemoryUsed) / float64(g.MemoryTotal) * 100
-		}
-		renderBar(w, prefix+" mem", memPct)
-	}
-
-	if resp.Tokens != nil {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  running:          %d\n", resp.Tokens.Running)
-		fmt.Fprintf(w, "  prompt tokens:    %d\n", resp.Tokens.PromptTokens)
-		fmt.Fprintf(w, "  generation tokens: %d\n", resp.Tokens.GenerationTokens)
-		fmt.Fprintf(w, "  requests:         %d\n", resp.Tokens.Requests)
-	}
-
-	if len(resp.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "metric collection errors:")
-		for _, e := range resp.Errors {
-			fmt.Fprintf(os.Stderr, "  - %s\n", e)
-		}
-	}
+	renderStatBars(w, resp.CPU, resp.Memory, resp.GPUs)
+	renderTokenLines(w, resp.Tokens)
+	renderCollectionErrors(os.Stderr, resp.Errors)
 
 	return nil
 }
@@ -1009,7 +963,7 @@ func cmdRemoteDeploy(args []string) error {
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
 	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
 	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(sortFlagsBeforeArgs(args)); err != nil {
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 
