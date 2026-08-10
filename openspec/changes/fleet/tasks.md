@@ -36,6 +36,9 @@
 - [x] 3.3 `fleet status`: one row per node (name, state, runner/model,
       reachability); unreachable/unauthorized/config-error rendered as rows,
       command still succeeds
+- [x] 3.5 `fleet status`: show how long a node has been idle, from the
+      daemon's `lastActiveAt`/`idleSeconds`; omit the figure when the daemon
+      reports no activity yet, and cover both in a test
 - [x] 3.4 `fleet start <node>` / `fleet stop <node>`: single-node by contract
       — no node argument lists the fleet and does nothing; unknown node names
       the known ones; surface the daemon's 409/idempotent stop results

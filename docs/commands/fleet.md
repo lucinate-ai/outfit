@@ -72,10 +72,17 @@ failure — the rest of the fleet still renders and the command still exits 0:
 
 ```
 NODE     STATE         SERVING
-studio   running       llamacpp  org/qwen  (up 1h 2m 5s)
+studio   running       llamacpp  org/qwen  (up 1h 2m 5s)  (last active 12s ago)
 gpu-box  idle          llamacpp  org/qwen
 offline  unreachable   dial tcp 10.0.0.9:4242: connect: connection refused
 ```
+
+"last active" comes from the activity each daemon tracks, so a glance answers
+"which of my nodes is doing nothing?". It is absent until a node's engine has
+actually done some work — a daemon that has served nothing reports no activity
+rather than claiming it has been quiet since it started. The wording avoids
+"idle" deliberately: that word is already an engine *state*, meaning nothing
+has been started at all.
 
 | Outcome | Meaning |
 | --- | --- |

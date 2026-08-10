@@ -3,7 +3,8 @@
 See proposal.md — Why. What the earlier changes leave in place:
 
 - `internal/daemon` serves the control API and defines the wire shapes:
-  `StatusResponse` (state, runner, model, uptime, logPath) and
+  `StatusResponse` (state, runner, model, uptime, logPath, and — since the
+  daemon gained activity tracking — `lastActiveAt`/`idleSeconds`) and
   `internal/metrics.Stats` from `GET /v1/metrics`. Auth is a bearer token
   (`OUTFIT_API_TOKEN`), constant-time compared.
 - `cmd/outfit/remote.go` renders `remote.StatsResponse` in bar/table/json via
@@ -103,6 +104,18 @@ typo surfaces on that node's row rather than as an auth failure.
 mutating every engine at once is a footgun, so `start`/`stop` demand a node
 name and otherwise print the node list. This matches the daemon's own
 one-engine focus and keeps the dangerous verbs deliberate.
+
+**D8 — Last-active time is shown because the daemon already knows it.** The daemon
+samples the running engine's counters and reports `lastActiveAt` with a derived
+`idleSeconds`. A fleet view is where "which of my nodes is doing nothing?" gets
+asked, so the status row shows the idle duration rather than making the user
+query a node individually. `lastActiveAt` is empty until an engine has done
+work, and the row omits the figure in that case: reporting a node as idle since
+boot would claim activity data that does not exist. The client formats
+`idleSeconds` with the same duration helper the uptime column uses, so the two
+read alike. It is rendered as "last active Ns ago" rather than "idle Ns":
+running the real stack showed `running … (idle 9s)` sitting one row above a
+node whose STATE was `idle`, two different meanings of the word in one table.
 
 **D7 — Watch mode reuses the remote watch shape.** `fleet metrics --watch`
 pre-renders the whole fleet into a buffer, then clears and writes — the same

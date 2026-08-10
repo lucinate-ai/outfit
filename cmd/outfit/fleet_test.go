@@ -286,3 +286,56 @@ func TestCmdFleetMetricsWatchExitsOnInterrupt(t *testing.T) {
 		t.Fatal("watch did not exit on SIGINT")
 	}
 }
+
+// The daemon tracks when its engine last did work; the fleet view is where
+// "which node is doing nothing?" gets asked, so the row shows it.
+func TestCmdFleetStatusShowsIdleTime(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"state": "running", "runner": "llamacpp", "model": "org/qwen",
+			"uptimeSeconds": 600,
+			"lastActiveAt":  "2026-08-10T10:00:00Z",
+			"idleSeconds":   125,
+		})
+	}))
+	defer srv.Close()
+	host, port := hostPort(t, srv)
+	writeFleetFile(t, fmt.Sprintf("nodes:\n  - name: busy\n    host: %s\n    port: %d\n", host, port))
+
+	out := captureStdout(t, func() {
+		if err := cmdFleet([]string{"status"}); err != nil {
+			t.Error(err)
+		}
+	})
+	// 125s formats the same way the uptime column does, so the two read alike.
+	if !strings.Contains(out, "last active 2m 5s ago") {
+		t.Errorf("last-active time missing or misformatted:\n%s", out)
+	}
+}
+
+// A daemon that has recorded no activity yet must not be reported as idle
+// since boot — there is no last-active time to measure from.
+func TestCmdFleetStatusOmitsIdleWithoutActivity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"state": "running", "runner": "llamacpp", "model": "org/qwen",
+			"uptimeSeconds": 600,
+		})
+	}))
+	defer srv.Close()
+	host, port := hostPort(t, srv)
+	writeFleetFile(t, fmt.Sprintf("nodes:\n  - name: fresh\n    host: %s\n    port: %d\n", host, port))
+
+	out := captureStdout(t, func() {
+		if err := cmdFleet([]string{"status"}); err != nil {
+			t.Error(err)
+		}
+	})
+	if strings.Contains(out, "last active") {
+		t.Errorf("activity claimed when the daemon recorded none:\n%s", out)
+	}
+	// The rest of the row is unaffected.
+	if !strings.Contains(out, "up 10m 0s") {
+		t.Errorf("uptime missing:\n%s", out)
+	}
+}
