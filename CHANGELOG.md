@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.18.0] - 2026-08-10
+### Added
+- feat: add outfit fleet to observe and drive engines across machines (#69)
+
+### Changed
+- build(deps): bump pnpm/action-setup
+- build(deps): bump the go-dependencies group across 1 directory with 6 updates
+- ci: fail when a spec's Purpose is a placeholder
+- docs(openspec): fix spec validation, fill in placeholder purposes, gate it in CI
+- docs(openspec): sync the lucinate harness specs and archive the change (#70)
+
+### Fixed
+- fix(harness): fetch the remote API key before applying an Outfit
+
 ## [1.17.0] - 2026-08-10
 ### Added
 - feat(daemon): own idle detection, and publish an API contract (#64)
