@@ -846,3 +846,100 @@ func TestEnvAlias_ReachesDaemonOutfit(t *testing.T) {
 		t.Errorf("resolved the wrong Outfit: ALIAS = %q", sel.Alias)
 	}
 }
+
+// TestEnvAlias_RemoteFailsRatherThanFallingBack checks the claim the existence
+// gate rests on: a set OUTFIT_ALIAS is never passed over. A value that cannot
+// be resolved has to stop the command, not quietly hand it the per-user default
+// endpoint — which would look exactly like the bug the gate fixed.
+func TestEnvAlias_RemoteFailsRatherThanFallingBack(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("OUTFIT_ALIAS", "nope")
+
+	err := cmdRemoteStop(nil)
+	if err == nil {
+		t.Fatal("expected an error for an unregistered OUTFIT_ALIAS")
+	}
+	if !strings.Contains(err.Error(), "OUTFIT_ALIAS") {
+		t.Errorf("error %q does not name the variable", err)
+	}
+	if strings.Contains(err.Error(), "remote is not configured") {
+		t.Errorf("the variable was passed over for the default config: %v", err)
+	}
+}
+
+// TestEnvAlias_RemoteFallsBackWithoutREMOTE checks the other side of that gate:
+// resolving the variable is not the same as it having an endpoint. An Outfit
+// with no REMOTE leaves the per-user default in charge, exactly as a ./Outfit
+// without one always has.
+func TestEnvAlias_RemoteFallsBackWithoutREMOTE(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	registerOutfit(t, "PROVIDER llamacpp\nALIAS q3\n") // no REMOTE
+	t.Chdir(t.TempDir())
+	t.Setenv("OUTFIT_ALIAS", "q3")
+
+	err := cmdRemoteStop(nil)
+	if err == nil {
+		t.Fatal("expected an error: there is no default endpoint config either")
+	}
+	if !strings.Contains(err.Error(), "remote is not configured") {
+		t.Errorf("error = %q, want the default-config failure (the fallback still applies)", err)
+	}
+}
+
+// TestEnvAlias_DaemonFailsRatherThanStartingIdle checks the same rule for the
+// daemon, whose fallback is to start with no Outfit at all. A variable that
+// cannot be resolved must be an error, or a typo would be indistinguishable
+// from having meant to start idle.
+func TestEnvAlias_DaemonFailsRatherThanStartingIdle(t *testing.T) {
+	isolateConfig(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("OUTFIT_ALIAS", "nope")
+
+	_, _, ok, err := resolveDaemonOutfit("")
+	if err == nil {
+		t.Fatalf("resolveDaemonOutfit() = ok %v, nil error; want a failure for an unregistered value", ok)
+	}
+	if !strings.Contains(err.Error(), "OUTFIT_ALIAS") {
+		t.Errorf("error %q does not name the variable", err)
+	}
+}
+
+// TestEnvAlias_EmptyDoesNotCountAsNamingOne checks that an exported-but-empty
+// variable — `export OUTFIT_ALIAS=` — leaves the existence gate answering on
+// the working directory alone, so the usual fallbacks still apply.
+func TestEnvAlias_EmptyDoesNotCountAsNamingOne(t *testing.T) {
+	isolateConfig(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("OUTFIT_ALIAS", "")
+
+	if defaultOutfitNamed() {
+		t.Error("an empty OUTFIT_ALIAS should not count as naming an Outfit")
+	}
+	if _, _, ok, err := resolveDaemonOutfit(""); err != nil || ok {
+		t.Errorf("resolveDaemonOutfit() = ok %v, err %v; want the idle start", ok, err)
+	}
+}
+
+// TestEnvAlias_UnreadableConfigSurfaces checks that a registry outfit cannot
+// read is reported rather than swallowed. Completion deliberately ignores a
+// corrupt config, so this is the case that proves a real command does not.
+func TestEnvAlias_UnreadableConfigSurfaces(t *testing.T) {
+	home := isolateConfig(t)
+
+	configPath := filepath.Join(home, ".config", "outfit", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, configPath, "{not json")
+
+	t.Chdir(t.TempDir())
+	t.Setenv("OUTFIT_ALIAS", "q3")
+
+	if err := cmdApply(nil); err == nil {
+		t.Fatal("expected a corrupt registry to fail the lookup")
+	}
+}

@@ -71,3 +71,15 @@
   Both now ask `defaultOutfitNamed`, which counts `OUTFIT_ALIAS` too.
 - [x] 5.2 Regression tests for both, plus the spec scenario and the `remote.md`
   and `AGENTS.md` notes that say the gate has to count the variable.
+
+## 6. Coverage of the new paths
+
+- [x] 6.1 Cover the claim the existence gate rests on — an unresolvable
+  `OUTFIT_ALIAS` stops `remote` and `daemon` rather than being passed over for
+  their fallbacks (the per-user endpoint config, and an idle start).
+- [x] 6.2 Cover the fallbacks that must survive: an Outfit named by the
+  variable but carrying no `REMOTE` still yields to the default environment,
+  and an exported-but-empty variable does not count as naming an Outfit.
+- [x] 6.3 Cover `outfitFromEnv`'s registry-read failure, so a corrupt
+  `config.json` is reported by a real command rather than swallowed the way
+  completion deliberately swallows it.

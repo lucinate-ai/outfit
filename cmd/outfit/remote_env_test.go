@@ -202,3 +202,24 @@ func TestRemoteDeploy_DoesNotForwardEnvToInstance(t *testing.T) {
 		}
 	}
 }
+
+// An Outfit named explicitly but carrying no REMOTE is an error naming the
+// file, not a silent fall back to the per-user default: naming a path says
+// which endpoint you meant, so guessing a different one would be wrong.
+func TestRemoteStop_NamedOutfitWithoutREMOTE(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("Outfit", []byte("PROVIDER llamacpp\nMODEL gemma\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmdRemoteStop([]string{"Outfit"})
+	if err == nil {
+		t.Fatal("expected an error for an Outfit with no REMOTE")
+	}
+	if !strings.Contains(err.Error(), "has no REMOTE instruction") {
+		t.Errorf("error = %q, want it to name the missing REMOTE", err)
+	}
+}
