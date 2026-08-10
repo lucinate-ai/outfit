@@ -44,6 +44,13 @@ it.
 - **WHEN** a `remote` subcommand runs outside a project
 - **THEN** the `default` environment is used
 
+#### Scenario: Configuration without a base URL
+
+- **WHEN** a remote configuration names the control URLs and region but no base
+  URL, and a `remote` subcommand runs
+- **THEN** the subcommand works as it always has, since the endpoint reports its
+  own address in the replies to `start` and `status`
+
 #### Scenario: A remote configuration fetched over HTTP
 
 - **WHEN** an Outfit sets `REMOTE https://example.com/team/remote.json`

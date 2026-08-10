@@ -74,7 +74,7 @@ rather than the command's result, and the same resolution serves
 - **WHEN** an argument names both a file on disk and a registered alias
 - **THEN** the file wins and a note reports that the path was used
 
-#### Scenario: Dangling local alias
+#### Scenario: Dangling alias
 
 - **WHEN** a registered name points at a local file that has been deleted
 - **THEN** the command fails suggesting `outfit alias -n <name> <path>` or
@@ -98,7 +98,7 @@ URL-valued entry SHALL be printed as-is, with no liveness check performed
 name and drop it, leaving the aliased Outfit untouched, and SHALL fail on an
 unknown name.
 
-#### Scenario: Listing with a missing local target
+#### Scenario: Listing with a missing target
 
 - **WHEN** a registered Outfit has been deleted and the user runs
   `outfit alias --list`

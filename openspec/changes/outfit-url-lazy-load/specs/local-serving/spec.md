@@ -24,6 +24,25 @@ engine is therefore not portable to another: read in the wrong vocabulary it
 would parse cleanly and produce a command with silently rewritten or dropped
 flags.
 
+#### Scenario: Outfit overrides the preset
+
+- **WHEN** the preset section sets `ctx-size = 4096` and the Outfit says
+  `CONTEXT 32768`
+- **THEN** the command carries a context size of 32768
+
+#### Scenario: Ambiguous preset
+
+- **WHEN** the preset defines several sections and the Outfit's `ALIAS` matches
+  none
+- **THEN** the command fails listing the section names to choose from
+
+#### Scenario: Another engine's preset keys are left alone
+
+- **WHEN** an oMLX preset contains a key that llama.cpp would treat as a short
+  alias
+- **THEN** the key is rendered as written, not rewritten to llama.cpp's
+  long-form flag
+
 #### Scenario: A remote preset
 
 - **WHEN** the Outfit sets `PRESET https://example.com/preset.ini`
