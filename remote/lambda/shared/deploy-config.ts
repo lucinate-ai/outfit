@@ -17,7 +17,7 @@ export type Runner = (typeof RUNNERS)[number];
  * The placeholder CDK creates the deploy-config parameter with. It is a
  * constant, so a later `cdk deploy` never reasserts (clobbers) a real config
  * that `outfit remote deploy` or a manual edit wrote — the parameter is
- * outfit/manual-owned. A wake reading this fails loudly; `pnpm deploy` seeds a
+ * outfit/manual-owned. A wake reading this fails loudly; `pnpm run deploy` seeds a
  * real config over it, but only while it is still this placeholder.
  */
 export const UNCONFIGURED_DEPLOY_CONFIG = 'unconfigured';
@@ -76,7 +76,7 @@ export interface DeployConfig {
 export function parseDeployConfig(raw: string | undefined): DeployConfig {
   if (!raw || !raw.trim() || raw.trim() === UNCONFIGURED_DEPLOY_CONFIG) {
     throw new Error(
-      'deploy-config is not set — run `pnpm deploy` (seeds the initial config) or `outfit remote deploy`',
+      'deploy-config is not set — run `pnpm run deploy` (seeds the initial config) or `outfit remote deploy`',
     );
   }
   let obj: Record<string, unknown>;

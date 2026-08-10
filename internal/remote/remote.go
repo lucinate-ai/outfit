@@ -561,7 +561,7 @@ type (
 func Stats(ctx context.Context, cfg Config) (*StatsResponse, error) {
 	if cfg.StatsURL == "" {
 		return nil, fmt.Errorf(
-			"no stats_url configured: the control plane needs re-deploying with `pnpm deploy` (or set OUTFIT_REMOTE_STATS_URL)")
+			"no stats_url configured: the control plane needs re-deploying with `pnpm run deploy` (or set OUTFIT_REMOTE_STATS_URL)")
 	}
 	out, err := callStats(ctx, cfg)
 	if err != nil {

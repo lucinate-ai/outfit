@@ -141,7 +141,8 @@ on a machine you run yourself, which does still report; see
 [`outfit fleet`](fleet.md).) In none of these cases does the rest of the
 report change.
 
-It appears once the control plane has been redeployed with `pnpm deploy`. An
+It appears once the control plane has been redeployed with `pnpm run deploy`
+(the `run` matters — plain `pnpm deploy` is pnpm's own built-in command). An
 older control plane simply omits it, and the commands print what they always
 did.
 
