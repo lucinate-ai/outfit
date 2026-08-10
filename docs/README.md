@@ -12,8 +12,8 @@ launched agent in a couple of minutes.
 Four words carry the whole tool:
 
 - **Harness** — the coding agent being configured. opencode is the default;
-  Pi is also supported. Chosen at runtime, so the same selection works for
-  either. See [`outfit harness`](commands/harness.md).
+  Pi and lucinate are also supported. Chosen at runtime, so the same selection
+  works for any of them. See [`outfit harness`](commands/harness.md).
 - **Provider** — what `outfit` can configure, from a built-in
   catalogue: OpenRouter, AWS Bedrock, Ollama, llama.cpp, vLLM, oMLX (Apple
   Silicon), or any OpenAI-compatible endpoint. See
@@ -32,6 +32,10 @@ Four words carry the whole tool:
   machine that stops when you do
 - [The HTTP control API](http-api.md) — driving a supervised engine over
   HTTP, and the [OpenAPI contract](openapi.yaml) for writing a client
+- [Running a fleet](commands/fleet.md) — one outfit watching every machine you
+  run, with a [containerised fleet](../examples/fleet-docker/) you can bring up
+  on a laptop
+- [Environment variables](env-vars.md) — every variable outfit reads
 - [Runnable examples](../examples/) — ready-to-apply Outfits with walkthroughs
 - [Deploying your own cloud GPU endpoint](../remote/) — the AWS project behind
   `outfit remote`
@@ -49,7 +53,8 @@ Four words carry the whole tool:
 | [`outfit alias`](commands/alias.md) | Name an `Outfit` so the name works anywhere a path does |
 | [`outfit unalias`](commands/unalias.md) | Drop a registered name |
 | [`outfit serve`](commands/serve.md) | Run the inference server for the model an `Outfit` names |
-| `outfit daemon` | Supervise an engine over the [control API](http-api.md) |
+| [`outfit daemon`](commands/serve.md#the-control-api---api-and-outfit-daemon) | Supervise an engine over the [control API](http-api.md) |
+| [`outfit fleet`](commands/fleet.md) | Observe and drive the engines on every machine you run |
 | [`outfit remote`](commands/remote.md) | Run the model on a cloud GPU that stops when you do |
 | [`outfit export`](commands/export.md) | Capture the current setup as an `Outfit` |
 | [`outfit harness`](commands/harness.md) | Launch the agent, optionally dressing it first |
@@ -60,12 +65,17 @@ Four words carry the whole tool:
 
 ## Environment variables
 
+The ones you will meet first — **[env-vars.md](env-vars.md) is the full list**,
+including the `OUTFIT_REMOTE_*` overrides:
+
 | Variable | Effect |
 | -------- | ------ |
 | `OUTFIT_HARNESS` | Selects the harness (a `--harness`/`-H` flag beats it) |
+| `OUTFIT_CONFIG_DIR` | outfit's own config directory, used verbatim — set it where there is no usable `$HOME` |
 | `OUTFIT_PROVIDERS` | Path to a custom provider catalogue (`--providers` beats it) |
 | `OUTFIT_BASE_URL` | Overrides any provider's API base URL (`--base-url`/`-u` beats it) |
 | `OUTFIT_API_TOKEN` | Bearer token for the daemon [control API](http-api.md) |
+| *(named by `tokenEnv`)* | A [fleet](commands/fleet.md) node's bearer token — `fleet.yaml` names the variable, never the value |
 | `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, … | Provider API keys — `outfit list` shows which each provider reads |
 | `OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`, `OMLX_BASE_URL`, `VLLM_BASE_URL`, `OPENAI_BASE_URL` | Per-provider endpoint overrides |
 | `AWS_REGION` | Region for AWS Bedrock |

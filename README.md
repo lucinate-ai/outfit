@@ -371,10 +371,30 @@ outfit fleet metrics -w      # a live dashboard across the fleet
 outfit fleet start gpu-box   # start one node's engine
 ```
 
-A node that cannot be reached shows as `unreachable` with its reason and the
-rest of the fleet still renders — one bad box never blanks the view. Details
-in [`docs/commands/fleet.md`](docs/commands/fleet.md); a worked example in
-[`examples/fleet/`](examples/fleet/).
+```
+NODE     STATE         SERVING
+studio   running       llamacpp  org/qwen  (up 1h 2m 5s)  (last active 12s ago)
+gpu-box  idle          llamacpp  org/qwen
+offline  unreachable   dial tcp 10.0.0.9:4242: connect: connection refused
+```
+
+A node that cannot be reached is a row, not a failure — one bad box never
+blanks the view, and "last active" answers the question you actually opened the
+thing for: which machine is doing nothing?
+
+No spare machines to hand? [`examples/fleet-docker/`](examples/fleet-docker/)
+brings up a three-node fleet in containers — real daemons, real auth, a fake
+engine — in about a minute:
+
+```sh
+cd examples/fleet-docker && cp .env.example .env
+docker compose up -d --build
+set -a && . ./.env && set +a
+outfit fleet status --fleet ./fleet.yaml
+```
+
+Details in [`docs/commands/fleet.md`](docs/commands/fleet.md); a `fleet.yaml`
+for machines you own in [`examples/fleet/`](examples/fleet/).
 
 Writing a client? [`docs/openapi.yaml`](docs/openapi.yaml) is the full
 contract, and it ships with every release. See
