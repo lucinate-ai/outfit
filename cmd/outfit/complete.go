@@ -196,7 +196,7 @@ var commands = map[string]command{
 		},
 		// `outfit remote <sub> [outfit]`: the subcommand, then optionally the
 		// Outfit naming the endpoint.
-		subcommands: []string{"bootstrap", "start", "stop", "status", "metrics", "deploy", "env", "ls"},
+		subcommands: []string{"bootstrap", "start", "stop", "status", "metrics", "logs", "deploy", "env", "ls"},
 		positional:  kindAlias, positionals: 2,
 	},
 	"completion": {positional: kindShell, positionals: 1},
