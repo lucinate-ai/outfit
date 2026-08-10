@@ -1,0 +1,11 @@
+# Muse-Glimmer-30B, served by llama.cpp — locally with `outfit serve`, or on
+# a cloud GPU with `outfit remote deploy` (see the README in this directory).
+# ALIAS names the model in opencode and selects the preset section below.
+PROVIDER llamacpp
+ALIAS    muse-glimmer-30b
+CONTEXT  32768              # match the server's --ctx-size; trimmed down from
+                             # the model's 131072 native max to keep the KV
+                             # cache modest — raise it if you need the room
+PRESET   ./preset.ini       # `outfit serve` and `outfit remote deploy` both read this
+REMOTE   muse-glimmer-30b   # environment name; `outfit remote deploy` creates and registers it
+# BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default local host/port
