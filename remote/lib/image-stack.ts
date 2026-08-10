@@ -28,7 +28,7 @@ const AMI_ROOT_DEVICE = '/dev/sda1';
 
 // Per-runner recipe/component version. Image Builder treats a version as
 // immutable, so bump a runner's version to force a fresh AMI for just it.
-const RUNNER_VERSION = { vllm: '3.3.2', llamacpp: '3.3.2' } as const;
+const RUNNER_VERSION = { vllm: '3.3.3', llamacpp: '3.3.3' } as const;
 
 /**
  * Bakes a slim, model-agnostic AMI **per runner** — vLLM (a `uv` venv) and
