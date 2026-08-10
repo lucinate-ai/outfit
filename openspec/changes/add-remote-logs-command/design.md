@@ -43,7 +43,11 @@ Function URL host.
 - Shipping any new log source, changing retention, or touching the CDK stacks.
 - A control Lambda for logs. Reading through the shared layer would make logs
   unavailable exactly when the layer is the thing that is broken.
-- Local (`outfit serve`) logs. This is about remote environments.
+- Local (`outfit serve`) and `outfit fleet` logs. This is about remote
+  environments. Fleet reads each node's daemon over HTTP rather than
+  CloudWatch, and no daemon endpoint serves log content today, so it needs its
+  own change (`add-fleet-logs-command`); it reuses this change's rendering,
+  flags and follow loop rather than its fetch.
 
 ## Decisions
 
