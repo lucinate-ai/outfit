@@ -8,15 +8,15 @@ what to serve from an Outfit: the `outfit remote` command group.
 ### Requirement: Remote command group
 
 The system SHALL provide a `remote` command group with the subcommands
-`bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, and `stats`. `start`,
-`stop`, `status`, `stats` and `deploy` each take an optional Outfit path:
+`bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, and `metrics`. `start`,
+`stop`, `status`, `metrics` and `deploy` each take an optional Outfit path:
 `start` SHALL boot the endpoint and block until it is serving, then perform a
 quick TCP probe of the inference endpoint — if the probe fails, a warning is
 printed to stderr explaining the network mismatch (see the Remote Start Probe
 specification) — and finally print the base URL and API key as shell exports;
 `stop` SHALL stop it immediately rather than waiting for its idle timer;
 `status` SHALL report instance state and endpoint health without side effects
-and SHALL NOT perform any TCP probe; `stats` SHALL report instance state,
+and SHALL NOT perform any TCP probe; `metrics` SHALL report instance state,
 token usage, resource consumption, and GPU information for a running instance;
 `deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered
 remote environments (see the Remote Environments specification). `bootstrap`
@@ -49,9 +49,9 @@ subcommand SHALL fail naming the accepted ones.
 - **THEN** the registered environments are listed rather than any endpoint being
   contacted
 
-#### Scenario: Stats reports instance metrics
+#### Scenario: Metrics reports instance figures
 
-- **WHEN** the user runs `outfit remote stats` with a running instance
+- **WHEN** the user runs `outfit remote metrics` with a running instance
 - **THEN** token counts, resource usage, and GPU information are displayed
 
 #### Scenario: Bootstrap is a recognised subcommand
@@ -63,8 +63,8 @@ subcommand SHALL fail naming the accepted ones.
 #### Scenario: Unknown subcommand
 
 - **WHEN** the user runs `outfit remote frobnicate`
-- **THEN** the command fails listing the accepted subcommands, which now
-  include `bootstrap` and `stats`
+- **THEN** the command fails listing the accepted subcommands, which include
+  `bootstrap` and `metrics`
 
 ### Requirement: Reporting a start in progress
 
@@ -179,7 +179,7 @@ credentials, resolved from the standard credential chain, and SHALL carry the
 hash of the request body so that a request with a payload is signed over that
 payload. Outfit SHALL NOT store AWS credentials of its own.
 
-Every control subcommand — `start`, `stop`, `status`, `deploy`, and `stats` —
+Every control subcommand — `start`, `stop`, `status`, `deploy`, and `metrics` —
 SHALL treat a non-success reply from the control endpoint as a failure: it SHALL
 return an error and a non-zero exit, and SHALL NOT print an empty or partial
 result as though the call succeeded.
