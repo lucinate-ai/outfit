@@ -21,6 +21,18 @@ a missing file in the current directory.
 When `OUTFIT_ALIAS` decides the Outfit, the command SHALL say so on stderr,
 naming the variable, the alias and the resolved path.
 
+A command that consults an Outfit only when there is one to consult — the
+`remote` subcommands, which otherwise use the per-user endpoint config, and
+`daemon`, which otherwise starts idle — SHALL count `OUTFIT_ALIAS` as naming
+one. A set variable SHALL NOT be passed over in favour of that fallback.
+
+#### Scenario: The variable counts as having an Outfit
+
+- **WHEN** `OUTFIT_ALIAS` names an Outfit carrying a `REMOTE` instruction and
+  the user runs `outfit remote status` in a directory with no `Outfit`
+- **THEN** that Outfit's endpoint is used, rather than the per-user default
+  config
+
 #### Scenario: The variable supplies the Outfit
 
 - **WHEN** `OUTFIT_ALIAS=qwen3.6-27b` is set and the user runs `outfit apply`

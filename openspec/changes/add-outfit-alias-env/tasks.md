@@ -62,3 +62,12 @@
   run `outfit apply` and `outfit serve --dry-run` from an unrelated directory,
   then unset it and confirm the previous behaviour returns.
 - [x] 4.3 `openspec validate add-outfit-alias-env --strict`.
+
+## 5. Follow-up: the existence gate
+
+- [x] 5.1 Fix `resolveRemoteConfig` and `resolveDaemonOutfit`, which tested for
+  a `./Outfit` on disk before calling `readOutfit` and so skipped the variable
+  entirely — `outfit remote status` fell through to the per-user default config.
+  Both now ask `defaultOutfitNamed`, which counts `OUTFIT_ALIAS` too.
+- [x] 5.2 Regression tests for both, plus the spec scenario and the `remote.md`
+  and `AGENTS.md` notes that say the gate has to count the variable.

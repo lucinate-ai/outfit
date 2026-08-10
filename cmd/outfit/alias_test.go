@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/config"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
 // registerOutfit writes an Outfit in a fresh directory and registers it under
@@ -775,5 +778,71 @@ func TestEnvAlias_ReachesServe(t *testing.T) {
 	})
 	if !strings.Contains(out, filepath.Join(dir, "preset.ini")) {
 		t.Errorf("the preset next to the variable's Outfit was not found:\n%s", out)
+	}
+}
+
+// TestEnvAlias_ReachesRemote checks the case that first caught this out: a
+// `remote` subcommand with no argument only consults an Outfit when one is
+// there to consult, and OUTFIT_ALIAS names one as surely as a ./Outfit does.
+// Without this the command fell through to the per-user default config and
+// reported the endpoint as unconfigured.
+func TestEnvAlias_ReachesRemote(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	hit := make(chan string, 1)
+	server := httptest.NewServer(hitRecorder("aliased", hit))
+	defer server.Close()
+
+	// An Outfit whose REMOTE sits beside it, registered and then left behind.
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, outfit.DefaultFile), "PROVIDER openai-compatible\nALIAS q3\nREMOTE ./remote.json\n")
+	cfg, _ := json.Marshal(remote.Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"})
+	mustWrite(t, filepath.Join(dir, "remote.json"), string(cfg))
+	captureStdout(t, func() {
+		if err := cmdAlias([]string{dir}); err != nil {
+			t.Fatalf("cmdAlias: %v", err)
+		}
+	})
+
+	t.Chdir(t.TempDir()) // no ./Outfit, so only the variable can find it
+	t.Setenv("OUTFIT_ALIAS", "q3")
+
+	if err := cmdRemoteStop(nil); err != nil {
+		t.Fatalf("cmdRemoteStop with OUTFIT_ALIAS: %v", err)
+	}
+	select {
+	case name := <-hit:
+		if name != "aliased" {
+			t.Errorf("stop reached the %q server, want the aliased Outfit's", name)
+		}
+	default:
+		t.Error("no server was reached — the variable's REMOTE was not used")
+	}
+}
+
+// TestEnvAlias_ReachesDaemonOutfit checks the same gate on the daemon: with no
+// path and no ./Outfit it starts idle, but a variable naming one means there is
+// an Outfit to serve from after all.
+func TestEnvAlias_ReachesDaemonOutfit(t *testing.T) {
+	isolateConfig(t)
+
+	_, path := registerOutfit(t, "PROVIDER llamacpp\nALIAS q3\n")
+	t.Chdir(t.TempDir())
+
+	if _, _, ok, err := resolveDaemonOutfit(""); err != nil || ok {
+		t.Fatalf("resolveDaemonOutfit() = ok %v, err %v; want no Outfit with the variable unset", ok, err)
+	}
+
+	t.Setenv("OUTFIT_ALIAS", "q3")
+	sel, got, ok, err := resolveDaemonOutfit("")
+	if err != nil {
+		t.Fatalf("resolveDaemonOutfit with OUTFIT_ALIAS: %v", err)
+	}
+	if !ok || got != path {
+		t.Errorf("resolveDaemonOutfit() = %q, ok %v; want the variable's Outfit %q", got, ok, path)
+	}
+	if sel.Alias != "q3" {
+		t.Errorf("resolved the wrong Outfit: ALIAS = %q", sel.Alias)
 	}
 }

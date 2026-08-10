@@ -97,11 +97,12 @@ without clobbering, and only the name — not the URLs — lives in the committe
 Outfit. `outfit remote bootstrap` registers an environment for you; you can also
 create one by hand.
 
-With no Outfit naming a `REMOTE`, `outfit remote` uses the `default`
-environment (`~/.config/outfit/remotes/default/remote.json`) — so it works from
-anywhere. An existing `~/.config/outfit/remote.json` from before the registry is
-still read as the default; move it to `remotes/default/remote.json` when
-convenient.
+Given no path, `outfit remote` reads the Outfit `OUTFIT_ALIAS` names, or
+`./Outfit` when you are standing beside one. With neither — or with one that
+names no `REMOTE` — it uses the `default` environment
+(`~/.config/outfit/remotes/default/remote.json`), so it works from anywhere.
+An existing `~/.config/outfit/remote.json` from before the registry is still
+read as the default; move it to `remotes/default/remote.json` when convenient.
 
 ## Listing environments
 
