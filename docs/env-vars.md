@@ -28,7 +28,10 @@ from the environment or a `.env` beside the Outfit — never written into an
 | `OUTFIT_REMOTE_PACKAGE_MANAGER` | Pin the package manager (`pnpm`/`npm`) `outfit remote bootstrap` uses. |
 
 These let the remote commands run without a `remote.json` on disk — the
-config can come entirely from the environment.
+config can come entirely from the environment. `outfit remote logs` is the
+exception: it needs the environment's name to find its log streams, and that
+comes only from the config, so it wants a registered environment (or an Outfit
+naming one) rather than environment variables alone.
 
 ## Standard variables outfit honours
 

@@ -114,8 +114,9 @@ whose `remote.json` is missing or unreadable. It contacts no endpoint.
 
 Requests are signed with **your** AWS credentials (the usual profile, SSO
 session, or environment variables), and the endpoint's URLs require it. Outfit
-stores no credentials of its own and needs no permission beyond invoking those
-URLs.
+stores no credentials of its own. Beyond invoking those URLs, the only extra
+permission it wants is for [reading logs](#reading-the-logs), which talks to
+CloudWatch rather than to an endpoint.
 
 ## Reading the logs
 
@@ -213,6 +214,8 @@ outfit remote deploy --overwrite     # redeploy over the existing environment
 | ---- | ------- |
 | `--timeout` | How long `start` waits for the endpoint (default 15m) |
 | `-n`, `--dry-run` | `deploy` only: print what would be sent, without sending it |
+
+`logs` has its own set — see [reading the logs](#reading-the-logs).
 
 ## Notes
 
