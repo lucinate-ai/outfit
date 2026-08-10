@@ -13,10 +13,22 @@ See proposal.md — Why. The mechanics that matter for the approach:
   `remote.StatsResponse` restates it with the control plane's extras, using
   type aliases into `internal/metrics` for the sub-structs, which is why
   `cmd/outfit/metrics_render.go` can serve both.
-- The cloud path is a relay: `remote/lambda/stats/index.ts` curls the
+- The cloud metrics path is a relay: `remote/lambda/stats/index.ts` curls the
   instance's `/v1/metrics` over SSM (`DAEMON_METRICS_CMD`) and merges EC2
   facts. Its `DaemonMetrics` interface is a hand-written mirror of
   `metrics.Stats`.
+- The cloud status path is separate and much thinner. `outfit remote status`
+  is a `GET` on `cfg.StartURL`, served by the `status(env)` branch of
+  `remote/lambda/start/index.ts:80`. It returns `state`, `healthy` and
+  `base_url` into `remote.Response` — the control Lambdas' shared reply — and
+  has no daemon data at all. For a running instance it already makes one SSM
+  round trip (`checkHealth` → `runShellCommand(HEALTH_COMMAND)`), gated behind
+  `isSsmAgentOnline`. For a non-running instance it returns before any SSM
+  call.
+- `remote/lambda/shared/daemon.ts` already has everything the status path
+  needs: `DAEMON_STATUS_CMD`, a `DaemonStatus` interface carrying
+  `lastActiveAt`/`idleSeconds`, and `parseDaemonStatus`. They exist for the
+  auto-stop check in `idle.ts`, which is the only current consumer.
 - `docs/openapi.yaml` is enforced by `internal/daemon/openapi_test.go`, which
   compares it against the JSON fields of the structs the handler serialises.
   Adding a field to `metrics.Stats` fails the build until the schema matches.
@@ -33,20 +45,25 @@ There is no `stats` command to consider: `outfit remote stats` was renamed to
 
 - One measurement, one record, reported from both `/v1/status` and
   `/v1/metrics`, with no possibility of the two disagreeing.
-- `outfit remote metrics` and `outfit fleet metrics` show it without either
-  view learning anything about how activity is derived.
+- `outfit remote metrics`, `outfit fleet metrics` and `outfit remote status`
+  show it without any of them learning anything about how activity is derived.
 - Wording and duration formatting identical to `outfit fleet status`, so the
   same fact reads the same way wherever it appears.
+- `outfit remote status` stays as quick as it is today, and stays a read.
 
 **Non-Goals:**
 
 - No change to what counts as activity, the sample interval, or the
   `engine-activity` capability. This exposes an existing answer; it does not
   revisit it.
-- No new endpoint and no second round trip: nothing calls `/v1/status` to
-  decorate a metrics view.
+- No new endpoint, and no second round trip on the metrics path: nothing calls
+  `/v1/status` to decorate a metrics view. The status path is the one place a
+  daemon call is genuinely added, because it makes none today.
 - No change to `outfit fleet status`, which already shows this.
 - No history or activity series — one timestamp, as today.
+- No attempt to report activity for a *stopped instance* in the cloud. Reaching
+  the daemon needs a running box; a stopped instance is silent, and this
+  change does not invent a control-plane-side record to cover the gap.
 
 ## Decisions
 
@@ -138,7 +155,58 @@ work. So `outfit remote metrics` degrades to today's output rather than
 erroring, and the Lambda redeploy is not a hard prerequisite for upgrading the
 CLI.
 
-### D6: `docs/openapi.yaml` is part of the change, not follow-up
+### D6: `remote status` asks the daemon in parallel with the health check
+
+The `status(env)` handler's running-instance branch currently reads:
+
+```
+const healthy = (await isSsmAgentOnline(id)) && (await checkHealth(id));
+```
+
+It gains a second SSM run of `DAEMON_STATUS_CMD`, issued **concurrently** with
+`checkHealth` once `isSsmAgentOnline` has passed, so the branch costs the
+slower of the two rather than their sum. `status` is the command people type
+repeatedly while waiting for a box, and making it visibly slower to add a
+convenience line would be a poor trade.
+
+Alternative considered: fold `DAEMON_STATUS_CMD` into `HEALTH_COMMAND` as one
+SSM invocation and split the output. One round trip instead of two, but it
+couples two independent questions — "is the engine serving?" and "has it done
+anything?" — behind a delimiter-parsing step, and a change to either command
+risks breaking the other's parse. Not worth saving a round trip that
+concurrency already hides.
+
+Alternative considered: have `status` call the stats Lambda, or share its
+`/v1/metrics` fetch. Rejected: `/v1/metrics` does the full system collection
+(`nvidia-smi`, CPU, memory) to answer a question `/v1/status` answers from an
+in-memory record. `status` should ask the cheap endpoint.
+
+The daemon fetch is wrapped so that any failure — SSM error, unreachable
+daemon, unparseable reply — leaves the figure absent and the rest of the
+report untouched. It must not be able to turn a working `status` into a
+failing one, which is why it is not folded into the `healthy` expression.
+
+### D7: The status reply carries the same two fields, on `remote.Response`
+
+`remote.Response` — the shared reply struct for `start`, `stop`, `status` and
+`deploy` — gains `LastActiveAt` and `IdleSeconds`, and `cmdRemoteStatus`
+prints a `last active:` line gated on the timestamp, using `formatDuration`
+exactly as the metrics formatters do (D3, D4).
+
+The JSON tags are camelCase (`lastActiveAt`, `idleSeconds`) rather than the
+snake_case of that struct's older neighbours (`base_url`,
+`retry_after_seconds`). `Response` is already mixed — `seedInstanceId`,
+`modelId`, `contextSize` are camelCase — and these two fields are relayed
+verbatim from the daemon, so matching the daemon's names keeps the whole hop
+copy-paste-consistent and avoids a rename in the Lambda purely to satisfy a
+convention the struct does not hold to anyway.
+
+Only the `status` branch of the start Lambda populates them. `start`'s ready
+reply deliberately does not: the daemon counts an engine start as activity, so
+a freshly started endpoint would report "last active 0s ago" — technically
+true, and useless.
+
+### D8: `docs/openapi.yaml` is part of the change, not follow-up
 
 `internal/daemon/openapi_test.go` fails the build when the `Stats` schema and
 the struct disagree, so the schema edit lands with the struct edit. The
@@ -170,6 +238,20 @@ fields, including that they are absent until an engine has run.
   Changing it would change those too; out of scope here, and better done once
   for all three than smuggled into this change.
 
+- **`remote status` gains an SSM round trip it did not make before**, on every
+  call against a running instance — a small latency and cost per invocation,
+  and one more thing that can fail. → D6 runs it concurrently with the health
+  check so the wall-clock cost is zero in the common case, and isolates its
+  failures so the worst outcome is a missing line. For a non-running instance
+  no call is added at all, because that branch returns before any SSM.
+
+- **A stopped cloud instance can never show the figure, while a stopped engine
+  on a live host can** — the same words describe two situations with different
+  answers, which could read as a bug. → The distinction is real and worth
+  keeping: the daemon knows, and an instance that is off cannot be asked. The
+  specs state it for both `remote status` and `remote metrics`, and the docs
+  task says it in the one place a user would look.
+
 - **The Lambda's `DaemonMetrics` is a hand-maintained mirror of a Go struct**
   with nothing enforcing the match. → Pre-existing; this change adds two more
   fields to the same manual seam. The graceful-absence behaviour in D5 means a
@@ -187,8 +269,15 @@ Deploy order does not matter, because every combination degrades safely:
 - Old CLI against a new daemon: two unknown JSON fields, ignored.
 
 The daemon and fleet paths work as soon as the binary is updated.
-`outfit remote metrics` shows the figure once the control plane is redeployed
-(`pnpm deploy`); until then it renders exactly as it does today.
+`outfit remote metrics` and `outfit remote status` show the figure once the
+control plane is redeployed (`pnpm deploy`); until then both render exactly as
+they do today, because an old Lambda omits the fields and the CLI omits the
+line.
+
+The two Lambdas are independent — the stats Lambda serves `remote metrics`,
+the start Lambda serves `remote status` — so a partial deploy shows the figure
+in one command and not the other. That is untidy but harmless, and a normal
+`pnpm deploy` updates both.
 
 Rollback is reverting the binary and, if desired, the control plane — there is
 no persisted state to unwind.
