@@ -99,6 +99,12 @@ same `bar` (default), `table`, and `json` formats as
 [`outfit remote metrics`](remote.md) — they share the renderers, so a node in
 your fleet and a cloud endpoint look the same.
 
+Each node's block carries the same `last active` figure the status table
+shows, for the reasons given above, and on the same terms: absent until the
+node's engine has done some work. A node whose engine has *stopped* still
+shows it — the daemon keeps the record across a stop, and "how long since this
+did anything?" is worth more about a stopped engine than about a busy one.
+
 `--watch`/`-w` redraws the whole fleet on an interval, clearing the screen in
 place with no scrollback. Each refresh is rendered into a buffer first, so a
 slow node delays the refresh but never tears the display. Ctrl+C exits

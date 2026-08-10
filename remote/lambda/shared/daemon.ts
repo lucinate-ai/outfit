@@ -35,6 +35,14 @@ export interface DaemonMetrics {
   cpu?: CpuStat;
   memory?: MemoryStat;
   errors?: string[];
+  /**
+   * The same activity pair `/v1/status` reports, from the same record on the
+   * instance. Present whatever the engine's state — a stopped engine still
+   * says when it last worked — and absent until an engine has run.
+   * `idleSeconds` is absent at zero too, so gate on `lastActiveAt`.
+   */
+  lastActiveAt?: string;
+  idleSeconds?: number;
 }
 
 /**

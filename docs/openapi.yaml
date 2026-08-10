@@ -261,6 +261,18 @@ components:
           description: Collection failures. An absent source is omitted rather than reported here.
           items:
             type: string
+        lastActiveAt:
+          type: string
+          format: date-time
+          description: |
+            When the engine last did any work, RFC 3339. The same value
+            `/v1/status` reports, from the same record. Reported whatever the
+            engine's state — a stopped engine still says when it last worked,
+            even though the figures above are absent. Absent until an engine
+            has run.
+        idleSeconds:
+          type: integer
+          description: Seconds since `lastActiveAt`. Absent when that is, and absent at zero.
 
     TokenStats:
       type: object

@@ -119,6 +119,33 @@ stores no credentials of its own. Beyond invoking those URLs, the only extra
 permission it wants is for [reading logs](#reading-the-logs), which talks to
 CloudWatch rather than to an endpoint.
 
+## Checking on an endpoint
+
+```sh
+outfit remote status                   # is it up, is it healthy, where is it
+outfit remote metrics                  # what is it doing — tokens, GPU, CPU, RAM
+outfit remote metrics -w               # the same, redrawn every 60 seconds
+```
+
+Both report **`last active`** — how long since the endpoint's engine last did
+any work. It comes from the activity the on-instance daemon tracks, so it is
+one answer decided on the box rather than something each command re-derives
+from raw counters. `status` asks the daemon alongside the health check it
+already makes, so it is no slower than before.
+
+The figure is left out rather than guessed at whenever there is nothing to
+report: an engine that has not yet served anything, a daemon that cannot be
+reached, and — on the cloud — an instance that is **stopped**, since reaching
+the daemon needs a running box. (That last one differs from a stopped *engine*
+on a machine you run yourself, which does still report; see
+[`outfit fleet`](fleet.md).) In none of these cases does the rest of the
+report change.
+
+It appears once the control plane has been redeployed with `pnpm run deploy`
+(the `run` matters — plain `pnpm deploy` is pnpm's own built-in command). An
+older control plane simply omits it, and the commands print what they always
+did.
+
 ## Reading the logs
 
 ```sh

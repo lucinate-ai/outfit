@@ -3,11 +3,13 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -429,5 +431,132 @@ while true; do sleep 0.05; done`)
 	}
 	if got, _ := d.act.snapshot(); !got.Equal(moved) {
 		t.Errorf("a failed scrape moved last active to %v, want %v", got, moved)
+	}
+}
+
+// TestMetricsReportsActivity covers what /v1/metrics now says about activity:
+// the same answer /v1/status gives, from the same record, including after the
+// engine has stopped and when there is nothing to report at all.
+func TestMetricsReportsActivity(t *testing.T) {
+	engineMetrics := &fakeEngine{counter: 100}
+	engine := httptest.NewServer(engineMetrics)
+	defer engine.Close()
+
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	clock := &fakeClock{t: baseTime}
+	d.Now = clock.now
+
+	// A daemon that has never run an engine has nothing to report, and says so
+	// by omission rather than by a zero value.
+	stats := d.Metrics(context.Background())
+	if stats.LastActiveAt != "" || stats.IdleSeconds != 0 {
+		t.Errorf("a daemon that has served nothing reported activity: %+v", stats)
+	}
+	if body, _ := json.Marshal(stats); bytes.Contains(body, []byte("lastActiveAt")) ||
+		bytes.Contains(body, []byte("idleSeconds")) {
+		t.Errorf("absent activity still serialised: %s", body)
+	}
+
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: engine.URL, Engine: "llamacpp"})
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateRunning)
+
+	// Starting counts as activity, so the record reads from the start time.
+	// Five minutes later the engine has done nothing more, and metrics reports
+	// the start as the last activity with the elapsed time as the idle.
+	clock.set(baseTime.Add(5 * time.Minute))
+	stats = d.Metrics(context.Background())
+	if stats.LastActiveAt != baseTime.Format(time.RFC3339) {
+		t.Errorf("metrics last active = %q, want %q", stats.LastActiveAt, baseTime.Format(time.RFC3339))
+	}
+	if stats.IdleSeconds != 300 {
+		t.Errorf("metrics idle = %d, want 300", stats.IdleSeconds)
+	}
+
+	// The two endpoints answer from one record: they cannot disagree.
+	if status := d.Status(); status.LastActiveAt != stats.LastActiveAt ||
+		status.IdleSeconds != stats.IdleSeconds {
+		t.Errorf("status %q/%d and metrics %q/%d disagree",
+			status.LastActiveAt, status.IdleSeconds, stats.LastActiveAt, stats.IdleSeconds)
+	}
+
+	// Work moves the record forward, and metrics reports the new time.
+	worked := baseTime.Add(6 * time.Minute)
+	clock.set(worked)
+	engineMetrics.set(500)
+	if stats = d.Metrics(context.Background()); stats.LastActiveAt != worked.Format(time.RFC3339) {
+		t.Errorf("after work: metrics last active = %q, want %q", stats.LastActiveAt, worked.Format(time.RFC3339))
+	}
+	if stats.IdleSeconds != 0 {
+		t.Errorf("an engine that just worked reported %ds idle, want 0", stats.IdleSeconds)
+	}
+
+	// Polling with an unchanged counter is not itself activity: reading the
+	// record must not refresh it, or a --watch loop would keep an idle engine
+	// looking busy for as long as someone is watching.
+	for i := 1; i <= 3; i++ {
+		clock.set(worked.Add(time.Duration(i) * time.Minute))
+		stats = d.Metrics(context.Background())
+	}
+	if stats.LastActiveAt != worked.Format(time.RFC3339) {
+		t.Errorf("polling moved last active to %q, want %q", stats.LastActiveAt, worked.Format(time.RFC3339))
+	}
+	if stats.IdleSeconds != 180 {
+		t.Errorf("after three quiet polls: idle = %d, want 180", stats.IdleSeconds)
+	}
+
+	// Stopping the engine leaves the record alone. Every running-engine figure
+	// goes, and the activity stays — that is the whole point of keeping it.
+	if err := d.Sup.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateStopped)
+	clock.set(worked.Add(10 * time.Minute))
+	stats = d.Metrics(context.Background())
+	if stats.Tokens != nil || stats.CPU != nil || stats.Memory != nil || len(stats.GPUs) > 0 {
+		t.Errorf("a stopped engine reported running-engine figures: %+v", stats)
+	}
+	if stats.LastActiveAt != worked.Format(time.RFC3339) || stats.IdleSeconds != 600 {
+		t.Errorf("a stopped engine reported %q/%d, want %q/600",
+			stats.LastActiveAt, stats.IdleSeconds, worked.Format(time.RFC3339))
+	}
+}
+
+// TestMetricsReportsScrapeFailure covers the diagnosability half of the same
+// bug: a scrape that fails must say so. Omitting the token block silently is
+// what let a scraper pointed at the wrong port go unnoticed.
+func TestMetricsReportsScrapeFailure(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	clock := &fakeClock{t: baseTime}
+	d.Now = clock.now
+	// A target nothing is listening on — the shape of the real failure.
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: "http://127.0.0.1:1", Engine: "llamacpp"})
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateRunning)
+	defer d.Sup.Stop()
+
+	stats := d.Metrics(context.Background())
+	if stats.Tokens != nil {
+		t.Errorf("a failed scrape still reported tokens: %+v", stats.Tokens)
+	}
+	if len(stats.Errors) == 0 {
+		t.Fatal("a failed scrape reported no error — the silence this bug hid behind")
+	}
+	// The message names where it tried, so a wrong address is obvious rather
+	// than something to infer from an absent block.
+	if !strings.Contains(stats.Errors[0], "127.0.0.1:1") {
+		t.Errorf("error %q does not name the address it tried", stats.Errors[0])
 	}
 }

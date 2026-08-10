@@ -200,6 +200,10 @@ func renderFleetMetrics(w io.Writer, results []fleet.NodeResult, format string) 
 			fmt.Fprintf(w, "  %s", stats.ModelID)
 		}
 		fmt.Fprintln(w)
+		// Before the continue, for the same reason the remote formats show it
+		// before theirs: a node whose engine has stopped still has a useful
+		// answer to "when did this last do anything?".
+		renderLastActiveIndented(w, stats.LastActiveAt, stats.IdleSeconds)
 		if stats.State != "running" {
 			continue
 		}

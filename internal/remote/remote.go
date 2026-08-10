@@ -179,6 +179,14 @@ type Response struct {
 	Environment       string `json:"environment"`
 	Message           string `json:"message"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
+	// Status-specific fields: the on-instance daemon's activity record,
+	// relayed by the status branch of the start Lambda. camelCase to match the
+	// daemon's own names, since these are copied through untouched — this
+	// struct is already mixed (see modelId, contextSize below). Absent when
+	// the instance is not running, when its daemon could not be reached, or
+	// when no engine has yet done any work.
+	LastActiveAt string `json:"lastActiveAt"`
+	IdleSeconds  int    `json:"idleSeconds"`
 	// Deploy-specific fields.
 	Deployed       bool   `json:"deployed"`
 	Seeding        bool   `json:"seeding"`
@@ -525,6 +533,12 @@ type StatsResponse struct {
 	CPU           *CpuStat    `json:"cpu"`
 	Memory        *MemoryStat `json:"memory"`
 	Errors        []string    `json:"errors"`
+	// LastActiveAt and IdleSeconds relay the on-instance daemon's answer to
+	// "has this engine been working?", verbatim. Empty when the daemon was
+	// unreachable, when no engine has run, or when the control plane predates
+	// this — in every case the formatters simply omit the line.
+	LastActiveAt string `json:"lastActiveAt"`
+	IdleSeconds  int    `json:"idleSeconds"`
 }
 
 // The stat sub-types are aliases into internal/metrics, their canonical home
@@ -547,7 +561,7 @@ type (
 func Stats(ctx context.Context, cfg Config) (*StatsResponse, error) {
 	if cfg.StatsURL == "" {
 		return nil, fmt.Errorf(
-			"no stats_url configured: the control plane needs re-deploying with `pnpm deploy` (or set OUTFIT_REMOTE_STATS_URL)")
+			"no stats_url configured: the control plane needs re-deploying with `pnpm run deploy` (or set OUTFIT_REMOTE_STATS_URL)")
 	}
 	out, err := callStats(ctx, cfg)
 	if err != nil {

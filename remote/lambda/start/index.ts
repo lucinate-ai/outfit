@@ -23,6 +23,7 @@ import {
   findEnvSecurityGroup,
   readEnvApiKey,
 } from '../shared/environments';
+import { DAEMON_STATUS_CMD, parseDaemonStatus } from '../shared/daemon';
 import { jsonResponse } from '../shared/http';
 import { DAEMON_CONFIG_DIR, runnerSpec } from '../runners';
 
@@ -82,6 +83,8 @@ async function status(env: string): Promise<LambdaFunctionURLResult> {
   const baseUrl = eip ? baseUrlFor(eip.publicIp, ENGINE_PORT) : '';
   const instance = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   if (!instance || instance.state !== 'running') {
+    // No SSM call on this branch: reaching the daemon needs a running box, so
+    // a stopped environment reports no activity rather than a made-up one.
     return jsonResponse(200, {
       state: instance?.state ?? (eip ? 'stopped' : 'undeployed'),
       environment: env,
@@ -89,9 +92,57 @@ async function status(env: string): Promise<LambdaFunctionURLResult> {
       base_url: baseUrl,
     });
   }
-  const healthy =
-    (await isSsmAgentOnline(instance.instanceId)) && (await checkHealth(instance.instanceId));
-  return jsonResponse(200, { state: 'running', environment: env, healthy, base_url: baseUrl });
+  if (!(await isSsmAgentOnline(instance.instanceId))) {
+    return jsonResponse(200, {
+      state: 'running',
+      environment: env,
+      healthy: false,
+      base_url: baseUrl,
+    });
+  }
+  // Concurrently, not in sequence: status is what you type repeatedly while
+  // waiting for a box, and this branch should cost the slower of the two SSM
+  // calls rather than their sum.
+  const [healthy, activity] = await Promise.all([
+    checkHealth(instance.instanceId),
+    readDaemonActivity(instance.instanceId),
+  ]);
+  return jsonResponse(200, {
+    state: 'running',
+    environment: env,
+    healthy,
+    base_url: baseUrl,
+    ...activity,
+  });
+}
+
+/**
+ * Ask the instance's daemon when its engine last did work. Every failure —
+ * SSM error, unreachable daemon, unparseable reply, an engine that has done
+ * nothing yet — yields an empty object, so the caller spreads nothing and the
+ * report is exactly what it would have been. This must never be able to turn
+ * a working status into a failing one, which is why it is kept out of the
+ * `healthy` expression.
+ */
+async function readDaemonActivity(
+  instanceId: string,
+): Promise<{ lastActiveAt?: string; idleSeconds?: number }> {
+  try {
+    const result = await runShellCommand(instanceId, DAEMON_STATUS_CMD, 10);
+    if (result.status !== 'Success') {
+      return {};
+    }
+    const daemon = parseDaemonStatus(result.stdout);
+    if (!daemon?.lastActiveAt) {
+      return {};
+    }
+    // idleSeconds is omitted rather than sent as 0 when the engine is working
+    // right now, so an absent value with a present timestamp means zero.
+    return { lastActiveAt: daemon.lastActiveAt, idleSeconds: daemon.idleSeconds ?? 0 };
+  } catch (err) {
+    console.log(JSON.stringify({ phase: 'daemon-activity', error: errorName(err) }));
+    return {};
+  }
 }
 
 /** POST — launch the environment's instance if needed and block until serving. */

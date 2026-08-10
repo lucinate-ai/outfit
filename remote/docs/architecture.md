@@ -120,7 +120,7 @@ fails the wake loudly rather than guessing.
 The parameter is **outfit/manual-owned**. CDK creates it with a constant
 `unconfigured` placeholder — deliberately *not* the cfg-derived config — so a
 later `cdk deploy` can never clobber what `outfit remote deploy` (or a manual
-edit) put there. `pnpm deploy`'s seed step (`scripts/seed-deploy-config.mjs`)
+edit) put there. `pnpm run deploy`'s seed step (`scripts/seed-deploy-config.mjs`)
 writes a cfg-derived initial config over the placeholder *only* while it is still
 unconfigured, and only when CDK knows the full serve config (vLLM); llama.cpp's
 serve args come from an Outfit, so its config is left for `outfit remote deploy`

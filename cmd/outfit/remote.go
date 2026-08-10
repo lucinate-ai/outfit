@@ -545,6 +545,9 @@ func cmdRemoteStatus(args []string) error {
 	if resp.BaseURL != "" {
 		fmt.Printf("base_url: %s\n", resp.BaseURL)
 	}
+	if text := lastActiveText(resp.LastActiveAt, resp.IdleSeconds); text != "" {
+		fmt.Printf("last active: %s\n", text)
+	}
 	return nil
 }
 
@@ -642,6 +645,7 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 		if resp.ModelID != "" {
 			fmt.Fprintf(w, "model:        %s\n", resp.ModelID)
 		}
+		renderLastActiveKeyValue(w, resp.LastActiveAt, resp.IdleSeconds)
 		return nil
 	}
 
@@ -660,6 +664,7 @@ func formatMetricsTable(ctx context.Context, resp *remote.StatsResponse, withCos
 	if resp.UptimeSeconds > 0 {
 		fmt.Fprintf(w, "uptime:       %s\n", formatDuration(resp.UptimeSeconds))
 	}
+	renderLastActiveKeyValue(w, resp.LastActiveAt, resp.IdleSeconds)
 
 	renderTokenLines(w, resp.Tokens)
 	renderGPUTable(w, resp.GPUs)
@@ -723,6 +728,10 @@ func formatMetricsBar(resp *remote.StatsResponse, cfg remote.Config, w io.Writer
 		fmt.Fprintf(w, "  %s", resp.ModelID)
 	}
 	fmt.Fprintln(w)
+
+	// Before the early return: a stopped endpoint draws no bars, but when it
+	// last did work is exactly what a stopped endpoint is worth asking about.
+	renderLastActiveIndented(w, resp.LastActiveAt, resp.IdleSeconds)
 
 	if resp.State != "running" {
 		return nil

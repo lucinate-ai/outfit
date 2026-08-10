@@ -8,7 +8,7 @@
 // The deploy Lambda now seeds automatically when a posted config names weights
 // that are not in S3 (see lambda/shared/seed.ts), so this script is only needed
 // to force a re-seed of weights that are already there. Infra (bucket, seed profile/subnet/sg) comes
-// from cdk-outputs.json (`pnpm deploy`). The seed always runs on the vLLM AMI
+// from cdk-outputs.json (`pnpm run deploy`). The seed always runs on the vLLM AMI
 // because that one carries a Python venv with huggingface_hub; it can fetch
 // either safetensors (vLLM) or a single GGUF file (llama.cpp).
 
@@ -34,7 +34,7 @@ function fail(message) {
 
 const outputsPath = join(repoRoot, 'cdk-outputs.json');
 if (!existsSync(outputsPath)) {
-  fail('cdk-outputs.json not found — run `pnpm deploy` first.');
+  fail('cdk-outputs.json not found — run `pnpm run deploy` first.');
 }
 const stack = JSON.parse(readFileSync(outputsPath, 'utf8'))['cloud-vm-llm'];
 if (!stack) {
