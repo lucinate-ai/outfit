@@ -27,6 +27,8 @@ const daemonReply = JSON.stringify({
   ],
   cpu: { utilization: 30 },
   memory: { total: 33020416512, used: 4294967296 },
+  lastActiveAt: '2026-08-09T12:00:00Z',
+  idleSeconds: 42,
 });
 
 describe('parseDaemonMetrics', () => {
@@ -45,6 +47,8 @@ describe('parseDaemonMetrics', () => {
     expect(parsed!.gpus![0].memoryTotal).toBe(48318382080);
     expect(parsed!.cpu!.utilization).toBe(30);
     expect(parsed!.memory!.used).toBe(4294967296);
+    expect(parsed!.lastActiveAt).toBe('2026-08-09T12:00:00Z');
+    expect(parsed!.idleSeconds).toBe(42);
   });
 
   it('parses a reply with omitted stats (absent sources stay absent)', () => {
@@ -52,6 +56,20 @@ describe('parseDaemonMetrics', () => {
     expect(parsed).not.toBeNull();
     expect(parsed!.tokens).toBeUndefined();
     expect(parsed!.gpus).toBeUndefined();
+    expect(parsed!.lastActiveAt).toBeUndefined();
+    expect(parsed!.idleSeconds).toBeUndefined();
+  });
+
+  it('parses a stopped engine that still reports when it last worked', () => {
+    // The record survives a stop, so this pair arrives without any of the
+    // running-engine figures beside it.
+    const parsed = parseDaemonMetrics(
+      JSON.stringify({ state: 'stopped', lastActiveAt: '2026-08-09T12:00:00Z', idleSeconds: 600 }),
+    );
+    expect(parsed).not.toBeNull();
+    expect(parsed!.tokens).toBeUndefined();
+    expect(parsed!.lastActiveAt).toBe('2026-08-09T12:00:00Z');
+    expect(parsed!.idleSeconds).toBe(600);
   });
 
   it('returns null for the unreachable marker', () => {

@@ -64,4 +64,8 @@ export interface StatsResult {
   memory?: MemoryStat;
   /** Any errors encountered while collecting metrics. */
   errors?: string[];
+  /** When the engine last did any work, RFC 3339, as the daemon reports it. */
+  lastActiveAt?: string;
+  /** Seconds since `lastActiveAt`. Absent when that is, and absent at zero. */
+  idleSeconds?: number;
 }

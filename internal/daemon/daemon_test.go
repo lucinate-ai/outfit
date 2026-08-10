@@ -321,6 +321,20 @@ while true; do sleep 0.05; done`)
 		t.Fatalf("metrics = %d %v", resp.StatusCode, body)
 	}
 
+	// The activity pair crosses the wire, not just the Go call: this is the
+	// shape the stats Lambda curls, so a field that never serialised would
+	// leave `outfit remote metrics` silently blank.
+	_, metricsBody := do("GET", "/v1/metrics", "sekrit", "")
+	_, statusBody := do("GET", "/v1/status", "sekrit", "")
+	if metricsBody["lastActiveAt"] == nil {
+		t.Errorf("metrics carried no lastActiveAt over HTTP: %v", metricsBody)
+	}
+	// One record, so the two endpoints cannot answer differently.
+	if metricsBody["lastActiveAt"] != statusBody["lastActiveAt"] {
+		t.Errorf("metrics %v and status %v disagree on lastActiveAt",
+			metricsBody["lastActiveAt"], statusBody["lastActiveAt"])
+	}
+
 	// Stop, and stop again: idempotent.
 	if resp, body := do("POST", "/v1/stop", "sekrit", ""); resp.StatusCode != 200 || body["state"] != "stopped" {
 		t.Fatalf("stop = %d %v", resp.StatusCode, body)

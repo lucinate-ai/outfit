@@ -352,8 +352,9 @@ sits beside. Stopping the engine leaves the daemon answering.
 
 It also keeps an eye on whether the engine is actually doing anything: it
 reads the engine's counters every 15 seconds and reports `lastActiveAt` and
-`idleSeconds` on `/v1/status`. Ask the daemon how busy it is rather than
-working it out from raw counters yourself.
+`idleSeconds` on both `/v1/status` and `/v1/metrics`, from one record, so the
+two cannot disagree. Ask the daemon how busy it is rather than working it out
+from raw counters yourself.
 
 ```sh
 OUTFIT_API_TOKEN=…  outfit daemon           # control API on :4242
@@ -425,7 +426,9 @@ while you are using it, and stops itself after a period of idleness.
 ```sh
 outfit remote start    # boot the instance, wait for the model to load,
                        # then print OPENAI_BASE_URL / OPENAI_API_KEY exports
-outfit remote status   # instance state and endpoint health
+outfit remote status   # instance state, endpoint health, and when it last
+                       # did any work
+outfit remote metrics  # tokens, GPU, CPU and RAM — plus the same last-active
 outfit remote logs     # what the engine (or the boot) said, even after it's gone
 outfit remote stop     # stop now instead of waiting for the idle timer
 ```

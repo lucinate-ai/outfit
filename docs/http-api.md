@@ -58,6 +58,19 @@ Stops the engine.
 Returns the current metrics:
 - Token usage counters (from the engine's Prometheus `/metrics` endpoint)
 - Host system metrics (GPU, CPU, RAM)
+- `lastActiveAt` and `idleSeconds`, the same pair `/v1/status` reports
+
+The activity pair comes from the same record `/v1/status` reads, so the two
+endpoints cannot disagree. Unlike the counters and system figures, it is
+reported whatever the engine's state: a stopped engine returns no tokens and
+no GPU readings but still says when it last did work. Both fields are omitted
+until an engine has run, and `idleSeconds` is omitted at zero as well — so
+gate on `lastActiveAt`, never on `idleSeconds`, or you will hide the engine
+that is busy right now.
+
+A scrape made to serve this endpoint feeds the shared record exactly as the
+background sampler's does. Reading it is not itself activity, so polling in a
+loop does not keep an idle engine looking busy.
 
 ### PUT `/v1/deploy-config`
 Updates the configuration for the *next* engine start.

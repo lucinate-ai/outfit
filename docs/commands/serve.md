@@ -177,8 +177,12 @@ start. A supervised engine gets its own `/metrics` endpoint switched on
 readings need `nvidia-smi` (no Apple GPU source yet).
 
 Those counters are also read every 15 seconds in the background, so
-`/v1/status` can report `lastActiveAt` and `idleSeconds` — how long it has
-been since the engine last had a request in flight or moved a counter.
+`/v1/status` and `/v1/metrics` can both report `lastActiveAt` and
+`idleSeconds` — how long it has been since the engine last had a request in
+flight or moved a counter. Both endpoints answer from one record, so they
+cannot disagree, and both keep answering after the engine stops: the point of
+holding the record across a stop is that it still says when work last
+happened.
 
 ## Flags
 

@@ -22,6 +22,20 @@ type Stats struct {
 	CPU           *CpuStat    `json:"cpu,omitempty"`
 	Memory        *MemoryStat `json:"memory,omitempty"`
 	Errors        []string    `json:"errors,omitempty"`
+	// LastActiveAt is when the engine last did any work, RFC 3339, and
+	// IdleSeconds how long it has been since. They mirror the same two fields
+	// on the daemon's status reply and are filled from the same record, so a
+	// caller cannot get one answer from status and another from metrics.
+	//
+	// Both are empty until an engine has run. IdleSeconds is omitted at zero
+	// as well, so an engine active this instant serialises a timestamp and no
+	// idle value: read LastActiveAt to decide whether there is anything to
+	// report, never IdleSeconds.
+	//
+	// Unlike the figures above, these describe the engine whatever its state —
+	// a stopped engine still reports when it last worked.
+	LastActiveAt string `json:"lastActiveAt,omitempty"`
+	IdleSeconds  int    `json:"idleSeconds,omitempty"`
 }
 
 // TokenStats holds per-engine token/request counters from /metrics.

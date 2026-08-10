@@ -87,6 +87,10 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
       result.gpus = daemon.gpus;
       result.cpu = daemon.cpu;
       result.memory = daemon.memory;
+      // Relayed verbatim: the daemon decides what counts as activity, and an
+      // absent pair means "nothing to report" rather than "idle since boot".
+      result.lastActiveAt = daemon.lastActiveAt;
+      result.idleSeconds = daemon.idleSeconds;
       if (daemon.errors?.length) {
         errors.push(...daemon.errors);
       }

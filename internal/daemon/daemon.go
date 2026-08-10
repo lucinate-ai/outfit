@@ -186,13 +186,25 @@ func (d *Daemon) Status() StatusResponse {
 		UptimeSeconds: uptime,
 		LogPath:       d.Sup.LogPath,
 	}
-	if lastActive, ok := d.act.snapshot(); ok {
-		resp.LastActiveAt = lastActive.UTC().Format(time.RFC3339)
-		if idle := int(d.now().Sub(lastActive) / time.Second); idle > 0 {
-			resp.IdleSeconds = idle
-		}
-	}
+	resp.LastActiveAt, resp.IdleSeconds = d.activity()
 	return resp
+}
+
+// activity renders the activity record as the pair both /v1/status and
+// /v1/metrics report: an RFC 3339 timestamp and the seconds since it. Zero
+// values mean "no engine has run", which both endpoints turn into absent
+// fields. It lives in one place so the two replies cannot drift apart.
+func (d *Daemon) activity() (lastActiveAt string, idleSeconds int) {
+	lastActive, ok := d.act.snapshot()
+	if !ok {
+		return "", 0
+	}
+	// Idle stays zero when it rounds to nothing: an engine working right now
+	// reports the timestamp and no duration, and callers gate on the former.
+	if idle := int(d.now().Sub(lastActive) / time.Second); idle > 0 {
+		idleSeconds = idle
+	}
+	return lastActive.UTC().Format(time.RFC3339), idleSeconds
 }
 
 // Metrics collects the full picture: supervised state, system stats, and —
@@ -207,25 +219,30 @@ func (d *Daemon) Metrics(ctx context.Context) metrics.Stats {
 		ModelID:       model,
 		UptimeSeconds: uptime,
 	}
-	if state != StateRunning {
-		return stats
-	}
-	if d.Collector != nil {
-		d.Collector.System(ctx, &stats)
-	}
-	d.mu.Lock()
-	scrape := d.scrape
-	d.mu.Unlock()
-	if scrape.BaseURL != "" {
-		tokens, err := metrics.ScrapeTokenStats(ctx, scrape)
-		if err != nil {
-			tokens = nil
+	if state == StateRunning {
+		if d.Collector != nil {
+			d.Collector.System(ctx, &stats)
 		}
-		// Feed it through the same path the background sampler uses: one
-		// place decides whether a sample counts as activity, so a client
-		// polling metrics refreshes the record rather than racing it.
-		d.act.observe(tokens, d.now())
-		stats.Tokens = tokens
+		d.mu.Lock()
+		scrape := d.scrape
+		d.mu.Unlock()
+		if scrape.BaseURL != "" {
+			tokens, err := metrics.ScrapeTokenStats(ctx, scrape)
+			if err != nil {
+				tokens = nil
+			}
+			// Feed it through the same path the background sampler uses: one
+			// place decides whether a sample counts as activity, so a client
+			// polling metrics refreshes the record rather than racing it.
+			d.act.observe(tokens, d.now())
+			stats.Tokens = tokens
+		}
 	}
+	// Outside the running branch, so a stopped or crashed engine still reports
+	// when work last happened — the record survives a stop precisely so it can
+	// answer that once every other figure here has nothing to say. And after
+	// the scrape, so a poll reports the activity its own reading just
+	// established rather than the record as it stood one call ago.
+	stats.LastActiveAt, stats.IdleSeconds = d.activity()
 	return stats
 }

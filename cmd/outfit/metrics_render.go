@@ -13,6 +13,43 @@ import (
 	"github.com/lucinate-ai/outfit/internal/metrics"
 )
 
+// lastActiveText is the shared phrase for how long ago an engine last did
+// work — "12s ago" — or "" when there is nothing to report.
+//
+// The gate is the timestamp, never the seconds. idleSeconds is omitted at
+// zero, so an engine working this instant carries a lastActiveAt and no
+// duration; gating on the number would hide the busiest engine there is.
+//
+// The wording deliberately avoids "idle": that word is already an engine
+// state meaning nothing has been started, and one screen should not carry two
+// meanings of it. It matches `outfit fleet status`, which has shown this fact
+// since the daemon began tracking it.
+func lastActiveText(lastActiveAt string, idleSeconds int) string {
+	if lastActiveAt == "" {
+		return ""
+	}
+	return formatDuration(idleSeconds) + " ago"
+}
+
+// renderLastActiveIndented draws the last-active line in the indented block
+// the bar format and both fleet formats use, aligned to the bar-label column.
+//
+// Not a bar itself: an elapsed time has no ceiling to fill against, and a bar
+// would imply one.
+func renderLastActiveIndented(w io.Writer, lastActiveAt string, idleSeconds int) {
+	if text := lastActiveText(lastActiveAt, idleSeconds); text != "" {
+		fmt.Fprintf(w, "  %-9s %s\n", "last active", text)
+	}
+}
+
+// renderLastActiveKeyValue draws the same fact as a row of the table format,
+// padded to the key column its neighbours use.
+func renderLastActiveKeyValue(w io.Writer, lastActiveAt string, idleSeconds int) {
+	if text := lastActiveText(lastActiveAt, idleSeconds); text != "" {
+		fmt.Fprintf(w, "last active:  %s\n", text)
+	}
+}
+
 // renderStatBars draws the resource bars: CPU, RAM, then each GPU's
 // utilisation and memory. Used by the bar format on both sides.
 func renderStatBars(w io.Writer, cpu *metrics.CpuStat, mem *metrics.MemoryStat, gpus []metrics.GpuStat) {
