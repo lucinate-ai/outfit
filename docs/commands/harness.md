@@ -46,6 +46,11 @@ outfit harness qwen3.6-27b -- --agent-arg  # ...forwarding --agent-arg
 outfit harness -- qwen3.6-27b              # leading -- opts out: forward it
 ```
 
+`OUTFIT_ALIAS` decides what "the default Outfit" means, so `outfit harness -O`
+applies the alias it names. A bare `outfit harness` still applies nothing: the
+variable chooses which Outfit, never whether you are dressed. See
+[`outfit alias`](alias.md#naming-one-for-the-whole-shell).
+
 ## Flags
 
 | Flag | Meaning |

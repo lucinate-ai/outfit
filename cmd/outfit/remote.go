@@ -121,7 +121,7 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		}
 		return remote.LoadConfigFile(path, os.Getenv)
 	}
-	if defaultOutfitExists() {
+	if defaultOutfitNamed() {
 		sel, outfitPath, err := readOutfit("remote", "")
 		if err != nil {
 			return remote.Config{}, err
@@ -150,6 +150,15 @@ func resolveRemotePath(remoteValue, outfitDir string) (string, error) {
 		return remote.EnvConfigPath(remoteValue)
 	}
 	return remoteConfigPath(remoteValue, outfitDir), nil
+}
+
+// defaultOutfitNamed reports whether there is a default Outfit for readOutfit
+// to resolve — one named by OUTFIT_ALIAS, or a ./Outfit here. Only the
+// existence question is answered; readOutfit does the resolving, so a variable
+// naming an alias that is unregistered or dangling fails there rather than
+// falling silently back to the per-user config.
+func defaultOutfitNamed() bool {
+	return os.Getenv(outfitAliasEnv) != "" || defaultOutfitExists()
 }
 
 // defaultOutfitExists reports whether the working directory holds a file

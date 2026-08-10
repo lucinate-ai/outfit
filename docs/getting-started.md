@@ -100,6 +100,9 @@ outfit apply qwen3.6      # now the name works anywhere a path does
 outfit harness qwen3.6
 ```
 
+Wearing one all day? `export OUTFIT_ALIAS=qwen3.6` and every command that names
+no Outfit uses it — see [`outfit alias`](commands/alias.md#naming-one-for-the-whole-shell).
+
 ## Where next
 
 - [The `Outfit` file](outfit-file.md) — full syntax

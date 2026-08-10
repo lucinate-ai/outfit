@@ -182,7 +182,7 @@ outfit apply  [path] [--output <size>]   # apply an Outfit file or directory (de
 outfit unapply [path]                    # remove what an Outfit file selects
 outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
 outfit unalias <name>                    # drop a registered name
-outfit serve  [path] [--dry-run] [-a]    # run llama-server from the Outfit's PRESET
+outfit serve  [path] [--dry-run] [-a]    # run the PROVIDER's inference server, from the PRESET
                                          #   (-a/--api serves the control API beside it)
 outfit daemon [path] [--api-addr <addr>] # supervise an engine via the control API
                                          #   (starts nothing until asked over the API)
@@ -194,15 +194,19 @@ outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
 outfit completion <shell>                # tab completion (bash, zsh, powershell)
-outfit remote <start|stop|status|logs|deploy> [path]
+outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]
                                          # control the remote GPU inference instance
-                                         #   (deploy sets what it serves, from the Outfit)
+                                         #   (bootstrap does the once-per-account setup;
+                                         #    deploy sets what it serves, from the Outfit;
+                                         #    logs reads the shipped logs, alive or not;
+                                         #    env prints the running endpoint's env vars)
 ```
 
 Short flags: `-p` (provider), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
 
 Anywhere a `[path]` appears above you can put a name registered with
-[`outfit alias`](#aliases) instead.
+[`outfit alias`](#aliases) instead — or leave it out and let `OUTFIT_ALIAS`
+name one.
 
 ## Documentation
 
@@ -276,6 +280,18 @@ $ outfit apply   qwen3.6-27b      # from anywhere, no path needed
 $ outfit serve   qwen3.6-27b
 $ outfit harness qwen3.6-27b -- --some-agent-arg
 ```
+
+Set `OUTFIT_ALIAS` and the name is implied for a whole shell:
+
+```sh
+export OUTFIT_ALIAS=qwen3.6-27b
+outfit apply              # the same as `outfit apply qwen3.6-27b`
+outfit serve
+```
+
+An argument you type still wins, and the variable beats `./Outfit` — it decides
+*which* Outfit is the default, never *whether* one is applied, so a bare
+`outfit harness` still launches undressed.
 
 The name defaults to the `Outfit`'s own `ALIAS` (`--name`/`-n` picks another),
 a path on disk always beats a registered name — so adding an alias can never

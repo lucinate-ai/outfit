@@ -22,6 +22,8 @@ outfit unapply qwen3.6-27b     # a name registered with `outfit alias`
 
 - It honours `--harness`/`-H` and `OUTFIT_HARNESS` like everything else, so
   unapply from whichever harness you applied to.
+- With no argument it resolves the same way `apply` does: `OUTFIT_ALIAS`, then
+  `./Outfit` — see [`outfit alias`](alias.md#naming-one-for-the-whole-shell).
 - If the agent's default model pointed at something the Outfit selected, it is
   cleared too.
 

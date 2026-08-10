@@ -45,9 +45,10 @@
 // Outfit, so the same Outfit applies to any harness.
 //
 // `outfit alias` registers an Outfit under a short name — by default its own
-// ALIAS — and every command that takes a path takes that name instead. The
-// registry is machine-local state in outfit's own config, not part of any
-// Outfit, so an Outfit stays as portable as it was.
+// ALIAS — and every command that takes a path takes that name instead, or reads
+// one from OUTFIT_ALIAS when given no path at all. The registry is machine-local
+// state in outfit's own config, not part of any Outfit, so an Outfit stays as
+// portable as it was.
 package main
 
 import (
@@ -204,6 +205,8 @@ alias: registers an Outfit under a short name, which then stands in wherever an
        the Outfit's own ALIAS; --name/-n picks another, --force/-F re-points a
        name already registered, and --list/-l shows them all. A path on disk
        always wins over a name, so registering one changes nothing that works.
+       Set OUTFIT_ALIAS to a registered name and every command given no Outfit
+       uses it, before ./`+outfit.DefaultFile+` is tried; an argument still wins.
 unalias: drops a registered name. The Outfit file itself is left alone.
 serve: runs the inference server the Outfit's PROVIDER names — llamacpp
        (llama-server) or omlx (Apple Silicon). With a PRESET it turns the
@@ -402,6 +405,13 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string, reso
 // the not-found hint. It returns the parsed selection alongside the resolved
 // path, which callers use to locate files referenced relative to the Outfit.
 //
+// With no path at all, OUTFIT_ALIAS names the Outfit before ./Outfit is tried,
+// so one export dresses a whole shell. It ranks below an explicit argument and
+// above the default: the variable decides *which* Outfit is the default, never
+// whether a command acts on one. `outfit alias` opts out by naming
+// outfit.DefaultFile itself, so registering never resolves through the
+// registry it is writing to.
+//
 // It prints when an alias decided the path, which is against this file's
 // convention that only cmdX functions report anything. The alternative is to
 // repeat that reporting at all four call sites, where one omission would leave
@@ -410,7 +420,16 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string, reso
 // prose line would break.
 func readOutfit(usage, path string) (outfit.Selection, string, error) {
 	if path == "" {
-		path = outfit.DefaultFile
+		named, aliased, err := outfitFromEnv()
+		if err != nil {
+			return outfit.Selection{}, path, err
+		}
+		if aliased != "" {
+			fmt.Fprintf(os.Stderr, "Using %s %q (%s)\n\n", outfitAliasEnv, named, aliased)
+			path = aliased
+		} else {
+			path = outfit.DefaultFile
+		}
 	}
 	if aliased, ok, err := resolveAlias(path); err != nil {
 		return outfit.Selection{}, path, err
@@ -424,7 +443,7 @@ func readOutfit(usage, path string) (outfit.Selection, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) && path == outfit.DefaultFile {
-			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path or an alias: %s; see `outfit alias --list`)", outfit.DefaultFile, usage)
+			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path or an alias: %s; or set %s; see `outfit alias --list`)", outfit.DefaultFile, usage, outfitAliasEnv)
 		}
 		return outfit.Selection{}, path, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -433,6 +452,43 @@ func readOutfit(usage, path string) (outfit.Selection, string, error) {
 		return outfit.Selection{}, path, fmt.Errorf("%s: %w", path, err)
 	}
 	return sel, path, nil
+}
+
+// outfitAliasEnv names a registered alias for every command that takes an
+// Outfit path but was given none.
+const outfitAliasEnv = "OUTFIT_ALIAS"
+
+// outfitFromEnv resolves OUTFIT_ALIAS, returning the name it holds alongside
+// the Outfit it points at, or two empty strings when it is unset or empty.
+//
+// It deliberately does not reuse resolveAlias. That function is written for an
+// argument, which is usually a path: a value it cannot resolve falls through to
+// path handling, and a file on disk of the same spelling wins. Neither fits a
+// variable. A variable can only ever have been set to name an alias, so a
+// name it cannot resolve is a mistake to report rather than a filename to try,
+// and a same-named file in whichever directory the user is standing in is a
+// coincidence — letting it shadow the variable would make the export work in
+// some directories and not others.
+func outfitFromEnv() (string, string, error) {
+	name := os.Getenv(outfitAliasEnv)
+	if name == "" {
+		return "", "", nil
+	}
+	if err := config.ValidAliasName(name); err != nil {
+		return "", "", fmt.Errorf("%s: %w", outfitAliasEnv, err)
+	}
+	f, err := config.Load()
+	if err != nil {
+		return "", "", err
+	}
+	path, ok := f.Alias(name)
+	if !ok {
+		return "", "", fmt.Errorf("%s names %q, which is not a registered alias — see `outfit alias --list`, or unset %s", outfitAliasEnv, name, outfitAliasEnv)
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", "", fmt.Errorf("%s names %q, which points at %s, which is gone — re-point it with `outfit alias -n %s <path>`, or drop it with `outfit unalias %s`", outfitAliasEnv, name, path, name, name)
+	}
+	return name, path, nil
 }
 
 // resolveAlias looks arg up in the alias registry, returning the Outfit it
@@ -447,6 +503,8 @@ func readOutfit(usage, path string) (outfit.Selection, string, error) {
 // A path on disk beats a registered alias, which is the opposite of how shell
 // aliases work and deliberate: every existing invocation passes a path, so
 // registering an alias must never change what an already-working command does.
+// That rule is about arguments only — OUTFIT_ALIAS is resolved by
+// outfitFromEnv, which says why it is not shadowed the same way.
 func resolveAlias(arg string) (string, bool, error) {
 	if !config.NameShaped(arg) {
 		return "", false, nil
@@ -568,7 +626,11 @@ func cmdAlias(args []string) error {
 		return nil
 	}
 
-	var arg string
+	// Naming the default explicitly rather than leaving it to readOutfit is what
+	// keeps OUTFIT_ALIAS out of this command: a bare `outfit alias` means the
+	// Outfit in this directory, and honouring the variable could only
+	// re-register what is already registered.
+	arg := outfit.DefaultFile
 	if rest := fs.Args(); len(rest) > 0 {
 		arg = rest[0]
 	}

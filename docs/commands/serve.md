@@ -11,6 +11,9 @@ outfit serve qwen3.6-27b  # a name registered with `outfit alias`
 outfit serve --dry-run    # print the command without launching the server
 ```
 
+With no argument, `OUTFIT_ALIAS` names the Outfit before `./Outfit` is tried —
+see [`outfit alias`](alias.md#naming-one-for-the-whole-shell).
+
 It prints the command before running it, and never touches your agent's
 config — pair it with [`outfit apply`](apply.md) to point the agent at the
 server.

@@ -19,6 +19,34 @@ outfit serve big
 outfit harness big -- --agent-arg
 ```
 
+## Naming one for the whole shell
+
+`OUTFIT_ALIAS` holds a registered name, and any command given no Outfit uses it:
+
+```sh
+export OUTFIT_ALIAS=big
+outfit apply          # the same as `outfit apply big`
+outfit serve
+outfit remote status
+```
+
+The order is the argument you typed, then `OUTFIT_ALIAS`, then `./Outfit`. Two
+details worth knowing:
+
+- It decides **which** Outfit is the default, never **whether** one is applied.
+  A bare `outfit harness` still launches without dressing the agent; `outfit
+  harness -O` asks for the default Outfit and gets the variable's. And `outfit
+  alias` ignores it entirely — with no argument that command means "the Outfit
+  in this directory".
+- It holds a registry name, never a path, and a file of the same name in the
+  working directory does **not** shadow it — the opposite of the rule for an
+  argument, below. An argument is usually a path; a variable can only have been
+  set to name an alias, so it works the same in every directory.
+
+A value that is not registered, or whose Outfit has gone, fails naming
+`OUTFIT_ALIAS`, so a stale `export` in a shell profile is obvious from the
+error.
+
 ## Flags
 
 | Flag | Meaning |

@@ -25,8 +25,9 @@ opencode. After applying, just run your coding agent — or do both at once with
 
 ## Notes
 
-- With no argument, `apply` looks for a file named `Outfit` in the current
-  directory.
+- With no argument, `apply` uses the alias `OUTFIT_ALIAS` names, and failing
+  that a file named `Outfit` in the current directory — see
+  [`outfit alias`](alias.md#naming-one-for-the-whole-shell).
 - An Outfit's `PRESET` line is for [`outfit serve`](serve.md); `apply` ignores
   it.
 - An Outfit with a `REMOTE` line and no `BASEURL` takes the endpoint's address

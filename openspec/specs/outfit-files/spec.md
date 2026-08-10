@@ -80,6 +80,13 @@ inside it, and SHALL accept a registered alias name in place of a path. When
 the default `./Outfit` is missing, the error SHALL suggest passing a path or an
 alias.
 
+When no path is given, the `OUTFIT_ALIAS` environment variable SHALL be
+consulted before falling back to `./Outfit`, so the resolution order is the
+argument, then `OUTFIT_ALIAS`, then `./Outfit`. `outfit alias` SHALL be the one
+exception and always use its argument or `./Outfit`. Where the default
+`./Outfit` is missing and no `OUTFIT_ALIAS` is set, the error SHALL name the
+variable alongside the path and alias it already suggests.
+
 #### Scenario: Bare command in a project directory
 
 - **WHEN** the user runs `outfit apply` in a directory holding an `Outfit`
@@ -96,6 +103,19 @@ alias.
 - **WHEN** the user runs `outfit remote status` in a directory holding an
   `Outfit`
 - **THEN** that Outfit is read to find the endpoint's configuration
+
+#### Scenario: The environment names the default Outfit
+
+- **WHEN** `OUTFIT_ALIAS` names a registered alias and the user runs
+  `outfit serve` with no argument
+- **THEN** that alias's Outfit is served, whether or not the working directory
+  holds one
+
+#### Scenario: Nothing to resolve
+
+- **WHEN** the user runs `outfit apply` with no argument, no `OUTFIT_ALIAS` set
+  and no `./Outfit` present
+- **THEN** the command fails suggesting a path, an alias, or `OUTFIT_ALIAS`
 
 ### Requirement: Applying and unapplying an Outfit
 

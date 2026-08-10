@@ -219,14 +219,13 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 }
 
 // resolveDaemonOutfit resolves the Outfit a daemon serves from. An explicit
-// path must resolve; with none, a missing ./Outfit is fine — the daemon can
-// start idle on a stored or future deploy config — but a present one that
-// fails to read is still an error.
+// path must resolve; with none, having no default Outfit at all is fine — the
+// daemon can start idle on a stored or future deploy config — but a default
+// that is named and then fails to read is still an error. OUTFIT_ALIAS names
+// one as surely as a ./Outfit does, so it counts here too.
 func resolveDaemonOutfit(path string) (outfit.Selection, string, bool, error) {
-	if path == "" {
-		if _, err := os.Stat(outfit.DefaultFile); err != nil {
-			return outfit.Selection{}, "", false, nil
-		}
+	if path == "" && !defaultOutfitNamed() {
+		return outfit.Selection{}, "", false, nil
 	}
 	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
 	if err != nil {
