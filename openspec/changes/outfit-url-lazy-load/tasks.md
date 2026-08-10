@@ -100,12 +100,35 @@
   never probes a URL-valued alias.
 - [ ] 7.3 Do not touch `CHANGELOG.md` (handled by the release process).
 
-## 8. Verification
+## 8. Example
 
-- [ ] 8.1 `gofmt` and `go test ./... -cover`; keep coverage >= 80%.
-- [ ] 8.2 Manually exercise: serve a small Outfit (and, separately, a preset
+- [ ] 8.1 Add `examples/remote-outfit/`, following the existing
+  `examples/<name>/{Outfit,README.md}` shape (see
+  `examples/llamacpp/qwen3.6-27b/`): an `Outfit` with `PROVIDER llamacpp`,
+  `ALIAS`, `CONTEXT`, and `PRESET ./preset.ini`, plus the matching
+  `preset.ini`, written to be hosted as a pair behind any static file URL.
+- [ ] 8.2 Write `examples/remote-outfit/README.md` covering: publishing the
+  two files behind a URL (a gist's raw URL, a GitHub raw URL, an internal
+  static host, or `python3 -m http.server` for local testing);
+  `outfit apply https://.../Outfit`; registering it —
+  `outfit alias -n team-default https://.../Outfit` — and reusing the name —
+  `outfit apply team-default`; and `outfit serve team-default`, calling out
+  that `serve` is what fetches `preset.ini` (resolved relative to the Outfit's
+  URL), and that `apply` never does, since it does not consume `PRESET` —
+  the same lazy-fetch behavior a local `PRESET` already has.
+- [ ] 8.3 Link the new example from `README.md`'s example listing (if one
+  exists) or from `docs/outfit-file.md`'s "Examples" section, alongside the
+  existing provider examples.
+
+## 9. Verification
+
+- [ ] 9.1 `gofmt` and `go test ./... -cover`; keep coverage >= 80%.
+- [ ] 9.2 Manually exercise: serve a small Outfit (and, separately, a preset
   and a `remote.json`) from a local `httptest`-style static file server (or
   `python3 -m http.server`); run `outfit apply <url>`, `outfit alias -n demo
   <url>` followed by `outfit apply demo`, `outfit serve` against a
   `PRESET`-over-URL Outfit, and a `remote status` against a `REMOTE`-over-URL
   Outfit; confirm each fetches only what it needs and nothing eagerly.
+- [ ] 9.3 Run the new `examples/remote-outfit/` example end to end against a
+  local static file server, confirming `apply`, the alias round-trip, and
+  `serve`'s lazy `preset.ini` fetch all behave as the README describes.

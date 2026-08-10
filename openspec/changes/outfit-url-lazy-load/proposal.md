@@ -89,6 +89,11 @@ Outfit sits on local disk. Nothing in `internal/outfit`, `serve.go`, or
   it).
 - **Docs**: `docs/outfit-file.md` (URL sources for the Outfit path, `PRESET`,
   and `REMOTE`), `docs/commands/alias.md` (aliasing a URL).
+- **New example**: `examples/remote-outfit/` (an `Outfit` + `preset.ini`
+  written to be hosted behind a URL, with a `README.md` walking through
+  `outfit apply <url>`, registering and reusing a URL alias, and `outfit
+  serve` lazily fetching the preset), matching the existing
+  `examples/<name>/{Outfit,README.md}` convention.
 - **No breaking changes**: every existing local-path, directory, and
   registered-alias flow is untouched; a URL is a new kind of value these
   arguments accept, not a change to how an existing one is interpreted.
