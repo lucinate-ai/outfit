@@ -71,6 +71,7 @@ including the `OUTFIT_REMOTE_*` overrides:
 | Variable | Effect |
 | -------- | ------ |
 | `OUTFIT_HARNESS` | Selects the harness (a `--harness`/`-H` flag beats it) |
+| `OUTFIT_ALIAS` | A registered [alias](commands/alias.md) to use when a command names no Outfit (an argument beats it; it beats `./Outfit`) |
 | `OUTFIT_CONFIG_DIR` | outfit's own config directory, used verbatim — set it where there is no usable `$HOME` |
 | `OUTFIT_PROVIDERS` | Path to a custom provider catalogue (`--providers` beats it) |
 | `OUTFIT_BASE_URL` | Overrides any provider's API base URL (`--base-url`/`-u` beats it) |

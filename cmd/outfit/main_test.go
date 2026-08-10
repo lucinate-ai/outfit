@@ -17,6 +17,16 @@ import (
 	"github.com/tailscale/hujson"
 )
 
+// TestMain clears OUTFIT_ALIAS for the whole package. It names the Outfit that
+// every command with no path argument acts on, so a developer who exports one
+// would otherwise have it decide the default in any test that resolves one —
+// the same hazard isolateConfig already handles for OUTFIT_HARNESS, but reached
+// from tests that set XDG_CONFIG_HOME themselves and never call it.
+func TestMain(m *testing.M) {
+	os.Unsetenv("OUTFIT_ALIAS")
+	os.Exit(m.Run())
+}
+
 // captureStdout runs fn with os.Stdout redirected and returns what it wrote.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()

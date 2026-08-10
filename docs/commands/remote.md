@@ -220,7 +220,8 @@ outfit remote deploy --overwrite     # redeploy over the existing environment
 ## Notes
 
 - Every subcommand takes an optional Outfit path, or a
-  [registered alias](alias.md), and defaults to `./Outfit`.
+  [registered alias](alias.md). Given none, it uses the alias `OUTFIT_ALIAS`
+  names, and failing that `./Outfit`.
 - `deploy` always needs an Outfit — it's the thing being deployed. The others
   fall back to your per-user config.
 - `deploy_url` is optional: a config written before `deploy` existed still

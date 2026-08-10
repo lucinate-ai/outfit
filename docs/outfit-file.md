@@ -37,9 +37,10 @@ One file, several commands:
 - [`outfit alias`](commands/alias.md) — register it under a short name
 - [`outfit export`](commands/export.md) — write one from your current setup
 
-Every command that takes an Outfit path defaults to `./Outfit` in the current
-directory, accepts a directory that holds one, and takes a
-[registered alias](commands/alias.md) in place of a path.
+Every command that takes an Outfit path accepts a directory that holds one and
+takes a [registered alias](commands/alias.md) in place of a path. Given no path
+at all, it uses the alias `OUTFIT_ALIAS` names, and failing that `./Outfit` in
+the current directory.
 
 ## Running the model on a cloud GPU
 
