@@ -70,6 +70,17 @@ llama-server \
   --host 127.0.0.1 --port 8080
 ```
 
+21 GB has to go somewhere, and llama.cpp keeps its **own** download cache —
+it never reads the Hugging Face cache, so `HF_HOME` and `~/.cache/huggingface`
+have no effect here. The location is platform-dependent
+(`common/common.cpp:fs_get_cache_directory`): `~/Library/Caches/llama.cpp` on
+macOS, `~/.cache/llama.cpp` on Linux. `LLAMA_CACHE` is checked first on both,
+so it's the portable way to put the weights on another volume:
+
+```sh
+export LLAMA_CACHE=/Volumes/big-disk/llama.cpp
+```
+
 Or let `outfit` build that from [`preset.ini`](preset.ini):
 
 ```sh
@@ -79,11 +90,18 @@ curl http://127.0.0.1:8080/v1/models
 outfit apply              # point opencode at it
 ```
 
-For image input, fetch the encoder and add `--mmproj`:
+Image input needs no extra setup. `llama-server` picks up `mmproj-kquant.gguf`
+from the same repo, fetches it alongside the weights and logs `loaded
+multimodal model`; `/v1/models` then advertises the `multimodal` capability. So
+budget **21.05 GB** of cache for the pair, not 19.65 GB.
 
-```sh
-hf download meta-models/Muse-Glimmer-30B-GGUF --include "mmproj-kquant.gguf"
-```
+### Reasoning comes back on a separate field
+
+This model reasons before answering, and llama.cpp splits that out: the answer
+is in `message.content`, the thinking in `message.reasoning_content`. A short
+`max_tokens` will be spent entirely on reasoning and return **empty content** —
+which looks like a broken model but isn't. Give it room, and read the right
+field.
 
 ### Memory
 
@@ -98,6 +116,33 @@ sudo sysctl iogpu.wired_limit_mb=28000    # resets on reboot
 
 or drop to `muse-glimmer-30B-kquant-17gb.gguf`, which costs 1.0% degradation
 instead of 0.2% and leaves considerably more headroom.
+
+### Check the bandwidth before you commit to a machine
+
+Generation speed here is bound by memory bandwidth, not compute: every token
+reads the whole model. Roughly, `tokens/s ≈ bandwidth ÷ model size`, and in
+practice you get about 75% of that.
+
+Measured on a base M4 (10-core GPU, 32 GB, ~120 GB/s) with the dynamic build:
+**4.5–4.7 tok/s** generation, ~40 tok/s prompt eval. That is close to the
+hardware ceiling of ~6 tok/s, so tuning won't rescue it — it is usable for
+one-off questions and too slow for agentic loops.
+
+Meta's quoted 23.7 tok/s is an M4 **Max**, which has roughly 3.5x the
+bandwidth. Check which chip you have before assuming the published figures
+apply. On a bandwidth-starved machine the 17GB build is the better trade: about
+15% faster for 0.8 percentage points more degradation.
+
+### Verified
+
+Confirmed working on llama.cpp master `030ebb5` (reported as `version: 200`),
+built for Metal on macOS 26.5, base M4 / 32 GB, no `iogpu.wired_limit_mb`
+change needed: model and encoder load, chat completions return correct answers,
+and tool calls come back well-formed with the right arguments.
+
+One benign warning appears at load: `special_eot_id is not in special_eog_ids -
+the tokenizer config may be incorrect`. It did not affect generation or tool
+calling.
 
 ### Model-specific settings
 
