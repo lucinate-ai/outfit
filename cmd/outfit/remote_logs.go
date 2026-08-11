@@ -7,9 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/remote"
@@ -173,18 +171,9 @@ func writeLogsJSON(w io.Writer, events []remote.LogEvent) error {
 // duplicates the overlap would otherwise print. Interrupting is a clean exit:
 // the user asked it to stop, which is not a failure.
 func followLogs(cfg remote.Config, q remote.LogQuery, format string) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-
-	return followLogsLoop(ctx, cfg, q, format, os.Stdout)
+	return followUntilInterrupted(func(ctx context.Context) error {
+		return followLogsLoop(ctx, cfg, q, format, os.Stdout)
+	})
 }
 
 // followLogsLoop is the polling itself, with the interrupt wiring left to its

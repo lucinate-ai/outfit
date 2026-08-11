@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -142,6 +143,21 @@ func (c *Config) Node(name string) (NodeConfig, bool) {
 		}
 	}
 	return NodeConfig{}, false
+}
+
+// Only narrows the config to one named node, so a command that fans out by
+// default can be pointed at a single machine without a second code path: the
+// fan-out still runs, over a fleet of one. An unknown name fails here, naming
+// what could have been typed, rather than at the socket.
+func (c *Config) Only(name string) (*Config, error) {
+	entry, ok := c.Node(name)
+	if !ok {
+		return nil, fmt.Errorf("no node %q in %s (known nodes: %s)",
+			name, c.Path, strings.Join(c.Names(), ", "))
+	}
+	narrowed := *c
+	narrowed.Nodes = []NodeConfig{entry}
+	return &narrowed, nil
 }
 
 // Names lists the node names in file order, for error messages that tell the

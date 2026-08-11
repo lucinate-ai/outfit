@@ -151,8 +151,8 @@ var commands = map[string]command{
 		positional: kindAlias, positionals: 1,
 	},
 	"fleet": {
-		subcommands: []string{"status", "metrics", "start", "stop"},
-		flags:       []string{"--fleet", "--format", "--watch", "-w"},
+		subcommands: []string{"status", "metrics", "logs", "start", "stop"},
+		flags:       []string{"--fleet", "--format", "--watch", "-w", "--follow", "-f", "--limit"},
 		values: map[string]candidateKind{
 			"--fleet": kindFile, "--format": kindNone,
 		},

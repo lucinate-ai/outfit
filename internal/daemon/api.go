@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/remote"
@@ -80,18 +81,20 @@ func Routes() []Route {
 		{"POST /v1/start", "StatusResponse"},
 		{"POST /v1/stop", "StatusResponse"},
 		{"GET /v1/metrics", "Stats"},
+		{"GET /v1/logs", "LogsResponse"},
 		{"PUT /v1/deploy-config", "Message"},
 	}
 }
 
-// Handler builds the control API: status, start, stop, metrics, and deploy
-// config, all JSON, all behind the bearer token (when one is set).
+// Handler builds the control API: status, start, stop, metrics, logs, and
+// deploy config, all JSON, all behind the bearer token (when one is set).
 func (d *Daemon) Handler(token string) http.Handler {
 	handlers := map[string]http.HandlerFunc{
 		"GET /v1/status":        d.handleStatus,
 		"POST /v1/start":        d.handleStart,
 		"POST /v1/stop":         d.handleStop,
 		"GET /v1/metrics":       d.handleMetrics,
+		"GET /v1/logs":          d.handleLogs,
 		"PUT /v1/deploy-config": d.handleDeployConfig,
 	}
 	mux := http.NewServeMux()
@@ -157,6 +160,50 @@ func (d *Daemon) handleStop(w http.ResponseWriter, r *http.Request) {
 
 func (d *Daemon) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d.Metrics(r.Context()))
+}
+
+// handleLogs serves a bounded slice of the engine's captured output. It is
+// read-only: it never touches the engine, so it answers whether the engine is
+// running, stopped or crashed — the last of which is when it matters most.
+//
+// offset is where to read from; omitting it reads the end of the log. limit
+// bounds the read and is capped by the daemon regardless of what was asked.
+func (d *Daemon) handleLogs(w http.ResponseWriter, r *http.Request) {
+	offset, err := int64Param(r, "offset", TailLog)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	limit, err := int64Param(r, "limit", 0)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if offset < 0 && offset != TailLog {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("offset cannot be negative"))
+		return
+	}
+	out, err := ReadLog(d.Sup.LogPath, offset, int(limit))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// int64Param reads an optional integer query parameter, reporting a
+// non-numeric value rather than silently treating it as the default — a
+// mistyped cursor should not quietly re-read the whole tail.
+func int64Param(r *http.Request, name string, missing int64) (int64, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return missing, nil
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s must be a whole number, got %q", name, raw)
+	}
+	return v, nil
 }
 
 func (d *Daemon) handleDeployConfig(w http.ResponseWriter, r *http.Request) {
