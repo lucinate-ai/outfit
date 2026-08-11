@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.20.0] - 2026-08-11
+### Added
+- feat(fleet): add outfit fleet logs and a daemon logs endpoint
+
+### Changed
+- chore(remote): bump image recipe to 3.3.3 for outfit 1.19.0 (#84)
+- chore: archive the remote logs change and sync its spec (#85)
+
 ## [1.19.0] - 2026-08-10
 ### Added
 - feat(remote): add outfit remote logs to read an environment's shipped logs (#60)
