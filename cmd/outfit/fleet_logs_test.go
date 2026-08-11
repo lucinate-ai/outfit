@@ -261,3 +261,175 @@ func TestFollowFleetLogsResumesPerNodeAndStopsWhenCancelled(t *testing.T) {
 		t.Errorf("second poll offset = %q, want to resume from the first reply", gotOffsets[1])
 	}
 }
+
+// A truncated log strands the cursor past the end. The daemon reports that and
+// hands back the new end; the follow loop must adopt it and carry on, or it
+// would wait forever on a position the file will never reach again.
+func TestFollowFleetLogsResumesAfterTheLogIsTruncated(t *testing.T) {
+	prev := fleetLogsInterval
+	fleetLogsInterval = time.Millisecond
+	t.Cleanup(func() { fleetLogsInterval = prev })
+
+	polls := 0
+	var offsets []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		offsets = append(offsets, r.URL.Query().Get("offset"))
+		switch polls {
+		case 1:
+			// A long log; the cursor ends up at 900.
+			json.NewEncoder(w).Encode(daemon.LogsResponse{
+				Content: "before\n", NextOffset: 900, Size: 900,
+			})
+		case 2:
+			// The file was replaced by a shorter one: the cursor is stale.
+			json.NewEncoder(w).Encode(daemon.LogsResponse{
+				NextOffset: 4, Size: 4, StaleOffset: true,
+			})
+		default:
+			json.NewEncoder(w).Encode(daemon.LogsResponse{
+				Content: "after\n", NextOffset: 11, Size: 11,
+			})
+		}
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host, port := hostPort(t, srv)
+	writeFleetFile(t, fmt.Sprintf("nodes:\n  - name: box\n    host: %s\n    port: %d\n", host, port))
+
+	cfg, err := fleet.Resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	var buf bytes.Buffer
+	if err := followFleetLogsLoop(ctx, cfg, 200, "text", &buf); err != nil {
+		t.Fatalf("a cancelled follow is a clean exit, got: %v", err)
+	}
+	if len(offsets) < 3 {
+		t.Fatalf("polled %d times, want at least 3", len(offsets))
+	}
+	// The poll after the stale reply must ask from the log's new end, not
+	// from the stranded cursor.
+	if offsets[2] != "4" {
+		t.Errorf("third poll offset = %q, want 4 — the end the daemon reported", offsets[2])
+	}
+	if offsets[2] == "900" {
+		t.Error("the follow kept the stranded cursor and would never advance")
+	}
+	// And output resumes rather than stopping at the truncation.
+	if !strings.Contains(buf.String(), "after") {
+		t.Errorf("output =\n%s\nwant output after the truncation", buf.String())
+	}
+}
+
+// A node whose token is rejected is a row, not a failure — and the reason is
+// shown rather than the node silently vanishing from the output.
+func TestCmdFleetLogsReportsARejectedToken(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "missing or invalid bearer token"})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host, port := hostPort(t, srv)
+	writeFleetFile(t, fmt.Sprintf("nodes:\n  - name: box\n    host: %s\n    port: %d\n", host, port))
+
+	out := captureStdout(t, func() {
+		if err := cmdFleet([]string{"logs"}); err != nil {
+			t.Errorf("a rejected token must not fail the command, got %v", err)
+		}
+	})
+	if !strings.Contains(out, "unauthorized") {
+		t.Errorf("output =\n%s\nwant the node reported as unauthorized", out)
+	}
+	// The reason, not just the outcome.
+	if !strings.Contains(out, "bearer token") {
+		t.Errorf("output =\n%s\nwant the daemon's own reason shown", out)
+	}
+	// And it must not be mistaken for the upgrade case, which has a different fix.
+	if strings.Contains(out, "upgrade outfit") {
+		t.Errorf("output =\n%s\nwant a rejected token distinguished from an old daemon", out)
+	}
+}
+
+// A node that answered, has a log, and simply has not written to it is
+// distinct from one that never ran an engine — the first will produce output
+// eventually, the second needs a start.
+func TestCmdFleetLogsDistinguishesAnEmptyLogFromAMissingOne(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(daemon.LogsResponse{Content: "", NextOffset: 0, Size: 0})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host, port := hostPort(t, srv)
+	writeFleetFile(t, fmt.Sprintf("nodes:\n  - name: box\n    host: %s\n    port: %d\n", host, port))
+
+	out := captureStdout(t, func() {
+		if err := cmdFleet([]string{"logs"}); err != nil {
+			t.Errorf("fleet logs returned %v", err)
+		}
+	})
+	if !strings.Contains(out, "no output") {
+		t.Errorf("output =\n%s\nwant an existing but empty log reported as no output", out)
+	}
+	if strings.Contains(out, "nothing has run here yet") {
+		t.Errorf("output =\n%s\nwant an empty log distinguished from a missing one", out)
+	}
+}
+
+// Following in JSON emits a document per poll, so a streaming consumer can
+// decode them one after another.
+func TestFollowFleetLogsJSON(t *testing.T) {
+	prev := fleetLogsInterval
+	fleetLogsInterval = time.Millisecond
+	t.Cleanup(func() { fleetLogsInterval = prev })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(daemon.LogsResponse{Content: "line\n", NextOffset: 5, Size: 5})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	host, port := hostPort(t, srv)
+	writeFleetFile(t, fmt.Sprintf("nodes:\n  - name: box\n    host: %s\n    port: %d\n", host, port))
+
+	cfg, err := fleet.Resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	var buf bytes.Buffer
+	if err := followFleetLogsLoop(ctx, cfg, 200, "json", &buf); err != nil {
+		t.Fatalf("a cancelled follow is a clean exit, got: %v", err)
+	}
+	dec := json.NewDecoder(&buf)
+	documents := 0
+	for {
+		var entries []fleetLogJSON
+		if err := dec.Decode(&entries); err != nil {
+			break
+		}
+		documents++
+		if len(entries) != 1 || entries[0].Node != "box" {
+			t.Errorf("document %d = %+v, want one entry for box", documents, entries)
+		}
+	}
+	if documents == 0 {
+		t.Errorf("no decodable JSON documents in:\n%s", buf.String())
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/lucinate-ai/outfit/internal/daemon"
@@ -149,5 +150,38 @@ func TestLogsCallReportsARejectedToken(t *testing.T) {
 	results := cfg.FanOut(context.Background(), LogsCall(nil, 0))
 	if results[0].Outcome != OutcomeUnauthorized {
 		t.Errorf("outcome = %q, want unauthorized", results[0].Outcome)
+	}
+}
+
+// Only is exercised through the fleet command, so the fleet package's own
+// coverage never sees it. It is exported API and its error is what an operator
+// reads after a typo, so it is worth pinning here.
+func TestOnlyNarrowsToOneNodeAndNamesTheRest(t *testing.T) {
+	srv, _ := stubLogsDaemon(t, "x\n", true)
+	cfg := fleetFor(t, srv, "")
+	// fleetFor writes a single node called "box"; add a second by hand so the
+	// narrowing has something to exclude.
+	cfg.Nodes = append(cfg.Nodes, NodeConfig{Name: "other", Host: "127.0.0.1", Port: 1})
+
+	only, err := cfg.Only("other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(only.Nodes) != 1 || only.Nodes[0].Name != "other" {
+		t.Errorf("nodes = %+v, want just the named one", only.Nodes)
+	}
+	// The original is untouched: narrowing must not mutate the loaded fleet.
+	if len(cfg.Nodes) != 2 {
+		t.Errorf("the source config now has %d nodes, want it left alone", len(cfg.Nodes))
+	}
+
+	_, err = cfg.Only("nope")
+	if err == nil {
+		t.Fatal("an unknown node should be an error")
+	}
+	for _, want := range []string{"nope", "box", "other"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to mention %q", err, want)
+		}
 	}
 }

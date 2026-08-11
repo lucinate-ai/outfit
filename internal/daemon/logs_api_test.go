@@ -129,3 +129,36 @@ func TestLogsEndpointRequiresTheToken(t *testing.T) {
 		t.Errorf("status with the token = %d, want 200", code)
 	}
 }
+
+// An unreadable log is a 500 with a reason, not a 200 carrying an empty log:
+// the operator must be able to tell "the engine said nothing" from "I could
+// not read what it said".
+func TestLogsEndpointReportsAnUnreadableLog(t *testing.T) {
+	d := testDaemon(t, "")
+	// Point the log at a directory, which opens but cannot be read.
+	d.Sup.LogPath = t.TempDir()
+	srv := httptest.NewServer(d.Handler(""))
+	t.Cleanup(srv.Close)
+
+	code, got := logsGet(t, srv, "", "")
+	if code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", code)
+	}
+	if got.Content != "" || got.Missing {
+		t.Errorf("reply = %+v, want no log body on a failure", got)
+	}
+}
+
+// The tail sentinel is negative; the handler rejects negative offsets. Passing
+// it explicitly must still read the tail rather than 400.
+func TestLogsEndpointAcceptsTheTailSentinel(t *testing.T) {
+	srv := logsServer(t, "serving\n", "")
+
+	code, got := logsGet(t, srv, "?offset="+strconv.FormatInt(TailLog, 10), "")
+	if code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for the tail sentinel", code)
+	}
+	if got.Content != "serving\n" {
+		t.Errorf("content = %q, want the tail", got.Content)
+	}
+}

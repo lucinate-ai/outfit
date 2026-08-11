@@ -202,3 +202,36 @@ func TestReadLogReturnsALineLongerThanTheLimit(t *testing.T) {
 			len(got.Content), got.NextOffset)
 	}
 }
+
+// A log path that exists but cannot be read as a file — a directory, say, from
+// a misconfigured state dir — must surface the error. Reporting it as an empty
+// log would tell an operator their engine said nothing, which is a lie.
+func TestReadLogReportsAnUnreadableLog(t *testing.T) {
+	dir := t.TempDir()
+
+	got, err := ReadLog(dir, TailLog, 0)
+	if err == nil {
+		t.Fatalf("want an error for an unreadable log, got %+v", got)
+	}
+	if got.Missing {
+		t.Error("an unreadable log is not a missing one — the fixes differ")
+	}
+	if got.Content != "" {
+		t.Errorf("content = %q, want nothing alongside the error", got.Content)
+	}
+}
+
+// The sentinel meaning "no position stated" is negative, and the endpoint
+// rejects negative offsets. It must still be accepted as the tail, or reading
+// the tail explicitly would 400.
+func TestReadLogAcceptsTheTailSentinel(t *testing.T) {
+	path := writeLog(t, "one\ntwo\n")
+
+	got, err := ReadLog(path, TailLog, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Content != "one\ntwo\n" {
+		t.Errorf("content = %q, want the tail sentinel to read the log", got.Content)
+	}
+}
