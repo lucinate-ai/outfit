@@ -612,3 +612,45 @@ while true; do sleep 0.05; done`)
 		t.Fatal("metrics blocked on a busy engine: a client watching the fleet would time out")
 	}
 }
+
+// Counters must appear promptly after an engine starts, not a full sample
+// interval later. Serving the sampler's last reading introduced that window,
+// and the fleet's own integration test walked straight into it: start a node,
+// read metrics, see nothing.
+func TestCountersAppearSoonAfterAStart(t *testing.T) {
+	engineMetrics := &fakeEngine{counter: 100}
+	engine := httptest.NewServer(engineMetrics)
+	defer engine.Close()
+
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	// A sample interval far longer than this test is willing to wait: what is
+	// being tested is that the counters do not depend on it.
+	d.SampleInterval = time.Hour
+	old := catchUpInterval
+	catchUpInterval = 10 * time.Millisecond
+	defer func() { catchUpInterval = old }()
+
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: engine.URL, Engine: "llamacpp"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.SampleActivity(ctx)
+
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Sup.Stop()
+	waitForState(t, d.Sup, StateRunning)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if stats := d.Metrics(context.Background()); stats.Tokens != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no token counters within 3s of the engine starting, with an hour-long sample interval")
+}

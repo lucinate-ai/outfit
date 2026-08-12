@@ -90,21 +90,31 @@ func (d *Daemon) SampleActivity(ctx context.Context) {
 	if interval <= 0 {
 		interval = DefaultSampleInterval
 	}
-	// Take a reading immediately: /v1/metrics reports the last sample, so
-	// waiting a whole interval first would leave a freshly started daemon
-	// reporting no counters for no reason.
-	d.sampleOnce(ctx)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
 	for {
+		d.sampleOnce(ctx)
+		// Until a reading has landed there is nothing for /v1/metrics to
+		// report, so wait a short interval rather than the full one. That is
+		// the window just after an engine starts, when someone is most likely
+		// to be watching: the counters appear about a second after the engine
+		// can answer, instead of up to a full interval later. A tick with no
+		// engine running costs a state check.
+		wait := interval
+		if !d.sample.haveTokens() {
+			wait = catchUpInterval
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			d.sampleOnce(ctx)
+		case <-time.After(wait):
 		}
 	}
 }
+
+// catchUpInterval is how often the sampler retries while it has no reading to
+// report. Short enough that a freshly started engine's counters appear
+// promptly, and harmless when nothing is running because sampling stops at the
+// engine-state check.
+var catchUpInterval = time.Second
 
 // sampleOnce takes one reading, feeding both a success and a failure through
 // observe so there is exactly one place where a sample becomes activity. The
@@ -171,6 +181,15 @@ func (e *engineSample) read() (*metrics.TokenStats, error, string) {
 		return nil, nil, ""
 	}
 	return e.tokens, e.err, e.baseURL
+}
+
+// haveTokens reports whether a successful reading is held. A failed reading
+// does not count: there is still nothing to show, so the sampler should keep
+// trying at the short interval rather than settle into its slow one.
+func (e *engineSample) haveTokens() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.tokens != nil
 }
 
 // forget drops the reading, so a stopped engine's counters are not reported
