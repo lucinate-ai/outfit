@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -397,6 +398,13 @@ func TestScrapeTargetForReadsAPIKeyFile(t *testing.T) {
 }
 
 func TestCmdServe_ForegroundWithoutAPIListensNowhere(t *testing.T) {
+	// This probes a fixed port, so it can only tell "serve opened a listener"
+	// from "serve did not" when that port starts out free. A developer running
+	// `outfit daemon` on this machine — which examples/fleet-local encourages
+	// — would otherwise see this fail as though serve had leaked a listener.
+	probe := fmt.Sprintf("127.0.0.1:%d", daemon.DefaultAPIPort)
+	requireFreePort(t, probe)
+
 	// A plain foreground serve must not open the control API. The engine
 	// exits immediately; if an API listener had started it would outlive it.
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
@@ -407,9 +415,24 @@ func TestCmdServe_ForegroundWithoutAPIListensNowhere(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if _, err := http.Get(fmt.Sprintf("http://127.0.0.1%s/v1/status", daemon.DefaultAPIAddr)); err == nil {
+	if _, err := http.Get("http://" + probe + "/v1/status"); err == nil {
 		t.Fatal("plain serve left a control API listening")
 	}
+}
+
+// requireFreePort skips the test when something is already listening on addr,
+// naming what it found so the skip is not mistaken for a passing assertion.
+// It must be given the same host:port the assertion probes: binding the
+// wildcard address can succeed while a specific one is taken, which would let
+// the guard pass and the assertion still fail.
+func requireFreePort(t *testing.T, addr string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Skipf("something is already listening on %s (%v): "+
+			"this test can only prove serve opened no listener when the port starts free", addr, err)
+	}
+	ln.Close()
 }
 
 // TestScrapeTargetForHonoursTheEngineBind pins the regression that left every

@@ -48,7 +48,8 @@ type Daemon struct {
 	// test can age an engine without waiting.
 	Now func() time.Time
 
-	act activity
+	act    activity
+	sample engineSample
 
 	mu       sync.Mutex
 	runner   string
@@ -171,6 +172,9 @@ func (d *Daemon) StartEngine() error {
 	// existed — the race the control plane used to close with a last-wake
 	// timestamp of its own.
 	d.act.markActive(d.now())
+	// The previous engine's counters must not be reported against this one,
+	// for the same reason its counter baseline is dropped.
+	d.sample.forget()
 	return nil
 }
 
@@ -272,28 +276,23 @@ func (d *Daemon) Metrics(ctx context.Context) metrics.Stats {
 		if d.Collector != nil {
 			d.Collector.System(ctx, &stats)
 		}
-		d.mu.Lock()
-		scrape := d.scrape
-		d.mu.Unlock()
-		if scrape.BaseURL != "" {
-			tokens, err := metrics.ScrapeTokenStats(ctx, scrape)
-			if err != nil {
-				// Reported, not swallowed. A silent omission here once hid a
-				// scraper pointed at the wrong port for every cloud llama.cpp
-				// deployment: the token block simply never appeared, and with
-				// no observation to make, the activity record never moved.
-				// An absent *source* is omitted quietly; a source that is
-				// there and failing is an error worth showing.
-				stats.Errors = append(stats.Errors,
-					fmt.Sprintf("engine metrics scrape (%s): %v", scrape.BaseURL, err))
-				tokens = nil
-			}
-			// Feed it through the same path the background sampler uses: one
-			// place decides whether a sample counts as activity, so a client
-			// polling metrics refreshes the record rather than racing it.
-			d.act.observe(tokens, d.now())
-			stats.Tokens = tokens
+		// The engine's counters come from the background sampler, never from
+		// a scrape taken here. A busy engine does not answer its own metrics
+		// endpoint — llama.cpp serves it from the queue it serves inference
+		// from — so scraping inline made this handler block for as long as
+		// the engine had work, which is precisely when a caller is watching.
+		tokens, err, baseURL := d.sample.read()
+		if err != nil {
+			// Reported, not swallowed. A silent omission here once hid a
+			// scraper pointed at the wrong port for every cloud llama.cpp
+			// deployment: the token block simply never appeared, and with
+			// no observation to make, the activity record never moved.
+			// An absent *source* is omitted quietly; a source that is
+			// there and failing is an error worth showing.
+			stats.Errors = append(stats.Errors,
+				fmt.Sprintf("engine metrics scrape (%s): %v", baseURL, err))
 		}
+		stats.Tokens = tokens
 	}
 	// Outside the running branch, so a stopped or crashed engine still reports
 	// when work last happened — the record survives a stop precisely so it can

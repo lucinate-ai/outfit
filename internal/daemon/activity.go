@@ -90,6 +90,10 @@ func (d *Daemon) SampleActivity(ctx context.Context) {
 	if interval <= 0 {
 		interval = DefaultSampleInterval
 	}
+	// Take a reading immediately: /v1/metrics reports the last sample, so
+	// waiting a whole interval first would leave a freshly started daemon
+	// reporting no counters for no reason.
+	d.sampleOnce(ctx)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -103,7 +107,9 @@ func (d *Daemon) SampleActivity(ctx context.Context) {
 }
 
 // sampleOnce takes one reading, feeding both a success and a failure through
-// observe so there is exactly one place where a sample becomes activity.
+// observe so there is exactly one place where a sample becomes activity. The
+// reading is also kept, because /v1/metrics reports it rather than scraping
+// the engine itself (see engineSample).
 func (d *Daemon) sampleOnce(ctx context.Context) {
 	if state, _, _ := d.Sup.Status(); state != StateRunning {
 		return
@@ -120,5 +126,57 @@ func (d *Daemon) sampleOnce(ctx context.Context) {
 	if err != nil {
 		tokens = nil
 	}
+	d.sample.record(tokens, err, scrape.BaseURL)
 	d.act.observe(tokens, d.now())
+}
+
+// engineSample holds the most recent reading of the engine's counters, taken
+// by the background sampler. /v1/metrics reports this rather than scraping on
+// demand, because an engine that is busy does not answer its own metrics
+// endpoint: llama.cpp serves /metrics from the same queue it serves inference
+// from, so a scrape taken while a prompt is being processed waits for that
+// prompt to finish. A handler that scraped inline therefore blocked for as
+// long as the engine was busy — past any client's timeout — and the fleet view
+// went blank exactly when there was something to watch.
+//
+// The cost is staleness bounded by the sample interval, which for counters
+// rendered in a refreshing view is not a cost at all.
+type engineSample struct {
+	mu sync.Mutex
+	// tokens is the last successful reading, nil when the last one failed.
+	tokens *metrics.TokenStats
+	// err is the last reading's failure, kept so a scraper pointed at the
+	// wrong port is still reported rather than showing as absent counters.
+	err error
+	// baseURL is where that reading was taken, for the error message.
+	baseURL string
+	// have marks that a reading has been attempted at all.
+	have bool
+}
+
+// record stores one reading, success or failure.
+func (e *engineSample) record(tokens *metrics.TokenStats, err error, baseURL string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.tokens, e.err, e.baseURL, e.have = tokens, err, baseURL, true
+}
+
+// read returns the last reading: the counters, and the failure to report when
+// there are none. Both are zero before the first sample, which reads as an
+// engine that has not been observed yet rather than as an error.
+func (e *engineSample) read() (*metrics.TokenStats, error, string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.have {
+		return nil, nil, ""
+	}
+	return e.tokens, e.err, e.baseURL
+}
+
+// forget drops the reading, so a stopped engine's counters are not reported
+// against the next one.
+func (e *engineSample) forget() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.tokens, e.err, e.baseURL, e.have = nil, nil, "", false
 }
