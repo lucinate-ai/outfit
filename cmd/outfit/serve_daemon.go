@@ -44,7 +44,7 @@ func cmdDaemon(args []string) error {
 	var apiAddr, apiToken, apiTokenFile string
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
 	fs.StringVar(&apiTokenFile, "api-token-file", "", "read the control API's bearer token from this file")
-	fs.StringVar(&apiToken, "api-token", "", "the control API's bearer token (visible in `ps`; prefer --api-token-file)")
+	fs.StringVar(&apiToken, "api-token", "", "the control API's bearer token")
 	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
@@ -213,9 +213,16 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 // the daemon reads no Outfit and so no longer picks one up from an adjacent
 // `.env`: a file, the environment, or the command line.
 //
-// The literal flag is a convenience with a cost — a command line is readable by
-// every local user — so it is the last resort and says so in its own help. Two
-// sources at once is a conflict rather than a precedence: a silent winner
+// The literal flag is offered here and refused for the *engine's* key, which
+// looks inconsistent until you notice they are different kinds of secret. This
+// token is configured locally by whoever runs the daemon, on a machine they
+// have already decided to trust with it; the engine's key is set remotely by a
+// client and persists on the node afterwards. A blanket "never on a command
+// line" covered both and was too broad for the first. The trade-off — a command
+// line is readable by every local user — belongs in the documentation rather
+// than in this flag's one-line help, which would otherwise argue with itself.
+//
+// Two sources at once is a conflict rather than a precedence: a silent winner
 // between two credentials is how an afternoon disappears into a 401 against the
 // wrong value.
 func daemonToken(literal, file string) (string, error) {

@@ -106,10 +106,19 @@ LAN daemon's `OUTFIT_API_TOKEN` conventionally lived. Three sources replace it:
 `--api-token-file`, `OUTFIT_API_TOKEN`, and `--api-token`.
 
 The current spec says the token is supplied via the environment "never as a
-command-line flag", for exactly the `ps` reason that governs the engine key
-above. `--api-token` reverses that deliberately, for the case of typing a daemon
-into a terminal. It is documented with its cost stated, and `--api-token-file`
-is the recommended form — the one a service manager should use.
+command-line flag", for the `ps` reason that governs the engine key above. That
+rule is narrowed rather than reversed, because the two are different kinds of
+secret: this token is configured locally by whoever runs the daemon, on a
+machine they have already decided to trust with it; the engine's key is set
+remotely by a client and persists on the node afterwards. The blanket rule
+covered both and was too broad for the first.
+
+The three sources are therefore peers, and the flag's one-line help says what it
+does rather than arguing against itself. The `ps` exposure is documented with
+the command, where there is room to say when it matters — and
+`--api-token-file` is what the docs name for a service manager, since a literal
+in a unit file is a secret in a config file *and* in the process list, which is
+the worst of both.
 
 Giving two sources at once fails rather than resolving a precedence, because a
 silent winner between two credentials is how you end up debugging a 401 against

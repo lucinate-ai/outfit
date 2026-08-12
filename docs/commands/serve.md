@@ -185,12 +185,26 @@ precedence:
 
 | Source | Notes |
 | ------ | ----- |
-| `--api-token-file <path>` | **Recommended.** The file's contents, trimmed. What a service manager should use. |
+| `--api-token-file <path>` | The file's contents, trimmed. |
 | `OUTFIT_API_TOKEN` | The environment. |
-| `--api-token <value>` | Convenient for typing a daemon into a terminal, at a cost: a command line is readable by every local user through `ps`, so anyone with a shell on that machine can read the token. |
+| `--api-token <value>` | The token itself. |
 
 A non-loopback listen with no token refuses to start; a loopback one needs
 none.
+
+Which to use is a question about who else can log in to that machine. A command
+line is readable by every local user through `ps`, so `--api-token` discloses
+the token to anyone with a shell there; the file and environment forms do not.
+On a machine only you can reach, that costs nothing.
+
+**From a service manager, use `--api-token-file`.** A literal in a unit file or
+plist is a secret in a config file *and* in the process list — the worst of
+both — while `systemd`'s `EnvironmentFile=` and launchd's `EnvironmentVariables`
+are the environment form if you would rather keep it there.
+
+This is also why the *engine's* key can never be given literally (see below):
+that key is set remotely by a client and persists on the node, where this token
+is configured locally by whoever starts the daemon.
 
 ### Gating the engine
 

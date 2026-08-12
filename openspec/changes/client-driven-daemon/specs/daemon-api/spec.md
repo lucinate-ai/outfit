@@ -11,10 +11,19 @@ SHALL be rejected with `401` and no state change. When no token is configured,
 the API SHALL refuse to listen on a non-loopback address and SHALL say why;
 listening on loopback without a token SHALL be allowed.
 
-The literal form is a convenience with a cost, and SHALL be documented as such
-wherever it is offered: a command line is readable by every local user, so a
-token given that way is disclosed to anyone with a shell on that machine. The
-file and environment forms carry no such exposure.
+The three are peers. That this token may be given on a command line while the
+engine's key may not is a distinction rather than an inconsistency: this token
+is configured locally, by whoever runs the daemon, on a machine they have
+already decided to trust with it, whereas the engine's key is set remotely by a
+client and persists on the node afterwards. A single "never on a command line"
+rule covered both and was too broad for the first.
+
+The trade-off SHALL be documented with the command: a command line is readable
+by every local user, so a token given that way is disclosed to anyone with a
+shell on that machine, while the file and environment forms carry no such
+exposure. The documentation SHALL name the file form as the one to use from a
+service manager, where a literal would otherwise sit in a unit file *and* in
+the process list.
 
 #### Scenario: Wrong token is rejected
 

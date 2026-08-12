@@ -50,9 +50,11 @@ fleet node work the same way, with the client in the control plane's seat.
   a node has no use for its peers' addresses, and handing every node the map
   widens what one compromised node exposes.
 - **The control-API bearer token gains two more sources**: `--api-token-file`
-  (recommended) and `--api-token`, beside the existing `OUTFIT_API_TOKEN`. The
-  daemon no longer loads an Outfit's `.env`, so the environment alone would
-  leave a hand-started LAN daemon with nowhere convenient to put it.
+  and `--api-token`, beside the existing `OUTFIT_API_TOKEN`. The daemon no
+  longer loads an Outfit's `.env`, so the environment alone would leave a
+  hand-started LAN daemon with nowhere convenient to put it. See "Two
+  credentials, two rules" below for why a literal flag is allowed here and
+  refused for the engine's key.
 
 ## Capabilities
 
@@ -88,12 +90,17 @@ fleet node work the same way, with the client in the control plane's seat.
 - **Depends on `fleet-harness-routing`** landing first: this modifies
   `fleet-routing` and `fleet-config`, which that change introduces.
 
-### A decision this reverses
+### Two credentials, two rules
 
 `daemon-api` currently states the token is supplied via the environment "never
 as a command-line flag", because a command line is readable by any local user
-through `ps` — the same reason this change insists on `--api-key-file` for the
-engine's key. Supporting `--api-token` is therefore a deliberate reversal, taken
-for the convenience of a hand-started daemon. `--api-token-file` carries no such
-exposure and is the documented recommendation; the flag's help text and the
-docs should say plainly what it costs.
+through `ps`. This change keeps that reasoning for the *engine's* key — which is
+why it insists on `--api-key-file` — and narrows it for the daemon's own token,
+which is a different kind of secret: configured locally, by whoever runs the
+daemon, on a machine they have already decided to trust with it, rather than set
+remotely by a client and left on the node.
+
+So the blanket rule becomes a reasoned one, and the three sources are peers.
+`--api-token-file` is what the documentation names for a service manager, since
+a literal there would sit in a unit file *and* in the process list; the `ps`
+exposure is stated with the command rather than argued in the flag's own help.
