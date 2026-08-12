@@ -352,7 +352,7 @@ func cmdFleetRoute(args []string) error {
 	}
 	// As for a launch: the model id a wake would push is a third name a node
 	// may report itself serving.
-	dc, dcErr := deployConfigWithoutContext(sel, resolvedPath)
+	dc, dcErr := deployConfigForNode(sel, resolvedPath)
 	want := fleet.Want{
 		Model: sel.Model, Alias: sel.Alias, ModelID: dc.ModelID,
 		Node: node, Prefer: preference,

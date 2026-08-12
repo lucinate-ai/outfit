@@ -614,3 +614,84 @@ func TestEngineEndpointNeverCarriesTheKey(t *testing.T) {
 		t.Errorf("endpoint leaked the key: %s", encoded)
 	}
 }
+
+// A fleet node is a machine the operator owns, so the preset's bind is theirs
+// to choose. The cloud assigns its own, and dropping it there is right; doing
+// the same for a node left every woken engine on llama.cpp's loopback default
+// however the preset was written, so no other machine in the fleet could reach
+// it.
+func TestNodeDeployConfigKeepsThePresetBind(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "preset.ini"), `
+[*]
+host  = 0.0.0.0
+port  = 9090
+ngl   = 99
+
+[qwen]
+hf       = org/model:Q4_K_M
+ctx-size = 4096
+`)
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nALIAS qwen\nPRESET ./preset.ini\n")
+	sel, _, err := readOutfit("test", outfitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node, err := deployConfigForNode(sel, outfitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(node.ServeArgs, " ")
+	for _, want := range []string{"--host 0.0.0.0", "--port 9090"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("a node's serve args should keep %q, got: %s", want, args)
+		}
+	}
+	// Everything the daemon supplies from the config itself still goes, so the
+	// engine is not told twice.
+	for _, unwanted := range []string{"--hf-repo", "--ctx-size", "--alias"} {
+		if strings.Contains(args, unwanted) {
+			t.Errorf("a node's serve args should not repeat %q, got: %s", unwanted, args)
+		}
+	}
+
+	// The cloud assigns its own bind, so it is still dropped there.
+	sel.Context = "4096" // the cloud requires one
+	cloud, err := deployConfigFor(sel, outfitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloudArgs := strings.Join(cloud.ServeArgs, " ")
+	for _, unwanted := range []string{"--host", "--port"} {
+		if strings.Contains(cloudArgs, unwanted) {
+			t.Errorf("the cloud sets its own bind, so %q should be dropped, got: %s", unwanted, cloudArgs)
+		}
+	}
+}
+
+// The bind reaching the engine is only half of it: the daemon must then report
+// that engine as reachable, or routing refuses a node that is in fact fine.
+func TestNodeBindReachesTheReportedEndpoint(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{"llama-server", "--hf-repo", "org/model", "--host", "0.0.0.0", "--port", "9090"}
+
+	ep := engineEndpointFor(engine, "", argv)
+	if ep == nil {
+		t.Fatal("no endpoint derived")
+	}
+	if ep.Port != 9090 {
+		t.Errorf("reported port = %d, want the preset's 9090", ep.Port)
+	}
+	if ep.LoopbackOnly {
+		t.Error("an engine bound to 0.0.0.0 was reported as loopback-only, so routing would refuse a reachable node")
+	}
+	// And the scrape follows the same bind, so the two cannot disagree.
+	if target := scrapeTargetFor(engine, "", argv); !strings.Contains(target.BaseURL, "9090") {
+		t.Errorf("scrape target = %q, want the engine's own port", target.BaseURL)
+	}
+}

@@ -83,7 +83,7 @@ func routeThroughFleet(sel outfit.Selection, outfitPath string, opts routeOption
 	// selection recognises a node woken from this same Outfit. A preset that
 	// will not parse is not fatal here: the failure belongs to the wake, which
 	// is where it can be explained.
-	dc, dcErr := deployConfigWithoutContext(sel, outfitPath)
+	dc, dcErr := deployConfigForNode(sel, outfitPath)
 	want := fleet.Want{
 		Model:   sel.Model,
 		Alias:   sel.Alias,
