@@ -89,7 +89,8 @@ llama-server \
   --spec-type draft-dflash \
   --spec-draft-model ./Muse-Glimmer-30B-GGUF/dflash-kquant.gguf \
   --spec-draft-ngl 999 --spec-draft-n-max 16 --flash-attn on \
-  --jinja -ngl 99 --ctx-size 131072 --parallel 4 \
+  --jinja --ctx-size 524288 --parallel 4 -ngl 99 \
+  --chat-template-kwargs '{"reasoning_strength":"high"}' \
   --temp 1.0 --top-p 0.95 --top-k 64 \
   --host 127.0.0.1 --port 8080
 ```
@@ -98,9 +99,29 @@ llama-server \
 `mmproj-kquant.gguf` beside the weights, and `--hf-repo` fetches and loads it
 automatically otherwise. Dropping it saves 1.4 GB and the encoder load.
 
-`--parallel 4` splits `--ctx-size` into four 32768-token slots. A
-`[spec] failed to measure draft model memory` warning at startup is expected and
-harmless per Meta's card — the drafter loads and serves normally after it.
+`--jinja` is **mandatory**, not a nicety. The chat template is embedded in the
+GGUF and nothing else supplies it — there is no separate template file and
+`--chat-template-file` is not needed — but without the flag the multimodal CLI
+aborts with `this custom template is not supported, try using --jinja`.
+
+A `[spec] failed to measure draft model memory` warning at startup is expected
+and harmless per Meta's card — the drafter loads and serves normally after it.
+
+### `--ctx-size` is a total, and overflow fails silently
+
+`llama-server` divides `--ctx-size` across `--parallel` slots, so **one request
+gets `ctx-size / np`**. The startup log's `n_ctx_slot` is the number that
+actually bounds a generation.
+
+This bites harder here than it looks, because Muse Glimmer reasons at length
+and *nothing errors when a generation runs out of slot context* — the request
+simply returns no answer. In an eval that reads as a wrong answer rather than a
+failure, with nothing in the logs to explain the lower score.
+
+So scale the total **with** `np` rather than trimming it: `--ctx-size 524288
+--parallel 4` gives each of the four slots the full trained 131072. The KV
+cache stays cheap — GQA with 2 KV heads, plus sliding-window attention on 3 of
+every 4 layers — so this costs a few GB, not tens.
 
 21 GB has to go somewhere, and llama.cpp keeps its **own** download cache —
 it never reads the Hugging Face cache, so `HF_HOME` and `~/.cache/huggingface`
@@ -183,9 +204,39 @@ calling.
 ### Model-specific settings
 
 Meta recommends `temperature 1.0`, `top_p 0.95`, `top_k 64` (all in the preset).
-Reasoning depth is set **in the system prompt**, not by a flag — add a
-`Reasoning strength: <low|medium|high|xhigh>` line, and use `high` or `xhigh`
-for coding and agentic work.
+
+**Reasoning cannot be switched off.** The template opens the thinking channel
+unconditionally, so `--reasoning off`, `--reasoning on` and
+`"reasoning_effort": "none"` all do nothing. What you control is *how much*, via
+the `reasoning_strength` template variable — `low`/`medium`/`high`/`xhigh`,
+defaulting to `high`. Server-wide it is a flag, and the preset sets it:
+
+```sh
+--chat-template-kwargs '{"reasoning_strength":"xhigh"}'
+```
+
+Per request, send the same thing as `chat_template_kwargs`. Use `high` or
+`xhigh` for coding and agentic work, and `--reasoning-budget N` to hard-cap
+thinking tokens.
+
+(An earlier revision of this file said reasoning depth was set with a
+`Reasoning strength:` line in the system prompt. That was wrong — it is a
+template variable.)
+
+### Don't stop on `<|eom|>`
+
+The stop tokens are `<|end_of_text|>` (200001) and `<|eot|>` (200008).
+`<|eom|>` marks end-of-*message*, not end-of-turn — the turn continues past it,
+and stopping there collapses parallel tool calling. Leave it alone if you add
+custom stop strings.
+
+llama.cpp's own handling of this was fixed in
+[`0b1bad14`](https://github.com/ggml-org/llama.cpp/commit/0b1bad14) ("chat: fix
+muse-glimmer detection of tool calls after EOM", #26879, 2026-08-11), which at
+the time of writing is **master-only** — `b10362` is 18 commits behind it, and
+`b10355` further back. Basic tool calling works without it (see Verified
+below); if you lean on *parallel* tool calls, build from master rather than
+taking a release.
 
 ## Deploying to the cloud
 

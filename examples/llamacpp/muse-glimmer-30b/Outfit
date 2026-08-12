@@ -4,13 +4,18 @@
 # ALIAS names the model in opencode and selects the preset section below.
 PROVIDER llamacpp
 ALIAS    muse-glimmer-30b
-CONTEXT  131072             # the model's native window, and the server's total
-                             # --ctx-size. CONTEXT always overrides the preset's
-                             # ctx-size, so it has to be the *total* here.
-                             # NOTE: the preset sets `np = 4`, which divides that
-                             # total into 4 slots of 32768 — while opencode is
-                             # still told 131072 and may overrun a slot. Set
-                             # `np = 1` for one agent with a true 131k window.
+CONTEXT  524288             # llama-server's TOTAL --ctx-size, divided across the
+                             # preset's `np = 4` slots — so one request gets the
+                             # model's full trained 131072. CONTEXT always
+                             # overrides the preset's ctx-size, so it must be the
+                             # total, not the per-slot figure.
+                             #
+                             # Caveat: opencode is told 524288 as well, though a
+                             # single request can only use 131072. outfit has one
+                             # CONTEXT and these differ by `np`, so they cannot
+                             # both be right. For a single agent with a window
+                             # that is literally true, set `np = 1` here and
+                             # CONTEXT 131072.
 PRESET   ./preset.ini       # `outfit serve` builds the llama-server command from this
 # BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default local host/port
 
