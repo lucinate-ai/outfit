@@ -1086,12 +1086,14 @@ func cmdRemoteDeploy(args []string) error {
 	var (
 		dryRun      bool
 		overwrite   bool
+		reseed      bool
 		allowedCidr string
 		region      string
 	)
 	fs.BoolVar(&dryRun, "dry-run", false, "print the config that would be deployed, without sending it")
 	fs.BoolVar(&dryRun, "n", false, "print the config without sending it (shorthand)")
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
+	fs.BoolVar(&reseed, "reseed", false, "re-fetch the weights even if they are already in S3 (starts a ~20-minute seed)")
 	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
 	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
 	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
@@ -1147,6 +1149,11 @@ func cmdRemoteDeploy(args []string) error {
 	if len(dc.ServeArgs) > 0 {
 		fmt.Printf("  args:    %s\n", strings.Join(dc.ServeArgs, " "))
 	}
+	// Worth stating: a re-seed costs a ~20-minute instance and re-downloads the
+	// weights, so --reseed --dry-run must not look like a plain deploy.
+	if reseed {
+		fmt.Println("  reseed:  yes — the weights will be re-fetched even if already in S3")
+	}
 	if dryRun {
 		return nil
 	}
@@ -1199,7 +1206,7 @@ func cmdRemoteDeploy(args []string) error {
 		fmt.Printf("  ingress: %s (your public IP; override with --allowed-cidr)\n", allowedCidr)
 	}
 
-	resp, err := remoteDeployFn(ctx, cfg, dc, allowedCidr)
+	resp, err := remoteDeployFn(ctx, cfg, dc, allowedCidr, reseed)
 	if err != nil {
 		return err
 	}

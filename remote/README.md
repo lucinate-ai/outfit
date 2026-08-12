@@ -345,8 +345,10 @@ coding a day lands around $90/month. Full breakdown in
   first deploy.
 - **Force a fresh AMI** (same config): just `pnpm bake <runner>` — the runtime
   launches the newest tagged AMI.
-- **Force a re-seed** of weights already in S3: `pnpm seed-model <env>` (the
-  deploy Lambda only seeds what is missing).
+- **Force a re-seed** of weights already in S3:
+  `outfit remote deploy --reseed` (the deploy Lambda otherwise seeds only what
+  is missing). It re-fetches the weights the Outfit names and costs a
+  ~20-minute seed instance, so it is never the default.
 
 ### Diagnostics
 
