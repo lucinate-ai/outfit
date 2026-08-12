@@ -284,6 +284,47 @@ components:
         idleSeconds:
           type: integer
           description: Seconds since `lastActiveAt`. Absent when that is.
+        engine:
+          allOf:
+            - $ref: '#/components/schemas/EngineEndpoint'
+          description: |
+            Where the running engine answers inference requests. Absent unless
+            an engine is running.
+
+    EngineEndpoint:
+      type: object
+      description: |
+        Where the supervised engine serves. Parts rather than a URL on
+        purpose: the daemon knows its engine binds `127.0.0.1:8080`, which is
+        useless to anyone else, and it cannot know the name a client reaches
+        this host by — a LAN name, a tailscale name, a published container
+        port. The caller composes these against the host it already has.
+      required: [port]
+      properties:
+        port:
+          type: integer
+          description: |
+            The port the engine listens on — the engine's, never the control
+            API's. One is not derivable from the other.
+          examples: [8080, 8000]
+        path:
+          type: string
+          description: |
+            The OpenAI-compatible path prefix, when it is not the usual `/v1`.
+            Absent means the default.
+        loopbackOnly:
+          type: boolean
+          description: |
+            The engine is bound to loopback, so it answers only on that
+            machine. Lets a remote caller explain a refused connection rather
+            than merely suffer it.
+        requiresKey:
+          type: boolean
+          description: |
+            The engine was started with an API key, so a caller needs one. The
+            key itself is never reported under any endpoint: authorisation to
+            drive a node is not authorisation to be handed its engine's
+            credential.
 
     Stats:
       type: object

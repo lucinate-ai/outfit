@@ -37,6 +37,7 @@ const openAPIPath = "../../docs/openapi.yaml"
 func schemaFor() map[string]any {
 	return map[string]any{
 		"StatusResponse": StatusResponse{},
+		"EngineEndpoint": EngineEndpoint{},
 		"Message":        Message{},
 		"LogsResponse":   LogsResponse{},
 		"Error":          Error{},

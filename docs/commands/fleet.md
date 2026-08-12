@@ -8,9 +8,14 @@ Observe and drive every engine you run, from one place. Each machine runs
 outfit fleet status          # one row per node: state and what it serves
 outfit fleet metrics         # each node's engine + system metrics
 outfit fleet metrics -w      # a live dashboard, redrawn in place
+outfit fleet route my-outfit # which node a harness launch would pick
 outfit fleet start gpu-box   # start one node's engine
 outfit fleet stop gpu-box    # stop it
 ```
+
+A fleet is also where [`outfit harness`](harness.md#launching-against-your-fleet)
+sends an agent: an Outfit naming a `FLEET` picks a node and launches against it,
+so the machine you are sitting at needs no engine of its own.
 
 ## Try it without any hardware
 
@@ -44,6 +49,55 @@ nodes:
 The file is found the way an `Outfit` is: `./fleet.yaml` in the working
 directory, or `--fleet <path>`.
 
+### Where a node's engine answers
+
+A node's `host` and `port` name its **daemon**, which is a different port from
+the **engine** it supervises. For [routing](#which-node-would-i-get) outfit
+needs the engine's, and the daemon reports it — so most nodes need nothing
+more. Declare an `engine` block for the cases a daemon cannot describe:
+
+```yaml
+nodes:
+  - name: containerised
+    host: docker-host
+    engine:
+      port: 18080          # published port, not the one it binds inside
+
+  - name: proxied
+    host: node.local
+    engine:
+      host: https://engine.example   # a reverse proxy in front of the engine
+      path: /openai                  # when it is not the usual /v1
+```
+
+Each field falls back independently to what outfit would otherwise derive: the
+node's own `host`, and the port and path the daemon reports.
+
+An engine bound to loopback answers only on its own machine. Routing to it from
+elsewhere fails with that explanation rather than a bare connection refused —
+bind the engine to a reachable address (llama.cpp's `--host 0.0.0.0`), or
+declare an `engine` block, which is you taking responsibility for reachability.
+
+### Spreading or consolidating
+
+`prefer` decides which node wins when several could all serve you:
+
+```yaml
+prefer: idle      # or: active
+nodes: …
+```
+
+- **`idle`** (the default) — the machine quiet longest wins. A node that is
+  mid-request is the *least* idle of all, so it is the last one chosen. Use it
+  when several people share the fleet, or you run several agents at once.
+- **`active`** — the most recently active wins, consolidating sessions onto one
+  engine and leaving the others free to be woken for another model, or left
+  asleep.
+
+`outfit harness --prefer <value>` and `outfit fleet route --prefer <value>`
+override the file for one command, which is the cheap way to see what the other
+setting would do before committing to it.
+
 ### Tokens
 
 `tokenEnv` names an environment variable; the value is resolved from the
@@ -64,6 +118,19 @@ one.
 A `tokenEnv` naming a variable that is set nowhere is reported against that
 node as `config-error`, so a typo shows up on its row rather than as a
 mysterious `unauthorized`.
+
+A node whose **engine** needs a key names that separately, with
+`engineTokenEnv`. The two are different credentials — one authorises driving the
+node, the other authorises using its engine — and a node may need either, both,
+or neither. It is resolved exactly as `tokenEnv` is, and the daemon never hands
+its engine's key out: it says only that one is required.
+
+```yaml
+  - name: gated
+    host: gated.local
+    tokenEnv: GATED_TOKEN             # to drive the daemon
+    engineTokenEnv: GATED_ENGINE_KEY  # to talk to its engine
+```
 
 ## A node that is down never blanks the view
 
@@ -167,6 +234,42 @@ daemon does **not** rotate its engine log: it grows for the daemon's lifetime,
 so a long-lived node accumulates. Reads are always bounded, so this costs disk
 on the node rather than anything at the client.
 
+## Which node would I get?
+
+`outfit fleet route` reports the node a
+[harness launch](harness.md#launching-against-your-fleet) would pick for an
+Outfit, and **changes nothing** — no config pushed, no engine started, no
+harness config written:
+
+```sh
+outfit fleet route my-outfit
+outfit fleet route --prefer active my-outfit
+```
+
+```
+Outfit: ./my-outfit/Outfit
+Fleet:  ./fleet.yaml
+Prefer: idle
+
+Would use gpu-box at http://gpu-box:8080/v1
+  serving qwen3-27b, last active 312s ago (prefer idle)
+```
+
+When nothing is serving that model it shows the whole fleet's state and names
+the node a real launch would wake, without waking it:
+
+```
+no node in ./fleet.yaml is serving qwen3-27b:
+  studio           idle
+  gpu-box          running  some-other-model
+  laptop           unreachable (connection refused)
+
+A launch would wake studio and wait for its engine. Nothing has been started.
+```
+
+Use it to check a route before an agent depends on it, to see what the other
+`prefer` setting would choose, or to work out why a launch landed where it did.
+
 ## Starting and stopping
 
 `fleet start` and `fleet stop` take **one node**:
@@ -186,6 +289,8 @@ conflict, and stopping one that is not running succeeds quietly.
 | Flag | Meaning |
 | ---- | ------- |
 | `--fleet <path>` | The fleet file (default `./fleet.yaml`) |
+| `--node <name>` | `route` only: report this node rather than choosing one |
+| `--prefer` | `route` only: rank by `idle` or `active`, overriding the file |
 | `--format` | `metrics`: `bar` (default), `table`, or `json`; `logs`: `text` (default) or `json` |
 | `-w`, `--watch` | `metrics` only: redraw on an interval until interrupted |
 | `-f`, `--follow` | `logs` only: keep printing new output until interrupted |

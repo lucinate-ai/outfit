@@ -867,7 +867,23 @@ func dropCloudOwned(params []preset.Param) []preset.Param {
 // picks the runner, MODEL or the preset's hf names the weights, CONTEXT the
 // window, ALIAS the served name, and whatever else the preset sets becomes the
 // runner's own flags.
+//
+// A context size is required, because a cloud instance has to be sized before
+// it is provisioned. deployConfigWithoutContext is the same derivation for a
+// caller where that is not true.
 func deployConfigFor(sel outfit.Selection, outfitPath string) (remote.DeployConfig, error) {
+	return deployConfig(sel, outfitPath, true)
+}
+
+// deployConfigWithoutContext derives the same config for a machine that already
+// exists — a fleet node being woken. Sizing is the engine's own default there,
+// and an Outfit that `outfit serve` runs happily should not need a CONTEXT
+// added to it merely to be routed.
+func deployConfigWithoutContext(sel outfit.Selection, outfitPath string) (remote.DeployConfig, error) {
+	return deployConfig(sel, outfitPath, false)
+}
+
+func deployConfig(sel outfit.Selection, outfitPath string, requireContext bool) (remote.DeployConfig, error) {
 	var dc remote.DeployConfig
 
 	runner, err := runnerFor(sel.Provider)
@@ -919,14 +935,16 @@ func deployConfigFor(sel outfit.Selection, outfitPath string) (remote.DeployConf
 	if context == "" {
 		context = presetValue("ctx-size", global, params)
 	}
-	if context == "" {
+	if context == "" && requireContext {
 		return dc, fmt.Errorf("no context size: set CONTEXT in %s, or ctx-size in its preset", outfitPath)
 	}
-	n, err := contextsize.Parse(context)
-	if err != nil {
-		return dc, err
+	if context != "" {
+		n, err := contextsize.Parse(context)
+		if err != nil {
+			return dc, err
+		}
+		dc.ContextSize = n
 	}
-	dc.ContextSize = n
 
 	// The served name is what a coding agent asks for. ALIAS is the friendly
 	// name; without one the repo id is served under its own name.

@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -23,7 +24,7 @@ import (
 // cmdFleet dispatches the fleet subcommands.
 func cmdFleet(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit fleet <status|metrics|logs|start|stop> [node] [--fleet <path>]")
+		return fmt.Errorf("usage: outfit fleet <status|metrics|logs|route|start|stop> [node] [--fleet <path>]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -33,13 +34,15 @@ func cmdFleet(args []string) error {
 		return cmdFleetMetrics(rest)
 	case "logs":
 		return cmdFleetLogs(rest)
+	case "route":
+		return cmdFleetRoute(rest)
 	case "start":
 		return cmdFleetStart(rest)
 	case "stop":
 		return cmdFleetStop(rest)
 	default:
 		return fmt.Errorf(
-			"unknown fleet subcommand %q (expected status, metrics, logs, start or stop)", sub)
+			"unknown fleet subcommand %q (expected status, metrics, logs, route, start or stop)", sub)
 	}
 }
 
@@ -300,5 +303,83 @@ func driveOneNode(verb string, args []string, call fleet.Call) error {
 		return fmt.Errorf("%s %s: %s", verb, name, r.Detail())
 	}
 	fmt.Printf("%s  %s\n", name, r.Status.State)
+	return nil
+}
+
+// cmdFleetRoute reports the node a harness launch would choose for an Outfit,
+// and changes nothing: no config is pushed, no engine started, no harness
+// config written. It is how a routing decision is checked before an agent
+// depends on it, and how an unexpected choice is diagnosed after one.
+func cmdFleetRoute(args []string) error {
+	fs, path := fleetFlags("route")
+	var node, prefer string
+	fs.StringVar(&node, "node", "", "report this node rather than choosing one")
+	fs.StringVar(&prefer, "prefer", "", "rank nodes by `idle` or `active` (overrides the fleet file)")
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
+		return err
+	}
+
+	var outfitPath string
+	if rest := fs.Args(); len(rest) > 0 {
+		outfitPath = rest[0]
+	}
+	sel, resolvedPath, err := readOutfit("outfit fleet route <outfit>", outfitPath)
+	if err != nil {
+		return err
+	}
+
+	target, fromFlag := *path, true
+	if target == "" {
+		target, fromFlag = sel.Fleet, false
+	}
+	if target == "" {
+		return fmt.Errorf(
+			"%s names no FLEET: add one, or pass --fleet <path> to say which fleet to route through",
+			resolvedPath)
+	}
+	if isEndpoint(target) {
+		return fmt.Errorf(
+			"FLEET %s names an endpoint, and gateway routing is not implemented yet: "+
+				"name a fleet file to choose a node from", target)
+	}
+	cfg, err := fleet.Resolve(resolveFleetPath(target, fromFlag, resolvedPath))
+	if err != nil {
+		return err
+	}
+	preference, err := cfg.Preference(prefer)
+	if err != nil {
+		return err
+	}
+	want := fleet.Want{Model: sel.Model, Alias: sel.Alias, Node: node, Prefer: preference}
+
+	fmt.Printf("Outfit: %s\nFleet:  %s\nPrefer: %s\n\n", resolvedPath, cfg.Path, preference)
+	if sel.BaseURL != "" {
+		fmt.Printf("This Outfit pins BASEURL %s, so a launch would not route at all.\n", sel.BaseURL)
+		return nil
+	}
+
+	choice, err := cfg.Select(context.Background(), want)
+	if err == nil {
+		fmt.Printf("Would use %s at %s\n  %s\n", choice.Node.Name, choice.BaseURL, choice.Reason)
+		return nil
+	}
+
+	// Nothing is serving it: say what a real launch would do next, and do
+	// none of it.
+	var none *fleet.ErrNoneServing
+	if !errors.As(err, &none) {
+		return err
+	}
+	fmt.Println(err)
+	dc, dcErr := deployConfigWithoutContext(sel, resolvedPath)
+	if dcErr != nil {
+		fmt.Printf("\nA launch could not start one either: %v\n", dcErr)
+		return nil
+	}
+	if wake, ok := cfg.WouldWake(none.Results, dc); ok {
+		fmt.Printf("\nA launch would wake %s and wait for its engine. Nothing has been started.\n", wake.Name)
+		return nil
+	}
+	fmt.Println("\nNo node could be woken for it either. Nothing has been started.")
 	return nil
 }

@@ -467,3 +467,127 @@ func TestScrapeTargetForHonoursTheEngineBind(t *testing.T) {
 		t.Errorf("vLLM BaseURL = %q, want its stated bind", got.BaseURL)
 	}
 }
+
+// The endpoint a node advertises to a router is derived from the same command
+// line the metrics scrape reads, so the two cannot disagree about one engine.
+func TestEngineEndpointFor(t *testing.T) {
+	llama, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vllm, err := engineFor("vllm")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		engine  serveEngine
+		baseURL string
+		argv    []string
+		want    *daemon.EngineEndpoint
+	}{
+		{
+			name:   "the engine's own bind wins",
+			engine: llama,
+			argv:   []string{"llama-server", "--host", "0.0.0.0", "--port", "9001"},
+			want:   &daemon.EngineEndpoint{Port: 9001},
+		},
+		{
+			name:    "the Outfit's base url when the command says nothing",
+			engine:  llama,
+			baseURL: "http://127.0.0.1:9000/v1",
+			argv:    []string{"llama-server"},
+			want:    &daemon.EngineEndpoint{Port: 9000, LoopbackOnly: true},
+		},
+		{
+			name:   "llama.cpp binds loopback by default",
+			engine: llama,
+			argv:   []string{"llama-server"},
+			want:   &daemon.EngineEndpoint{Port: 8080, LoopbackOnly: true},
+		},
+		{
+			name:   "vLLM binds every interface by default",
+			engine: vllm,
+			argv:   []string{"vllm", "serve", "m"},
+			want:   &daemon.EngineEndpoint{Port: 8000},
+		},
+		{
+			name:   "a gated engine says so and nothing more",
+			engine: llama,
+			argv:   []string{"llama-server", "--api-key", "sk-secret", "--port", "8080"},
+			want:   &daemon.EngineEndpoint{Port: 8080, LoopbackOnly: true, RequiresKey: true},
+		},
+		{
+			name:    "a real path prefix is reported, /v1 is not",
+			engine:  llama,
+			baseURL: "http://127.0.0.1:9000/openai",
+			argv:    []string{"llama-server"},
+			want:    &daemon.EngineEndpoint{Port: 9000, Path: "/openai", LoopbackOnly: true},
+		},
+		{
+			name:   "no port anywhere yields no endpoint",
+			engine: serveEngine{},
+			argv:   []string{"omlx-cli", "serve"},
+			want:   nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := engineEndpointFor(tc.engine, tc.baseURL, tc.argv)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("endpoint = %+v, want none", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("no endpoint derived")
+			}
+			if *got != *tc.want {
+				t.Errorf("endpoint = %+v, want %+v", *got, *tc.want)
+			}
+		})
+	}
+}
+
+// The reported port is the engine's, never the control API's — nothing in the
+// reply implies one from the other.
+func TestEngineEndpointIsNotTheAPIPort(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep := engineEndpointFor(engine, "", []string{"llama-server", "--port", "8080"})
+	if ep == nil {
+		t.Fatal("no endpoint derived")
+	}
+	if ep.Port == daemon.DefaultAPIPort {
+		t.Errorf("engine port %d is the control API's default port", ep.Port)
+	}
+}
+
+// The key reaches the scrape, which needs it, and never the endpoint, which
+// does not.
+func TestEngineEndpointNeverCarriesTheKey(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "api-key")
+	mustWrite(t, keyFile, "sk-from-file\n")
+	argv := []string{"llama-server", "--api-key-file", keyFile}
+
+	if target := scrapeTargetFor(engine, "", argv); target.APIKey != "sk-from-file" {
+		t.Errorf("the scrape lost the key it needs: %+v", target)
+	}
+	ep := engineEndpointFor(engine, "", argv)
+	if ep == nil || !ep.RequiresKey {
+		t.Fatalf("endpoint should report a key is required: %+v", ep)
+	}
+	if encoded, err := json.Marshal(ep); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(encoded), "sk-from-file") {
+		t.Errorf("endpoint leaked the key: %s", encoded)
+	}
+}

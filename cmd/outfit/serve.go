@@ -80,6 +80,11 @@ type serveEngine struct {
 	// defaultBaseURL is where the engine listens when the Outfit states no
 	// BASEURL, so the scraper can still find /metrics.
 	defaultBaseURL string
+	// defaultBindLoopback says whether this engine binds loopback when its
+	// command states no --host. It decides whether a node can tell a remote
+	// router "my engine answers only on this machine" — llama.cpp binds
+	// 127.0.0.1 by default, vLLM binds every interface.
+	defaultBindLoopback bool
 	// positional yields arguments placed directly after the subcommand —
 	// vLLM takes its model positionally rather than behind a flag.
 	positional func(sel outfit.Selection) []string
@@ -93,14 +98,15 @@ func engineFor(provider string) (serveEngine, error) {
 	switch provider {
 	case "llamacpp":
 		return serveEngine{
-			binary:         func() string { return llamaServerBinary },
-			dialect:        preset.LlamaCpp,
-			params:         llamacppServeParams,
-			needsModel:     true,
-			installHint:    "install llama.cpp (e.g. brew install llama.cpp) or check the path",
-			metricsArgs:    []string{"--metrics"},
-			metricsEngine:  "llamacpp",
-			defaultBaseURL: "http://127.0.0.1:8080",
+			binary:              func() string { return llamaServerBinary },
+			dialect:             preset.LlamaCpp,
+			params:              llamacppServeParams,
+			needsModel:          true,
+			installHint:         "install llama.cpp (e.g. brew install llama.cpp) or check the path",
+			metricsArgs:         []string{"--metrics"},
+			metricsEngine:       "llamacpp",
+			defaultBaseURL:      "http://127.0.0.1:8080",
+			defaultBindLoopback: true,
 		}, nil
 	case "omlx":
 		return serveEngine{

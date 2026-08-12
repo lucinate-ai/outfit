@@ -23,6 +23,10 @@ services:
       OUTFIT_API_TOKEN: ${STUDIO_TOKEN:?set STUDIO_TOKEN (copy .env.example to .env)}
     ports:
       - "14242:4242"
+      # The engine, published so a routed harness launch can reach it from the
+      # host. Inside the container it is always 8080; outside it is not — which
+      # is exactly the case fleet.yaml's per-node `engine:` block covers.
+      - "18080:8080"
 
   gpu-box:
     image: outfit-fleet-node:example
@@ -31,6 +35,10 @@ services:
       OUTFIT_API_TOKEN: ${GPU_BOX_TOKEN:?set GPU_BOX_TOKEN (copy .env.example to .env)}
     ports:
       - "14243:4242"
+      # The engine, published so a routed harness launch can reach it from the
+      # host. Inside the container it is always 8080; outside it is not — which
+      # is exactly the case fleet.yaml's per-node `engine:` block covers.
+      - "18081:8080"
 
   laptop:
     image: outfit-fleet-node:example
@@ -39,3 +47,7 @@ services:
       OUTFIT_API_TOKEN: ${LAPTOP_TOKEN:?set LAPTOP_TOKEN (copy .env.example to .env)}
     ports:
       - "14244:4242"
+      # The engine, published so a routed harness launch can reach it from the
+      # host. Inside the container it is always 8080; outside it is not — which
+      # is exactly the case fleet.yaml's per-node `engine:` block covers.
+      - "18082:8080"

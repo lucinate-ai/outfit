@@ -68,6 +68,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/config"
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/discovery"
+	"github.com/lucinate-ai/outfit/internal/fleet"
 	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/lucinate"
 	"github.com/lucinate-ai/outfit/internal/opencode"
@@ -982,6 +983,12 @@ func cmdHarness(args []string) error {
 	fs.Var(&outfitPath, "outfit", "apply this Outfit before launching (bare: ./"+outfit.DefaultFile+")")
 	fs.Var(&outfitPath, "O", "apply this Outfit before launching (shorthand)")
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
+	var route routeOptions
+	fs.StringVar(&route.fleetPath, "fleet", "", "route through this fleet file (overrides the Outfit's FLEET)")
+	fs.StringVar(&route.node, "node", "", "pin the launch to this fleet node")
+	fs.StringVar(&route.prefer, "prefer", "", "rank fleet nodes by `idle` or `active` (overrides the fleet file)")
+	fs.BoolVar(&route.noWake, "no-wake", false, "fail rather than starting an engine on an idle fleet node")
+	fs.DurationVar(&route.wakeTimeout, "wake-timeout", 0, "how long to wait for a woken node's engine")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1041,12 +1048,15 @@ func cmdHarness(args []string) error {
 	var envDir string
 	var sel outfit.Selection
 	var remoteResp *remote.Response
+	var choice *fleet.Choice
 	if outfitPath.set {
 		var err error
-		sel, envDir, remoteResp, err = applyBeforeLaunch(outfitPath, providers, h, rest)
+		sel, envDir, remoteResp, choice, err = applyBeforeLaunch(outfitPath, providers, h, rest, route)
 		if err != nil {
 			return err
 		}
+	} else if route.fleetPath != "" {
+		return fmt.Errorf("--fleet needs an Outfit: it is the Outfit's model that decides which node can serve you")
 	}
 	// The resolver the launch uses knows the remote key too, so every key the
 	// agent is given comes from the same place the apply step reported.
@@ -1059,6 +1069,15 @@ func cmdHarness(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = harnessEnv(providers, resolve, remoteResp)
+	// A routed launch points the agent at the node that was chosen. As on the
+	// remote path, an explicit setting in the environment already won: routing
+	// fills what is unset rather than overriding a deliberate choice.
+	if choice != nil {
+		cmd.Env = setEnvIfBlank(cmd.Env, "OPENAI_BASE_URL", choice.BaseURL)
+		if choice.APIKey != "" {
+			cmd.Env = setEnvIfBlank(cmd.Env, "OPENAI_API_KEY", choice.APIKey)
+		}
+	}
 	// A worn Outfit brings its whole local environment to the launched agent:
 	// its adjacent .env fills any gaps left above, and its ENV instructions
 	// override everything. These shape only the child's environment — outfit
@@ -1073,6 +1092,9 @@ func cmdHarness(args []string) error {
 	// agent can authenticate the model it boots into, without ever writing it to
 	// lucinate's config. An explicit setting already in the child's env wins.
 	if h.Name() == "lucinate" {
+		if choice != nil && choice.APIKey != "" {
+			cmd.Env = setEnvIfBlank(cmd.Env, "LUCINATE_OPENAI_API_KEY", choice.APIKey)
+		}
 		if key, ok := lucinateLaunchKey(providers, resolve, sel, outfitPath.set); ok {
 			cmd.Env = setEnvIfAbsent(cmd.Env, "LUCINATE_OPENAI_API_KEY", key)
 		}
@@ -1167,6 +1189,26 @@ func lucinateLaunchKey(providersPath string, resolve func(string) string, sel ou
 		return v, true
 	}
 	return "", false
+}
+
+// setEnvIfBlank sets key in a child environment unless it already holds a
+// non-empty value. It differs from setEnvIfAbsent in treating an exported but
+// empty variable as unset — for an address or a key, "" is not a deliberate
+// choice worth preserving, it is a gap, and this is the rule harnessEnv already
+// applies to the remote endpoint's values.
+func setEnvIfBlank(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, kv := range env {
+		if !strings.HasPrefix(kv, prefix) {
+			continue
+		}
+		if kv != prefix {
+			return env // set to something; leave it alone
+		}
+		env[i] = prefix + value
+		return env
+	}
+	return append(env, prefix+value)
 }
 
 // setEnvIfAbsent appends key=value to a child environment unless the key is
@@ -1274,34 +1316,66 @@ func namesAnOutfitOrAlias(arg string) bool {
 // against the environment the agent will actually run with. Fetching it
 // afterwards left the apply warning that no key was set while the launch was
 // about to supply one.
-func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string) (outfit.Selection, string, *remote.Response, error) {
+func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, rest []string, route routeOptions) (outfit.Selection, string, *remote.Response, *fleet.Choice, error) {
 	// The flag's value has to be attached, so `--outfit ./dev/Outfit` (or
 	// `--outfit q3`) would otherwise apply ./Outfit and quietly hand the path
 	// or alias to the harness.
 	if f.path == "" && len(rest) > 0 && namesAnOutfitOrAlias(rest[0]) {
-		return outfit.Selection{}, "", nil, fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
+		return outfit.Selection{}, "", nil, nil, fmt.Errorf("--outfit takes its path attached: --outfit=%s (a bare --outfit applies ./%s)", rest[0], outfit.DefaultFile)
 	}
 	sel, path, err := readOutfit("outfit harness --outfit=<file>", f.path)
 	if err != nil {
-		return outfit.Selection{}, "", nil, err
+		return outfit.Selection{}, "", nil, nil, err
 	}
 	// As for apply, --providers overrides the catalogue the selection resolves
 	// against (an Outfit never names one).
 	sel.Providers = providers
-	fmt.Printf("Applying %s\n\n", path)
 	envDir := filepath.Dir(path)
 	localResolve := opencode.EnvResolver(envDir)
+	// Routing runs before the apply, and before anything is printed about
+	// applying, for the reason the remote fetch does: a launch that cannot find
+	// a node must leave the harness config exactly as it was.
+	choice, err := routeThroughFleet(sel, path, route)
+	if err != nil {
+		return outfit.Selection{}, "", nil, nil, err
+	}
+	if choice != nil {
+		// The chosen node's address is what the apply writes, in the slot a
+		// REMOTE endpoint's address is written to.
+		sel.BaseURL = choice.BaseURL
+	}
+	fmt.Printf("Applying %s\n\n", path)
 	// Before the apply, so a launch that cannot authenticate stops without
 	// having rewritten the harness config.
 	remoteResp, err := fetchRemoteEnv(sel, envDir, localResolve)
 	if err != nil {
-		return outfit.Selection{}, "", nil, err
+		return outfit.Selection{}, "", nil, nil, err
 	}
-	if err := applySelection(sel, h, envDir, remoteLaunchResolver(localResolve, remoteResp)); err != nil {
-		return outfit.Selection{}, "", nil, err
+	resolve := remoteLaunchResolver(localResolve, remoteResp)
+	if choice != nil && choice.APIKey != "" {
+		resolve = fleetLaunchResolver(resolve, choice.APIKey)
+	}
+	if err := applySelection(sel, h, envDir, resolve); err != nil {
+		return outfit.Selection{}, "", nil, nil, err
 	}
 	fmt.Println()
-	return sel, envDir, remoteResp, nil
+	return sel, envDir, remoteResp, choice, nil
+}
+
+// fleetLaunchResolver extends a lookup with the engine key of the node a launch
+// was routed to. The apply then writes a config knowing the key will be there,
+// exactly as the remote path does — the missing-key warning is left for when a
+// key really is missing.
+func fleetLaunchResolver(base func(string) string, key string) func(string) string {
+	return func(name string) string {
+		if v := base(name); v != "" {
+			return v
+		}
+		if name == remoteAPIKeyEnv {
+			return key
+		}
+		return ""
+	}
 }
 
 // remoteEnvTimeout bounds the call that fetches a remote endpoint's key, so a
