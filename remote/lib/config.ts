@@ -28,9 +28,10 @@ export interface LlmConfig {
   /** Pinned vLLM version installed into the AMI's venv (uv pip install vllm==...). */
   vllmVersion: string;
   /**
-   * Pinned ai-dock/llama.cpp-cuda release tag (e.g. "b10107") baked into the
+   * Pinned ai-dock/llama.cpp-cuda release tag (e.g. "b10355") baked into the
    * llamacpp AMI — a prebuilt CUDA `llama-server` (CUDA 12.8, amd64). ai-dock
-   * tracks upstream llama.cpp; pick a build new enough for MTP (PR #22673).
+   * tracks upstream llama.cpp; pick a build new enough for every architecture
+   * you deploy — MTP (PR #22673) and Muse Glimmer (PR #26841).
    */
   llamacppRelease: string;
   /**
@@ -89,8 +90,10 @@ const DEFAULTS = {
   // version that lists the target architecture as supported.
   vllmVersion: '0.26.0',
   // ai-dock/llama.cpp-cuda release with CUDA 12.8; pin a specific build for
-  // reproducible bakes. Must post-date the MTP merge (PR #22673).
-  llamacppRelease: 'b10107',
+  // reproducible bakes. Must post-date the MTP merge (PR #22673) and, for Muse
+  // Glimmer, commit 62bf73d2 (PR #26841). b10355 is ai-dock's first build
+  // carrying the latter — their previous, b10333, predates it.
+  llamacppRelease: 'b10355',
   // outfitVersion is not a constant: it defaults to the latest git release tag
   // (see latestReleaseVersion), so the release process — which creates the tag —
   // sets it, and the baked binary can never drift from a real release. Override
