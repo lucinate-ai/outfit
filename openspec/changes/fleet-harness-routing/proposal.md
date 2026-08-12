@@ -23,10 +23,16 @@ built yet.
   engine's OpenAI-compatible base URL, and inject `OPENAI_BASE_URL` (plus the
   node's engine key when it needs one) into the launched agent — the same
   injection path `REMOTE` uses today, with a selection step in front.
-- Selection prefers a node already serving the wanted model. When none is, the
-  selected node is **woken**: outfit pushes the Outfit's model as that node's
-  deploy config, starts it through the daemon's existing start endpoint, and
-  waits for it to answer before launching the agent. `--no-wake` turns that off.
+- Selection prefers a node already serving the wanted model, and which of
+  several such nodes wins is a setting: `prefer: idle` (the default) takes the
+  node inactive longest, so a second agent does not pile onto the engine that is
+  already working; `prefer: active` consolidates onto the busy node instead,
+  leaving the rest free to wake for another model or sleep. It is set per fleet
+  in `fleet.yaml` and overridden per launch with `--prefer`.
+- When no node is serving what is wanted, the selected node is **woken**: outfit
+  pushes the Outfit's model as that node's deploy config, starts it through the
+  daemon's existing start endpoint, and waits for it to answer before launching
+  the agent. `--no-wake` turns that off.
 - The daemon's status reply gains the one fact a router needs and no caller can
   guess: where its engine serves — the port, whether it is bound to loopback,
   and whether it demands a key.
@@ -60,8 +66,9 @@ for the same instruction rather than a second mechanism.
   and `BASEURL`.
 - `daemon-api`: status reports the supervised engine's serving endpoint — port,
   path, whether the bind is loopback-only, and whether a key is required.
-- `fleet-config`: per-node `engine:` overrides and `engineTokenEnv`, resolved
-  the same way the daemon token reference already is.
+- `fleet-config`: a fleet-wide `prefer` setting, plus per-node `engine:`
+  overrides and `engineTokenEnv`, resolved the same way the daemon token
+  reference already is.
 - `fleet-client`: `outfit fleet route` as a fourth subcommand, reporting the
   selection a launch would make.
 

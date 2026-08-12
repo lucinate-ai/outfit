@@ -13,7 +13,10 @@ it was passed over, and SHALL name what would happen on a real launch: which
 node would be woken, or that none could serve it.
 
 The Outfit and the fleet file SHALL resolve as they do for a launch: the Outfit
-path defaults to `./Outfit`, and `--fleet` overrides the Outfit's `FLEET`.
+path defaults to `./Outfit`, and `--fleet` overrides the Outfit's `FLEET`. It
+SHALL accept `--prefer` and `--node` as a launch does, and SHALL name the
+activity preference in force — comparing the two preferences on a live fleet is
+the cheapest way to decide which one a fleet should be run with.
 
 #### Scenario: The chosen node is explained
 
@@ -28,6 +31,13 @@ path defaults to `./Outfit`, and `--fleet` overrides the Outfit's `FLEET`.
   the Outfit's model
 - **THEN** no engine is started, no config is pushed, and no harness config is
   written
+
+#### Scenario: The two preferences can be compared
+
+- **WHEN** `outfit fleet route --prefer active` runs against a fleet whose file
+  declares `prefer: idle`
+- **THEN** it reports the node `active` would choose and names that preference,
+  without changing the fleet file
 
 #### Scenario: A launch that would wake a node says so
 

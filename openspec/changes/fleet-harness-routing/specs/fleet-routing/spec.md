@@ -76,10 +76,9 @@ node whose state is `running` and whose served model matches the Outfit's
 `MODEL` (or its `ALIAS`, against the name the node reports serving). An Outfit
 that names no model SHALL match any running node.
 
-Among matching nodes, the one that has been inactive longest SHALL be chosen,
-using the idle figure the daemon reports; a node reporting no activity SHALL
-count as the most idle. Ties SHALL be broken by fleet-file order, so the same
-fleet in the same state chooses the same node.
+Matching nodes SHALL be ranked by the activity preference in force (see
+"Preferring an idle or an active node"). Ties SHALL be broken by fleet-file
+order, so the same fleet in the same state chooses the same node.
 
 A node that does not answer — unreachable, unauthorized, or a configuration
 error — SHALL be skipped rather than aborting the selection, exactly as it is a
@@ -94,11 +93,12 @@ A running engine SHALL NEVER be stopped or restarted to make room, including a
 pinned one: another person may be using it. A node running a different model is
 therefore not a candidate, and pinning one SHALL fail saying what it is serving.
 
-#### Scenario: The idlest matching node wins
+#### Scenario: The preference decides between matching nodes
 
 - **WHEN** two nodes are running the wanted model and one reports a longer time
   since it last did work
-- **THEN** the longer-idle node is chosen
+- **THEN** the one the activity preference favours is chosen, and the same fleet
+  in the same state chooses the same node every time
 
 #### Scenario: An unreachable node is skipped
 
@@ -128,6 +128,71 @@ therefore not a candidate, and pinning one SHALL fail saying what it is serving.
 - **WHEN** the user pins a node that is running a different model
 - **THEN** the command fails saying what that node is serving, and the engine is
   untouched
+
+### Requirement: Preferring an idle or an active node
+
+Which of several matching nodes wins SHALL be a setting with two values, because
+the right answer depends on the fleet rather than on the code:
+
+- `idle` — the node inactive longest wins, using the idle figure the daemon
+  reports; a node reporting no activity counts as the most idle. Work is spread,
+  and a node currently mid-request is the last one chosen, since it is the least
+  idle of all.
+- `active` — the most recently active node wins. Sessions consolidate onto one
+  engine, leaving the other nodes free to be woken for another model or left
+  alone to save power.
+
+The default SHALL be `idle`: piling a second agent onto the engine that is
+already working is the failure worth avoiding by default, and a fleet exists to
+have somewhere else to put the work.
+
+The setting SHALL resolve with the precedence `--prefer <idle|active>`, then the
+fleet file's own `prefer`, then the default. A value that is neither SHALL fail
+naming both accepted values. The preference in force SHALL be named wherever the
+choice is explained, so a surprising selection is traceable to the setting that
+caused it rather than looking arbitrary.
+
+The setting SHALL rank matching nodes only. It SHALL NOT decide whether to wake
+a node, override a pin, or make a node running a different model eligible —
+those rules hold whichever value is in force.
+
+#### Scenario: Idle spreads the work
+
+- **WHEN** two nodes are running the wanted model, one active seconds ago and
+  one inactive for an hour, and the preference is `idle`
+- **THEN** the node inactive for an hour is chosen
+
+#### Scenario: Active consolidates the work
+
+- **WHEN** the same two nodes are available and the preference is `active`
+- **THEN** the node active seconds ago is chosen
+
+#### Scenario: A busy engine is the last resort under idle
+
+- **WHEN** one matching node is mid-request and another has been quiet, under
+  the default preference
+- **THEN** the quiet node is chosen
+
+#### Scenario: The flag beats the fleet file
+
+- **WHEN** a fleet file sets `prefer: active` and the user passes `--prefer idle`
+- **THEN** nodes are ranked as `idle`
+
+#### Scenario: The default is idle
+
+- **WHEN** neither the flag nor the fleet file sets a preference
+- **THEN** nodes are ranked as `idle`
+
+#### Scenario: An unknown preference is refused
+
+- **WHEN** a preference is set to anything other than `idle` or `active`
+- **THEN** the command fails naming both accepted values, and no node is
+  selected
+
+#### Scenario: The preference is named in the explanation
+
+- **WHEN** a launch reports the node it chose
+- **THEN** the report names the preference that ranked it
 
 ### Requirement: Waking a node
 

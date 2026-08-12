@@ -27,6 +27,34 @@ A node that declares no engine block SHALL behave exactly as it does now.
 - **WHEN** a fleet file's nodes declare no engine block
 - **THEN** they parse and behave as before
 
+### Requirement: Fleet-wide activity preference
+
+A fleet file MAY declare a `prefer` value of `idle` or `active`, setting how
+routing ranks several nodes that could all serve a request. It belongs to the
+file rather than to each node: it describes how this cluster should be used —
+spread the work, or consolidate it — which is a property of the fleet, not of
+any one machine in it.
+
+A file declaring nothing SHALL rank as `idle`. A file declaring anything other
+than `idle` or `active` SHALL fail to parse, naming both accepted values, in
+keeping with the file's other validation.
+
+#### Scenario: A fleet that consolidates
+
+- **WHEN** a fleet file declares `prefer: active`
+- **THEN** routing against that fleet ranks the most recently active node first,
+  unless a flag overrides it
+
+#### Scenario: A fleet that declares nothing
+
+- **WHEN** a fleet file declares no preference
+- **THEN** routing ranks the longest-idle node first
+
+#### Scenario: An unknown value is rejected at parse time
+
+- **WHEN** a fleet file declares `prefer: whatever`
+- **THEN** parsing fails naming `idle` and `active`
+
 ### Requirement: Engine token references
 
 A node MAY name the environment variable holding the key its engine requires,

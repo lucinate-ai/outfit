@@ -148,11 +148,40 @@ it.
 ### Selecting on idle time from status, and never displacing a running engine
 
 The status fan-out is one round trip the router makes anyway, and `idleSeconds`
-is a figure the daemon already derives. Ranking matching nodes by longest idle
-spreads sessions off whichever box was used last, without a second metrics
-fan-out or an attempt to interpret token counters. It is a crude load signal and
-that is accepted: the alternative is a scheduler, and a fleet is a handful of
-machines.
+is a figure the daemon already derives — so ranking on it costs nothing, needs
+no second metrics fan-out, and involves no interpretation of token counters. It
+is a crude load signal and that is accepted: the alternative is a scheduler, and
+a fleet is a handful of machines.
+
+Which direction to rank in is a setting rather than a decision, because both
+answers are right for different fleets:
+
+- **`idle`** — spread. Several people share the fleet, or one person runs
+  several agents; the thing to avoid is a second session landing on the engine
+  that is mid-request, which is exactly the node `idleSeconds` ranks last.
+- **`active`** — consolidate. One person, several machines, and the reason to
+  route at all is capacity rather than sharing. Keeping sessions on one engine
+  leaves the others genuinely free — available to be woken for a different
+  model, or left asleep rather than idling a GPU.
+
+`idle` is the default because piling onto a busy engine degrades a session
+someone is already in, while over-spreading only costs the odd extra wake.
+
+The setting resolves flag-then-file-then-default: `--prefer` on the launch, then
+`prefer:` in `fleet.yaml`, then `idle`. It sits in the fleet file rather than the
+Outfit because it describes how a *cluster* should be used — the same Outfit
+routed at a shared fleet and a personal one wants different answers, and the
+fleet file is the thing that differs.
+
+*Alternative considered*: an `OUTFIT_FLEET_PREFER` environment variable, for
+symmetry with `OUTFIT_HARNESS` and `OUTFIT_ALIAS`. Left out — those name *what
+to run*, which changes shell to shell; this names *how a cluster is shared*,
+which does not. It can be added later without disturbing the precedence.
+
+*Alternative considered*: inferring the direction — spread when several nodes
+are busy, consolidate when one is. Rejected as unpredictable: a routing decision
+that changes with the weather is worse than one that is occasionally
+suboptimal, and it is not something a user could reason about from the output.
 
 A running engine is never stopped to make room, including a pinned one. On a
 shared machine the cost of being wrong is someone else's session dying mid
@@ -210,8 +239,15 @@ safe to attempt automatically.
   is treated as success-by-another-route rather than an error.
 - **`idleSeconds` is a weak load signal.** A node that has been busy for an hour
   and one that finished a second ago both look "recently active". → Accepted;
-  see the decision above. If it proves wrong, the metrics fan-out is a
-  drop-in better signal behind the same selector interface.
+  see the decision above. It is good enough for what `prefer: idle` is for —
+  a node mid-request always ranks last — and if it proves too coarse, the
+  metrics fan-out is a drop-in better signal behind the same selector
+  interface, with no change to the setting or its values.
+- **`prefer: active` can pile sessions onto one engine.** That is what it is
+  for, but a fleet set to it will happily put a third and fourth agent on a
+  node already at capacity, because nothing here measures capacity. → It is
+  opt-in, it is a per-fleet choice made once by whoever runs the fleet, and
+  `--prefer idle` overrides it for a launch that should go elsewhere.
 - **More network in the launch path.** Every fleet-routed `outfit harness` now
   fans out over the fleet before it launches anything. → Bounded by the same
   `RequestTimeout` the fleet client already uses, and skipped entirely for an

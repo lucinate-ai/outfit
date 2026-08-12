@@ -29,22 +29,30 @@
       `fleet.NodeConfig`, each field falling back independently
 - [ ] 3.2 Add `engineTokenEnv` and resolve it exactly as the daemon token
       reference is (environment, then the `.env` beside the fleet file)
-- [ ] 3.3 Tests: a full override, a partial override, no block at all, an unset
-      engine token variable naming itself
+- [ ] 3.3 Add the fleet-wide `prefer` key (`idle`/`active`, defaulting to
+      `idle`), rejecting any other value at parse time alongside the file's
+      existing validation
+- [ ] 3.4 Tests: a full override, a partial override, no block at all, an unset
+      engine token variable naming itself, each `prefer` value, an absent one,
+      and a rejected one
 
 ## 4. Selection
 
 - [ ] 4.1 Add a selector in `internal/fleet` that ranks `[]NodeResult`: running
-      nodes serving the wanted model first, longest-idle wins, fleet-file order
-      breaks ties, non-answering nodes skipped
-- [ ] 4.2 Add endpoint resolution: the node's engine override, else the node's
+      nodes serving the wanted model first, the activity preference deciding
+      between them, fleet-file order breaking ties, non-answering nodes skipped
+- [ ] 4.2 Resolve the activity preference — `--prefer`, then the fleet file,
+      then `idle` — and carry the reason (which preference, and the idle figures
+      it compared) on the selection so callers can explain it
+- [ ] 4.3 Add endpoint resolution: the node's engine override, else the node's
       host with the daemon's reported port and path; refuse a loopback-only
       engine on a non-loopback node, and refuse a running node that reports no
       endpoint
-- [ ] 4.3 Resolve the chosen node's engine key when the node reports one is
+- [ ] 4.4 Resolve the chosen node's engine key when the node reports one is
       required, failing before anything is launched when it cannot be resolved
-- [ ] 4.4 Tests: the ranking rules, each refusal, and a whole fleet that cannot
-      be reached
+- [ ] 4.5 Tests: the ranking rules under each preference, the precedence between
+      flag, file and default, each refusal, and a whole fleet that cannot be
+      reached
 
 ## 5. Waking a node
 
@@ -62,8 +70,9 @@
 
 ## 6. Routing the harness launch
 
-- [ ] 6.1 Add `--fleet`, `--node`, `--no-wake` and `--wake-timeout` to
-      `outfit harness`, with `--fleet` overriding the Outfit's `FLEET`
+- [ ] 6.1 Add `--fleet`, `--node`, `--prefer`, `--no-wake` and `--wake-timeout`
+      to `outfit harness`, with `--fleet` overriding the Outfit's `FLEET` and
+      `--prefer` overriding the fleet file's
 - [ ] 6.2 Route before the apply, beside `fetchRemoteEnv`: select, wake if
       needed, and fill `sel.BaseURL` from the chosen node — skipping selection
       when the Outfit pins a `BASEURL`, and saying so
@@ -71,8 +80,8 @@
       agent's environment without overriding what is already set, including the
       harness-specific key name lucinate reads
 - [ ] 6.4 Fail a `FLEET` URL with "gateway routing is not implemented yet"
-- [ ] 6.5 Report the chosen node, its endpoint, and the reason on stderr before
-      launching
+- [ ] 6.5 Report the chosen node, its endpoint, and the reason — naming the
+      activity preference that ranked it — on stderr before launching
 - [ ] 6.6 Tests: routed launch, pinned node, `--no-wake` failing with the node
       table, a pinned `BASEURL` skipping selection, an exported
       `OPENAI_BASE_URL` winning, and a failed route leaving the harness config
@@ -80,8 +89,9 @@
 
 ## 7. `outfit fleet route`
 
-- [ ] 7.1 Add the `route` subcommand: resolve the Outfit and fleet as a launch
-      does, report the node, endpoint and reason, and change nothing
+- [ ] 7.1 Add the `route` subcommand: resolve the Outfit, fleet and preference
+      as a launch does, accept `--prefer` and `--node`, report the node,
+      endpoint, preference and reason, and change nothing
 - [ ] 7.2 Report the node a launch would wake when none is serving, without
       waking it
 - [ ] 7.3 Tests: an explained choice, a no-choice report, and that nothing is
@@ -91,10 +101,11 @@
 
 - [ ] 8.1 Document `FLEET` in `docs/outfit-file.md` and the new flags in
       `docs/commands/harness.md`
-- [ ] 8.2 Document `outfit fleet route`, the `engine:` block and
-      `engineTokenEnv` in `docs/commands/fleet.md`
-- [ ] 8.3 Update `examples/fleet/fleet.yaml` with a commented engine override and
-      engine token reference
+- [ ] 8.2 Document `outfit fleet route`, the `prefer` setting, the `engine:`
+      block and `engineTokenEnv` in `docs/commands/fleet.md`, including when a
+      fleet wants `active` rather than `idle`
+- [ ] 8.3 Update `examples/fleet/fleet.yaml` with a commented `prefer`, engine
+      override and engine token reference
 - [ ] 8.4 Extend `examples/fleet-docker` to route a harness launch at a node —
       the published-port case the engine override exists for — and cover it in
       `run-tests.sh`
