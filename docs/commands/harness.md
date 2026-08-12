@@ -107,3 +107,4 @@ engine that is mid-request; `active` consolidates onto the busy one instead.
 - [`outfit show`](show.md) — what the active harness has configured
 - [`outfit apply`](apply.md) — dress without launching
 - [`outfit fleet route`](fleet.md#which-node-would-i-get) — which node a launch would pick
+- [`examples/fleet-local/`](../../examples/fleet-local/) — routing at a single local node, end to end

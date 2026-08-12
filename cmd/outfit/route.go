@@ -78,11 +78,18 @@ func routeThroughFleet(sel outfit.Selection, outfitPath string, opts routeOption
 	if err != nil {
 		return nil, err
 	}
+	// The deploy config is what a wake would push, and its model id is also a
+	// third name a node may report itself serving — derived up front so
+	// selection recognises a node woken from this same Outfit. A preset that
+	// will not parse is not fatal here: the failure belongs to the wake, which
+	// is where it can be explained.
+	dc, dcErr := deployConfigWithoutContext(sel, outfitPath)
 	want := fleet.Want{
-		Model:  sel.Model,
-		Alias:  sel.Alias,
-		Node:   opts.node,
-		Prefer: prefer,
+		Model:   sel.Model,
+		Alias:   sel.Alias,
+		ModelID: dc.ModelID,
+		Node:    opts.node,
+		Prefer:  prefer,
 	}
 
 	fmt.Fprintf(os.Stderr, "Routing through %s...\n", cfg.Path)
@@ -108,7 +115,6 @@ func routeThroughFleet(sel outfit.Selection, outfitPath string, opts routeOption
 	if opts.noWake {
 		return nil, fmt.Errorf("%w\nStart one with `outfit fleet start <node>`, or drop --no-wake to have outfit do it", err)
 	}
-	dc, dcErr := deployConfigWithoutContext(sel, outfitPath)
 	if dcErr != nil {
 		return nil, fmt.Errorf("%w\nand this Outfit cannot be turned into something to start: %v", err, dcErr)
 	}

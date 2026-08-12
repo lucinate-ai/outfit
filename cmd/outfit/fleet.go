@@ -350,7 +350,13 @@ func cmdFleetRoute(args []string) error {
 	if err != nil {
 		return err
 	}
-	want := fleet.Want{Model: sel.Model, Alias: sel.Alias, Node: node, Prefer: preference}
+	// As for a launch: the model id a wake would push is a third name a node
+	// may report itself serving.
+	dc, dcErr := deployConfigWithoutContext(sel, resolvedPath)
+	want := fleet.Want{
+		Model: sel.Model, Alias: sel.Alias, ModelID: dc.ModelID,
+		Node: node, Prefer: preference,
+	}
 
 	fmt.Printf("Outfit: %s\nFleet:  %s\nPrefer: %s\n\n", resolvedPath, cfg.Path, preference)
 	if sel.BaseURL != "" {
@@ -371,7 +377,6 @@ func cmdFleetRoute(args []string) error {
 		return err
 	}
 	fmt.Println(err)
-	dc, dcErr := deployConfigWithoutContext(sel, resolvedPath)
 	if dcErr != nil {
 		fmt.Printf("\nA launch could not start one either: %v\n", dcErr)
 		return nil

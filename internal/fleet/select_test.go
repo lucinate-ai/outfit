@@ -389,3 +389,39 @@ func TestEngineKeyResolution(t *testing.T) {
 		t.Errorf("key = %q, %v; want sk-node", key, err)
 	}
 }
+
+// A node woken from an Outfit reports the deploy config's model id, which is
+// not the ALIAS the client asked for — an Outfit may take its model from a
+// preset and state no MODEL at all. Unless that id counts as a match, a second
+// launch fails to recognise the node the first one started and has nothing
+// left to wake.
+func TestWokenNodeIsRecognisedOnASecondLaunch(t *testing.T) {
+	cfg := testConfig(t, "local")
+	// What the node reports after being woken: the resolved repo, not the
+	// friendly name the Outfit used.
+	woken := []NodeResult{runningNode("local", "Zambizi/slim-gemma-4-12b-gguf", 5)}
+
+	// The client knows only its ALIAS and the id it would have pushed.
+	want := Want{
+		Alias:   "gemma-4-12b-it",
+		ModelID: "Zambizi/slim-gemma-4-12b-gguf",
+	}
+	got, err := cfg.choose(woken, want)
+	if err != nil {
+		t.Fatalf("a second launch should reuse the woken node: %v", err)
+	}
+	if got.Node.Name != "local" {
+		t.Errorf("chose %q", got.Node.Name)
+	}
+
+	// Without the id it is genuinely unrecognisable, which is the bug.
+	if _, err := cfg.choose(woken, Want{Alias: "gemma-4-12b-it"}); err == nil {
+		t.Error("the alias alone should not match the reported repo id")
+	}
+
+	// And a node serving something else still does not match.
+	other := []NodeResult{runningNode("local", "someone/else", 5)}
+	if _, err := cfg.choose(other, want); err == nil {
+		t.Error("an unrelated model should not match")
+	}
+}

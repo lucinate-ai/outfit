@@ -1,0 +1,14 @@
+# A fleet of one: this machine.
+#
+# Worth doing even with a single node, because it moves the engine's lifecycle
+# out of your way — `outfit harness` starts llama-server when you need it and
+# leaves it running for the next session, instead of you keeping a terminal
+# open for it.
+#
+# Nothing here needs configuring. The daemon is on loopback, so it needs no
+# token; the engine is on loopback too, which is fine because the node is
+# reached over loopback; and llama.cpp's port is the one the daemon reports, so
+# there is no `engine:` block to write. Everything in this file is the default.
+nodes:
+  - name: local
+    host: 127.0.0.1

@@ -298,6 +298,7 @@ conflict, and stopping one that is not running succeeds quietly.
 
 ## See also
 
+- [`examples/fleet-local/`](../../examples/fleet-local/) — a fleet of one, on your own machine
 - [`examples/fleet-docker/`](../../examples/fleet-docker/) — a runnable fleet
 - [`outfit daemon`](serve.md) — what runs on each node
 - [HTTP Control API](../http-api.md) — the API the fleet client speaks

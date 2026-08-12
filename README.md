@@ -410,6 +410,11 @@ set -a && . ./.env && set +a
 outfit fleet status --fleet ./fleet.yaml
 ```
 
+Only one machine? A fleet of one is still worth it —
+[`examples/fleet-local/`](examples/fleet-local/) runs a daemon on your own box
+so `outfit harness` starts the engine when you need it and leaves it up for the
+next session, instead of you keeping a terminal open for `llama-server`.
+
 Details in [`docs/commands/fleet.md`](docs/commands/fleet.md); a `fleet.yaml`
 for machines you own in [`examples/fleet/`](examples/fleet/).
 

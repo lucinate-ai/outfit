@@ -27,6 +27,13 @@ const DefaultPath = "/v1"
 type Want struct {
 	Model string
 	Alias string
+	// ModelID is the identity a woken node reports for this model — the
+	// deploy config's model id. It is a third acceptable name because an
+	// Outfit may state no MODEL at all, taking it from its preset instead:
+	// the client then knows only an ALIAS, while a node woken from that same
+	// Outfit reports the resolved repo. Without this, a second launch would
+	// fail to recognise the node the first one started.
+	ModelID string
 	// Node pins the selection to one node by name, skipping the search.
 	Node string
 	// Prefer ranks nodes that all match; empty means PreferIdle.
@@ -44,10 +51,13 @@ func (w Want) prefer() Prefer {
 // matches reports whether a node serving `serving` is serving what is wanted.
 // A launch that names no model wants any running engine.
 func (w Want) matches(serving string) bool {
-	if w.Model == "" && w.Alias == "" {
+	if w.Model == "" && w.Alias == "" && w.ModelID == "" {
 		return true
 	}
-	return serving != "" && (serving == w.Model || serving == w.Alias)
+	if serving == "" {
+		return false
+	}
+	return serving == w.Model || serving == w.Alias || serving == w.ModelID
 }
 
 // wanted names the model for a message, preferring the Outfit's own MODEL.
@@ -57,6 +67,9 @@ func (w Want) wanted() string {
 	}
 	if w.Alias != "" {
 		return w.Alias
+	}
+	if w.ModelID != "" {
+		return w.ModelID
 	}
 	return "any model"
 }
