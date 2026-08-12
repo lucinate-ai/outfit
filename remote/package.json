@@ -11,7 +11,6 @@
     "deploy:image": "cdk deploy cloud-vm-llm-image",
     "bake": "bash scripts/bake",
     "console": "bash scripts/console",
-    "seed-model": "tsx scripts/seed-model.mts",
     "deploy": "cdk deploy cloud-vm-llm --outputs-file cdk-outputs.json",
     "cdk": "cdk"
   },

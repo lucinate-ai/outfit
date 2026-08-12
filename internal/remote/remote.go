@@ -222,7 +222,11 @@ type DeployConfig struct {
 // are absent, and stores the config; deploying does not start the instance.
 // allowedCidr scopes who may reach this environment's instance; it is required
 // the first time and optional afterwards (empty leaves ingress alone).
-func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string) (*Response, error) {
+// reseed asks the control plane to fetch the weights even when they are
+// already in S3. It is a property of this request, not of what the environment
+// serves, so it rides beside allowedCidr rather than on DeployConfig — which is
+// persisted verbatim, and would re-seed on every wake that read it back.
+func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string, reseed bool) (*Response, error) {
 	if cfg.DeployURL == "" {
 		return nil, fmt.Errorf(
 			"no deploy_url configured: add the remote/ deployment's DeployUrl output to the remote config (or set OUTFIT_REMOTE_DEPLOY_URL)")
@@ -230,7 +234,8 @@ func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string
 	body, err := json.Marshal(struct {
 		DeployConfig
 		AllowedCidr string `json:"allowedCidr,omitempty"`
-	}{dc, allowedCidr})
+		Reseed      bool   `json:"reseed,omitempty"`
+	}{dc, allowedCidr, reseed})
 	if err != nil {
 		return nil, err
 	}
