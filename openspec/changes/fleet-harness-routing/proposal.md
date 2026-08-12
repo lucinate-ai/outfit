@@ -69,8 +69,8 @@ for the same instruction rather than a second mechanism.
 - `fleet-config`: a fleet-wide `prefer` setting, plus per-node `engine:`
   overrides and `engineTokenEnv`, resolved the same way the daemon token
   reference already is.
-- `fleet-client`: `outfit fleet route` as a fourth subcommand, reporting the
-  selection a launch would make.
+- `fleet-client`: `outfit fleet route` alongside the existing subcommands,
+  reporting the selection a launch would make.
 
 ## Impact
 
