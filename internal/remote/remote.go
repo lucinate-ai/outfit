@@ -209,6 +209,11 @@ type DeployConfig struct {
 	ContextSize     int      `json:"contextSize"`
 	ServedModelName string   `json:"servedModelName"`
 	ServeArgs       []string `json:"serveArgs"`
+	// Companions names extra files from the model's own Hugging Face repo that
+	// the engine loads beside the weights, keyed by role ("draft", "mmproj").
+	// Values are bare filenames within that repo, never paths. Omitted when
+	// empty, so a deployment naming none sends exactly what it always did.
+	Companions map[string]string `json:"companions,omitempty"`
 }
 
 // Deploy creates (or updates) cfg.Environment on the control plane and sets

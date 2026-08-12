@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DescribeImagesCommand, EC2Client, RunInstancesCommand } from '@aws-sdk/client-ec2';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { runnerSpec } from '../lambda/runners/index.js';
+import { parseDeployConfig } from '../lambda/shared/deploy-config.js';
 
 const AMI_ROLE_TAG_KEY = 'cloud-vm-llm:role';
 const AMI_ROLE_TAG_VALUE = 'runtime-ami';
@@ -53,19 +55,15 @@ const {
 // What to seed comes from the deploy-config parameter, not the stack outputs.
 const ssm = new SSMClient({ region });
 const param = await ssm.send(new GetParameterCommand({ Name: DEPLOY_CONFIG_PARAM }));
+// Validated by the same parser the deploy Lambda uses, so this path cannot
+// accept a config the automatic one would reject (or vice versa).
 let deploy;
 try {
-  deploy = JSON.parse(param.Parameter?.Value ?? '{}');
-} catch {
-  fail('deploy-config is not valid JSON — set it via `outfit remote deploy` first.');
+  deploy = parseDeployConfig(param.Parameter?.Value);
+} catch (err) {
+  fail(`${(err as Error).message} — set it via \`outfit remote deploy\` first.`);
 }
-const { runner, modelId, quant, weightsPrefix } = deploy;
-if (runner !== 'vllm' && runner !== 'llamacpp') {
-  fail(`deploy-config.runner must be vllm or llamacpp (got ${JSON.stringify(runner)}).`);
-}
-if (!modelId || !weightsPrefix) {
-  fail('deploy-config is missing modelId/weightsPrefix.');
-}
+const { runner, modelId, quant, weightsPrefix, companions } = deploy!;
 
 const ec2 = new EC2Client({ region });
 
@@ -102,20 +100,9 @@ export MODEL_ID='${modelId}'
 mkdir -p /opt/llm/model
 `;
 
-const download =
-  runner === 'llamacpp'
-    ? `export QUANT='${quant}'
-mkdir -p /tmp/dl
-/opt/llm/venv/bin/python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['MODEL_ID'], allow_patterns=['*'+os.environ['QUANT']+'*'], local_dir='/tmp/dl', token=(os.environ.get('HF_TOKEN') or None))"
-# The main GGUF (MTP is embedded); normalise to model.gguf so the runtime need
-# not guess the filename. mmproj/projector files are excluded.
-mapfile -t GGUFS < <(find /tmp/dl -type f -name '*.gguf' ! -iname '*mmproj*' | sort)
-test "\${#GGUFS[@]}" -ge 1
-cp "\${GGUFS[0]}" /opt/llm/model/model.gguf
-[ "\${#GGUFS[@]}" -gt 1 ] && echo "WARNING: \${#GGUFS[@]} gguf files for $QUANT; used the first (split quant not handled)" >&2 || true
-`
-    : `/opt/llm/venv/bin/python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['MODEL_ID'], local_dir='/opt/llm/model', token=(os.environ.get('HF_TOKEN') or None))"
-`;
+// The download fragment comes from the runner's spec — the same one the deploy
+// Lambda's seed uses. Restating it here is what let the two drift.
+const download = runnerSpec(runner).seedDownload(deploy!);
 
 const userData = `${header}${download}aws s3 sync /opt/llm/model/ 's3://${bucket}/${weightsPrefix}' --region '${region}'
 shutdown -h now
@@ -142,6 +129,9 @@ const run = await ec2.send(
 const instanceId = run.Instances?.[0]?.InstanceId;
 
 console.log(`Seeding ${runner} model ${modelId}${quant ? `:${quant}` : ''} -> s3://${bucket}/${weightsPrefix}`);
+for (const [role, file] of Object.entries(companions)) {
+  console.log(`  + ${role} companion: ${file}`);
+}
 console.log(`Seed instance: ${instanceId} (${instanceType}, from ${image.ImageId})`);
 console.log('It downloads from Hugging Face, syncs to S3, then terminates itself (~15-20 min).');
 console.log('\nWatch it:');

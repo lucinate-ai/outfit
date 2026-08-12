@@ -120,12 +120,39 @@ and replaced by `companionArgs`. `internal/preset` gains aliases so `md`,
 without them, a preset written with `-md` would evade the drop and leak a local
 path onto the instance.
 
+### The projector exclusion stays (revised during implementation)
+
+The proposal said naming companions explicitly would *replace* the blanket
+`! -iname '*mmproj*'`. Implementing it showed that removes a protection worth
+keeping: where the quant glob happens to match a projector — quant `Q4_K_M`
+matching `mmproj-Q4_K_M.gguf` — the projector sorts *before* the real weights
+(`mm` < `mo`) and would be copied to `model.gguf` and served as the model.
+
+So both exclusions apply: the named companions, and `*mmproj*` regardless.
+`mmproj` is still no longer a *special case* in the sense that mattered —
+keeping a projector is now done by naming it as a companion rather than being
+impossible — but not selecting one as the main model stays unconditional.
+
+### A charset, not multi-layer quoting (added during implementation)
+
+A companion filename is interpolated into generated shell *and* into a Python
+literal inside it. Rather than quote correctly through both layers,
+`COMPANION_FILENAME` (`/^[A-Za-z0-9._-]+$/`) rejects anything that could escape
+either, at deploy time where the error is visible. Real GGUF filenames fit it.
+This subsumes the path-separator check the proposal called for.
+
 ### One download fragment, two callers
 
 `seedDownload` keeps producing the shell, extended to fetch each companion by
 exact filename (a second `allow_patterns` entry) and copy it to its role name.
-`seed-model.mjs` is changed to import the same fragment rather than restating
+The manual script is changed to import the same fragment rather than restating
 it, removing the existing drift risk between the automatic and manual paths.
+
+Implementation note: importing the runner spec means the script has to be
+TypeScript, so `scripts/seed-model.mjs` became `scripts/seed-model.mts`, run
+with the `tsx` already in devDependencies (`pnpm seed-model` unchanged). It
+also now validates through `parseDeployConfig`, so the manual path cannot
+accept a config the automatic one would reject.
 
 ## Risks / Trade-offs
 

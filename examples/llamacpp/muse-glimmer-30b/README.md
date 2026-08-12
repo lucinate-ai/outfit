@@ -256,9 +256,22 @@ asset the bake downloads exists for it. So:
 pnpm bake llamacpp     # ~15-25 min
 ```
 
-Note the cloud path loses the drafter as well as the encoder: the seed script
-takes a single GGUF and normalises it to `model.gguf`, so `dflash-kquant.gguf`
-is not carried across and speculative decoding is local-only for now.
+The drafter is carried across. `outfit remote deploy` reads
+`spec-draft-model` from the preset, takes its **basename**, and asks the seed
+for that file from the model's own repo — so the local path you downloaded to
+is never sent, and the instance loads its own synced copy. Deploy prints what
+it picked up:
+
+```
+  draft:   dflash-kquant.gguf
+```
+
+Two things follow from that. The basename must match the filename in the
+Hugging Face repo, so if you renamed the file locally the seed will fail with a
+"not found" naming it — better than a slower endpoint and no explanation. And
+`--spec-type draft-dflash` is still yours to set: the deployment owns *where*
+the drafter is, not how the engine is told to use it, exactly as for a local
+run.
 
 Deploy also needs a `MODEL` line, which the [`Outfit`](Outfit) deliberately
 leaves out — the cloud seed globs filenames rather than resolving a tag, so it
@@ -269,13 +282,14 @@ MODEL  meta-models/Muse-Glimmer-30B-GGUF:kquant-dynamic
 REMOTE muse-glimmer-30b
 ```
 
-Be precise with that suffix. The seed script downloads everything matching
-`*<quant>*`, drops `mmproj` files, sorts what's left and takes the first — so a
-looser `:kquant` would match `dflash-kquant.gguf` and silently serve the 1.6 GB
-drafter instead of the model. `kquant-dynamic` matches exactly one file.
+Be precise with that suffix. The seed downloads everything matching
+`*<quant>*`, sets aside the files named as companions, drops projectors, sorts
+what's left and takes the first — so a looser `:kquant` would pull in more than
+you meant. `kquant-dynamic` matches exactly one file.
 
-Seeding also excludes `mmproj` files, so a cloud deployment is text-only
-regardless of the encoder being published — which is what we want here anyway.
+The encoder stays out unless you ask for it, which is what we want here: this
+example sets `no-mmproj`, and the seed only fetches a projector when one is
+named as an `mmproj` companion.
 
 Adding `MODEL` breaks the local `outfit serve` path above, since it becomes
 `--hf-repo meta-models/Muse-Glimmer-30B-GGUF:kquant-dynamic` — a tag that

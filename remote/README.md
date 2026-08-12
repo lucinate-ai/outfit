@@ -204,6 +204,30 @@ its `MODEL` — both AMIs stay baked, so it is a deploy, not a rebuild. The star
 Lambda launches the AMI matching the engine the environment's deploy-config
 names, so nothing else has to agree.
 
+#### Companion weights
+
+A model published with extra files beside its weights — a speculative-decoding
+drafter, a perception encoder — can carry them too. The deploy-config names
+them by **role**, and `outfit remote deploy` fills that in from the preset keys
+that already drive a local serve:
+
+| Preset key | Role | Synced to | Engine flag |
+|---|---|---|---|
+| `spec-draft-model` (`md`) | `draft` | `draft.gguf` | `--spec-draft-model` |
+| `mmproj` (`mm`) | `mmproj` | `mmproj.gguf` | `--mmproj` |
+
+Only the **filename** travels: a companion ships in the model's own repo, so
+the preset's local path is dropped and the seed fetches that name from Hugging
+Face. The deployment then names the file at its own synced path, so nothing
+depends on where you keep it locally.
+
+How the engine *uses* a companion is still yours — `--spec-type draft-dflash`
+stays in the preset and passes through untouched.
+
+Adding a companion to a model already in S3 re-seeds it: presence is judged
+over the whole expected set, so the instance can never start pointing at a
+companion that was never synced.
+
 ### First boot
 
 A wake is an instance launch, an **S3 sync of the weights** (~2–4 min,

@@ -485,6 +485,17 @@ components:
           description: Runner-specific flags, pre-tokenised.
           items:
             type: string
+        companions:
+          type: object
+          description: |
+            Companion weights loaded beside the main weights, keyed by role.
+            Each value is a bare filename within the model's own Hugging Face
+            repo, never a path — the deployment decides where it lands on disk
+            and names it there itself. Omitted when there are none.
+          additionalProperties:
+            type: string
+          propertyNames:
+            enum: [draft, mmproj]
 
     Message:
       type: object
