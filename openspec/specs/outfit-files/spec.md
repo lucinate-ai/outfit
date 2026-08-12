@@ -11,13 +11,13 @@ provider selection — and the commands that consume and produce it:
 An Outfit SHALL be a flat, line-oriented text file of `KEYWORD value`
 instructions. The keywords are `PROVIDER`, `MODEL`, `ALIAS`, `CONTEXT`,
 `OUTPUT`, `BASEURL` (also accepted as `BASE-URL`, `BASE_URL`, or `URL`),
-`PRESET`, `REMOTE`, and `ENV`. Keywords SHALL match case-insensitively, with
-UPPERCASE as the canonical form. Blank lines, full-line `#` comments, and
-trailing comments introduced by whitespace-then-`#` SHALL be ignored. Each
-instruction SHALL take exactly one value; every instruction SHALL appear at most
-once, except `ENV`, which MAY be repeated. An `ENV` instruction's value SHALL be
-a single `KEY=VALUE` token with a non-empty key and no whitespace. `PROVIDER` is
-required. Parse errors SHALL name the offending line.
+`PRESET`, `REMOTE`, `FLEET`, and `ENV`. Keywords SHALL match
+case-insensitively, with UPPERCASE as the canonical form. Blank lines, full-line
+`#` comments, and trailing comments introduced by whitespace-then-`#` SHALL be
+ignored. Each instruction SHALL take exactly one value; every instruction SHALL
+appear at most once, except `ENV`, which MAY be repeated. An `ENV` instruction's
+value SHALL be a single `KEY=VALUE` token with a non-empty key and no
+whitespace. `PROVIDER` is required. Parse errors SHALL name the offending line.
 
 #### Scenario: A minimal Outfit
 
@@ -44,6 +44,12 @@ required. Parse errors SHALL name the offending line.
 
 - **WHEN** an Outfit contains `REMOTE ./remote.json`
 - **THEN** it parses, and the value is available to the `remote` command group
+
+#### Scenario: Naming a fleet
+
+- **WHEN** an Outfit contains `FLEET ./fleet.yaml`
+- **THEN** it parses, and the value is available to the launch as the fleet to
+  route through
 
 #### Scenario: Declaring local environment variables
 
@@ -171,4 +177,48 @@ UPPERCASE keywords with aligned values, so `outfit export > Outfit` round-trips.
 
 - **WHEN** the harness config has no providers
 - **THEN** the command fails naming the config file it read
+
+### Requirement: FLEET and REMOTE are exclusive
+
+An Outfit SHALL NOT name both a `FLEET` and a `REMOTE`: each is a different
+answer to where the model is served from — one chooses a machine on your
+network, the other a deployed endpoint — and an Outfit stating both is a mistake
+rather than a precedence to resolve. Parsing SHALL fail naming both
+instructions.
+
+An explicit `BASEURL` is not in conflict: it is the pinned address that already
+takes precedence over a `REMOTE`, and it takes precedence over a `FLEET` the
+same way.
+
+#### Scenario: Both fail to parse
+
+- **WHEN** an Outfit contains both `FLEET ./fleet.yaml` and `REMOTE ./remote.json`
+- **THEN** parsing fails naming both instructions
+
+#### Scenario: A pinned address is allowed
+
+- **WHEN** an Outfit contains both `FLEET ./fleet.yaml` and a `BASEURL`
+- **THEN** it parses, and the pinned base URL is what applies
+
+### Requirement: FLEET names a file or an endpoint
+
+A `FLEET` value SHALL be either a path to a fleet file, which routing reads to
+choose a node, or a URL, which names an endpoint that has already done the
+choosing. A value carrying a scheme SHALL be read as the latter; anything else
+as a path. Both SHALL parse, so the two ways of routing are one instruction
+rather than two.
+
+Routing through a URL SHALL fail with a message saying it is not implemented
+yet, rather than being silently ignored or treated as a filename.
+
+#### Scenario: A path names a fleet file
+
+- **WHEN** an Outfit contains `FLEET ./fleet.yaml`
+- **THEN** it parses as a fleet file to route through
+
+#### Scenario: A URL names an endpoint
+
+- **WHEN** an Outfit contains `FLEET http://gateway.internal:4000`
+- **THEN** it parses as an endpoint, and a launch against it fails saying that
+  routing through a gateway is not implemented yet
 
