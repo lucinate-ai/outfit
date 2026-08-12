@@ -20,13 +20,13 @@ Meta publishes GGUFs at
 Both main builds are **text-only on their own**; `mmproj-kquant.gguf` is what
 adds image input.
 
-## You need llama.cpp from master
+## You need llama.cpp b10355 or newer
 
 Support landed in
 [PR #26841](https://github.com/ggml-org/llama.cpp/pull/26841), commit
-`62bf73d2`, merged 2026-08-10. At the time of writing **no tagged release
-contained it** — the newest release, `b10344`, sits 5 commits before that merge,
-and Homebrew's formula was further back still. Check before you build:
+`62bf73d2`, merged 2026-08-10. The first tagged release carrying it is
+**`b10355`** (2026-08-10); `b10344` and earlier sit before the merge, and
+Homebrew's formula lagged further behind. Check before you build:
 
 ```sh
 llama-server --version    # compare the commit against 62bf73d2
@@ -51,13 +51,33 @@ names, and Meta's filenames aren't (`kquant-dynamic` is rejected). Bare
 **17GB** build, not the dynamic one. Name the repo and file separately instead —
 which is what the preset does, via `hf` (`--hf-repo`) and `hff` (`--hf-file`).
 
-**Meta's published DFlash drafter won't load on upstream llama.cpp.** The merge
-reverted deriving the drafter's rope type from its target, and says so plainly:
-it "breaks compatibility with Meta's distributed DFlash GGUFs, as the Q/K are
-stored in NEOX (rotated half) format". So `dflash-kquant.gguf` is not usable
-as-is, and the advertised 3.1x speculative-decoding speedup is off the table
-unless you convert a drafter yourself from the transformers checkpoint. The
-preset leaves it out.
+**The DFlash drafter needs `--spec-type draft-dflash`, and Meta's model card
+doesn't mention it.** The card shows only `-md dflash-kquant.gguf -ngld 99`,
+which leaves llama.cpp on its default `draft-simple` path — ordinary
+autoregressive drafting. DFlash is a block-diffusion drafter that emits 16
+tokens per forward pass, so it needs its own speculative type selected
+explicitly. The preset sets it.
+
+The drafter also can't be fetched with `--hf-repo`/`-hfd`. Those resolve a repo
+to a single default file, which here is the 17GB text build. Download it once
+and point `--spec-draft-model` at the local file:
+
+```sh
+hf download meta-models/Muse-Glimmer-30B-GGUF \
+  --include "dflash-kquant.gguf" --local-dir ./Muse-Glimmer-30B-GGUF
+```
+
+An earlier revision of this file claimed the published drafter was unusable on
+upstream llama.cpp, on the strength of a line in the merge commit: *"this breaks
+compatibility with Meta's distributed DFlash GGUFs, as the Q/K are stored in
+NEOX (rotated half) format"*. That line is one bullet of a squashed PR and does
+not describe where the branch landed. In current master
+(`src/llama-model.cpp`), a non-DSV4 DFlash backbone resolves to
+`LLAMA_ROPE_TYPE_NEOX`, and llama.cpp's own drafter converter
+(`conversion/muse_glimmer.py`, `MuseGlimmerAssistantModel.modify_tensors`)
+deliberately does **no** permutation — "DFlash defaults to NEOX (rotate_half)
+rope, matching transformers HF layout for Q/K". NEOX weights, NEOX rope: Meta's
+file matches what master expects, and no self-conversion is needed.
 
 ## Running it
 
@@ -65,10 +85,22 @@ preset leaves it out.
 llama-server \
   --hf-repo meta-models/Muse-Glimmer-30B-GGUF \
   --hf-file muse-glimmer-30B-kquant-dynamic.gguf \
-  --jinja -ngl 99 --ctx-size 32768 \
+  --no-mmproj \
+  --spec-type draft-dflash \
+  --spec-draft-model ./Muse-Glimmer-30B-GGUF/dflash-kquant.gguf \
+  --spec-draft-ngl 999 --spec-draft-n-max 16 --flash-attn on \
+  --jinja -ngl 99 --ctx-size 131072 --parallel 4 \
   --temp 1.0 --top-p 0.95 --top-k 64 \
   --host 127.0.0.1 --port 8080
 ```
+
+`--no-mmproj` is what makes this text-only: the repo publishes
+`mmproj-kquant.gguf` beside the weights, and `--hf-repo` fetches and loads it
+automatically otherwise. Dropping it saves 1.4 GB and the encoder load.
+
+`--parallel 4` splits `--ctx-size` into four 32768-token slots. A
+`[spec] failed to measure draft model memory` warning at startup is expected and
+harmless per Meta's card — the drafter loads and serves normally after it.
 
 21 GB has to go somewhere, and llama.cpp keeps its **own** download cache —
 it never reads the Hugging Face cache, so `HF_HOME` and `~/.cache/huggingface`
@@ -90,10 +122,14 @@ curl http://127.0.0.1:8080/v1/models
 outfit apply              # point opencode at it
 ```
 
-Image input needs no extra setup. `llama-server` picks up `mmproj-kquant.gguf`
+This example is deliberately **text-only**. If you do want image input, drop
+`no-mmproj` from the preset: `llama-server` then picks up `mmproj-kquant.gguf`
 from the same repo, fetches it alongside the weights and logs `loaded
-multimodal model`; `/v1/models` then advertises the `multimodal` capability. So
-budget **21.05 GB** of cache for the pair, not 19.65 GB.
+multimodal model`, and `/v1/models` advertises the `multimodal` capability —
+budget **21.05 GB** of cache for the pair rather than 19.65 GB.
+
+Cache footprint as configured here: 19.65 GB for the weights plus 1.63 GB for
+the drafter.
 
 ### Reasoning comes back on a separate field
 
@@ -154,12 +190,24 @@ for coding and agentic work.
 ## Deploying to the cloud
 
 The [`remote/`](../../../remote/) stack can serve this too, but **not without a
-rebuild first**: its llama.cpp AMI installs a prebuilt binary from
+re-bake first**: its llama.cpp AMI installs a prebuilt binary from
 `ai-dock/llama.cpp-cuda`, pinned to `b10107` in
-[`remote/lib/config.ts`](../../../remote/lib/config.ts). ai-dock's newest build
-at the time of writing was `b10333` — still before the Muse Glimmer merge. Once
-ai-dock publishes a build that includes it, bump `llamacppRelease` and re-bake
-(~30–40 min) before deploying.
+[`remote/lib/config.ts`](../../../remote/lib/config.ts) — long before the Muse
+Glimmer merge.
+
+ai-dock published **`b10355`** on 2026-08-11, and it is the first of their
+builds that carries the merge (their previous was `b10333`; upstream tag
+`b10355` is 6 commits ahead of `62bf73d2` and 0 behind). The CUDA 12.8 amd64
+asset the bake downloads exists for it. So:
+
+```sh
+# bump llamacppRelease to b10355 in remote/lib/config.ts and remote/cdk.json
+pnpm bake llamacpp     # ~15-25 min
+```
+
+Note the cloud path loses the drafter as well as the encoder: the seed script
+takes a single GGUF and normalises it to `model.gguf`, so `dflash-kquant.gguf`
+is not carried across and speculative decoding is local-only for now.
 
 Deploy also needs a `MODEL` line, which the [`Outfit`](Outfit) deliberately
 leaves out — the cloud seed globs filenames rather than resolving a tag, so it
@@ -175,8 +223,8 @@ Be precise with that suffix. The seed script downloads everything matching
 looser `:kquant` would match `dflash-kquant.gguf` and silently serve the 1.6 GB
 drafter instead of the model. `kquant-dynamic` matches exactly one file.
 
-Note also that seeding excludes `mmproj` files, so a cloud deployment is
-text-only regardless of the encoder being published.
+Seeding also excludes `mmproj` files, so a cloud deployment is text-only
+regardless of the encoder being published — which is what we want here anyway.
 
 Adding `MODEL` breaks the local `outfit serve` path above, since it becomes
 `--hf-repo meta-models/Muse-Glimmer-30B-GGUF:kquant-dynamic` — a tag that

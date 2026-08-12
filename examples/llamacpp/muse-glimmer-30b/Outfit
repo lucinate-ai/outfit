@@ -1,11 +1,16 @@
 # Muse-Glimmer-30B served by llama.cpp, targeting Meta's K-Quant-Dynamic build
-# (the ~32GB-VRAM tier; 19.65 GB on disk).
+# (the ~32GB-VRAM tier; 19.65 GB on disk). Text-only, with DFlash speculative
+# decoding — see preset.ini.
 # ALIAS names the model in opencode and selects the preset section below.
 PROVIDER llamacpp
 ALIAS    muse-glimmer-30b
-CONTEXT  32768              # match the server's --ctx-size; trimmed down from
-                             # the model's 131072 native max to keep the KV
-                             # cache modest — raise it if you have the memory
+CONTEXT  131072             # the model's native window, and the server's total
+                             # --ctx-size. CONTEXT always overrides the preset's
+                             # ctx-size, so it has to be the *total* here.
+                             # NOTE: the preset sets `np = 4`, which divides that
+                             # total into 4 slots of 32768 — while opencode is
+                             # still told 131072 and may overrun a slot. Set
+                             # `np = 1` for one agent with a true 131k window.
 PRESET   ./preset.ini       # `outfit serve` builds the llama-server command from this
 # BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default local host/port
 
