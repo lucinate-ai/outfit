@@ -1,50 +1,50 @@
 ## 1. The engine key arrives with a start
 
-- [ ] 1.1 Add an engine API key to the start request body alongside the deploy
+- [x] 1.1 Add an engine API key to the start request body alongside the deploy
       config, and to the stored config so a later bare start reuses it
-- [ ] 1.2 Write a supplied key 0600 into the daemon's state directory and pass
+- [x] 1.2 Write a supplied key 0600 into the daemon's state directory and pass
       the engine's key-file argument, never a literal one; replace the file when
       a new key arrives
-- [ ] 1.3 Keep the key out of every reply, error and log line the API produces
-- [ ] 1.4 Reject a start carrying a key while an engine is running without
+- [x] 1.3 Keep the key out of every reply, error and log line the API produces
+- [x] 1.4 Reject a start carrying a key while an engine is running without
       storing either the key or the config
-- [ ] 1.5 Tests: a gated start, a keyless start, a bare start reusing the stored
+- [x] 1.5 Tests: a gated start, a keyless start, a bare start reusing the stored
       key, a superseding key, a refused start storing neither, and that the key
       appears in no reply and no process command line
 
 ## 2. The daemon stops reading workload configuration
 
-- [ ] 2.1 Remove the Outfit path from `outfit daemon`, and fail with a message
+- [x] 2.1 Remove the Outfit path from `outfit daemon`, and fail with a message
       naming the start request when one is given
-- [ ] 2.2 Delete the Outfit branch of the daemon's `BuildArgv`, its
+- [x] 2.2 Delete the Outfit branch of the daemon's `BuildArgv`, its
       `resolveDaemonOutfit`, and its `OUTFIT_ALIAS`/`defaultOutfitNamed` gate;
       what to serve comes from the request or the stored config alone
-- [ ] 2.3 Make "nothing to serve" name what would supply it
-- [ ] 2.4 Tests: an Outfit path is refused, an adjacent Outfit is not read, a
+- [x] 2.3 Make "nothing to serve" name what would supply it
+- [x] 2.4 Tests: an Outfit path is refused, an adjacent Outfit is not read, a
       bare start with nothing stored fails, and a stored config still survives a
       restart
 
 ## 3. The bearer token gains a file and a flag
 
-- [ ] 3.1 Add `--api-token-file` (trimmed) and `--api-token` beside
+- [x] 3.1 Add `--api-token-file` (trimmed) and `--api-token` beside
       `OUTFIT_API_TOKEN`; fail naming both when more than one is given
-- [ ] 3.2 Fail at startup when a token file cannot be read, rather than
+- [x] 3.2 Fail at startup when a token file cannot be read, rather than
       listening without a token
-- [ ] 3.3 Update the non-loopback refusal message to name every way a token can
+- [x] 3.3 Update the non-loopback refusal message to name every way a token can
       be supplied, and stop referring to an Outfit's `.env`
-- [ ] 3.4 Tests: each source, a conflict, an unreadable file, and that loopback
+- [x] 3.4 Tests: each source, a conflict, an unreadable file, and that loopback
       still needs none
 
 ## 4. The client supplies the key
 
-- [ ] 4.1 Resolve the engine key from `engineTokenEnv` before waking a node and
+- [x] 4.1 Resolve the engine key from `engineTokenEnv` before waking a node and
       send it with the start
-- [ ] 4.2 Give the launched agent the key the client set, rather than resolving
+- [x] 4.2 Give the launched agent the key the client set, rather than resolving
       one against what the node reports
-- [ ] 4.3 Keep the early failure for an already-running gated node whose fleet
+- [x] 4.3 Keep the early failure for an already-running gated node whose fleet
       entry names no key, and for a variable that resolves to nothing
-- [ ] 4.4 Wake an ungated engine when the node's entry names no key
-- [ ] 4.5 Tests: a woken node is gated with the client's key and the agent gets
+- [x] 4.4 Wake an ungated engine when the node's entry names no key
+- [x] 4.5 Tests: a woken node is gated with the client's key and the agent gets
       the same value; no key wakes an ungated engine; an already-running gated
       node with no key fails before launching
 

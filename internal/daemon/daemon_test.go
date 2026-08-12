@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -469,5 +470,230 @@ while true; do sleep 0.05; done`)
 	waitForState(t, d.Sup, StateRunning)
 	if got := d.Status(); got.Engine != nil {
 		t.Errorf("endpoint reported without one being set: %+v", got.Engine)
+	}
+}
+
+// The caller supplies the key an engine is gated with, and it reaches the
+// engine as a path — never as an argument, where every local user could read
+// it out of the process list.
+func TestEngineKeyReachesTheEngineAsAFile(t *testing.T) {
+	// The engine records the arguments it was actually given, which is the
+	// only place the question can be answered: StartEngine appends the key
+	// arguments after BuildArgv has returned.
+	argsFile := filepath.Join(t.TempDir(), "args")
+	d := testDaemon(t, `echo "$@" > `+argsFile+`
+trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	d.EngineKeyArgs = func(_ *remote.DeployConfig, path string) ([]string, error) {
+		return []string{"--api-key-file", path}, nil
+	}
+
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetEngineKey("sk-supplied"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Sup.Stop()
+	waitForState(t, d.Sup, StateRunning)
+
+	var joined string
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(argsFile); err == nil && len(data) > 0 {
+			joined = string(data)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if joined == "" {
+		t.Fatal("the engine recorded no arguments")
+	}
+	if !strings.Contains(joined, "--api-key-file") {
+		t.Errorf("engine was not gated: %s", joined)
+	}
+	if strings.Contains(joined, "sk-supplied") {
+		t.Errorf("the key is on the command line, where any local user can read it: %s", joined)
+	}
+
+	// The file itself is private and holds exactly the key.
+	path := d.storedEngineKeyPath()
+	if path == "" {
+		t.Fatal("no key file was written")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("key file mode = %o, want 600", perm)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "sk-supplied" {
+		t.Errorf("key file holds %q", data)
+	}
+}
+
+// A key replaces its predecessor rather than accumulating, and clearing it
+// leaves nothing behind.
+func TestEngineKeyIsReplacedAndCleared(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+	if err := d.SetEngineKey("first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetEngineKey("second"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(d.storedEngineKeyPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "second" {
+		t.Errorf("key file holds %q, want the newer key", data)
+	}
+	if err := d.SetEngineKey(""); err != nil {
+		t.Fatal(err)
+	}
+	if p := d.storedEngineKeyPath(); p != "" {
+		t.Errorf("clearing left a key file at %s", p)
+	}
+	// Clearing twice is not an error.
+	if err := d.SetEngineKey(""); err != nil {
+		t.Errorf("clearing an absent key: %v", err)
+	}
+}
+
+// An engine with no way to read a key from a file is refused rather than
+// gated with a literal argument.
+func TestUngatableEngineIsRefused(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+	d.EngineKeyArgs = func(*remote.DeployConfig, string) ([]string, error) {
+		return nil, fmt.Errorf("vllm cannot be gated with an API key")
+	}
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetEngineKey("sk"); err != nil {
+		t.Fatal(err)
+	}
+	err := d.StartEngine()
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "cannot be gated") {
+		t.Errorf("error = %v", err)
+	}
+	if state, _, _ := d.Sup.Status(); state == StateRunning {
+		t.Error("the engine started despite the refusal")
+	}
+}
+
+// The key is the one field of a start request that must not come back out, on
+// any path — success, conflict, or a rejected config.
+func TestStartRequestKeyNeverComesBack(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	d.EngineKeyArgs = func(_ *remote.DeployConfig, path string) ([]string, error) {
+		return []string{"--api-key-file", path}, nil
+	}
+	srv := httptest.NewServer(d.Handler(""))
+	defer srv.Close()
+	defer d.Sup.Stop()
+
+	const key = "sk-must-not-leak"
+	post := func(body string) (int, string) {
+		t.Helper()
+		resp, err := srv.Client().Post(srv.URL+"/v1/start", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		out, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(out)
+	}
+
+	// A rejected config: the runner cannot be served here.
+	code, body := post(`{"runner":"nope","modelId":"m","engineApiKey":"` + key + `"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("rejected config = %d %s", code, body)
+	}
+	if strings.Contains(body, key) {
+		t.Errorf("the key came back in a rejection: %s", body)
+	}
+	// ...and nothing was stored, neither config nor credential.
+	if p := d.storedEngineKeyPath(); p != "" {
+		t.Error("a refused start stored the key")
+	}
+
+	// A successful start.
+	code, body = post(`{"runner":"llamacpp","modelId":"m","engineApiKey":"` + key + `"}`)
+	if code != 200 {
+		t.Fatalf("start = %d %s", code, body)
+	}
+	if strings.Contains(body, key) {
+		t.Errorf("the key came back in the reply: %s", body)
+	}
+	waitForState(t, d.Sup, StateRunning)
+
+	// A conflict, carrying a different key: the running engine is untouched
+	// and the stored key is not replaced.
+	code, body = post(`{"runner":"llamacpp","modelId":"m","engineApiKey":"sk-second"}`)
+	if code != http.StatusConflict {
+		t.Fatalf("start while running = %d %s", code, body)
+	}
+	if strings.Contains(body, "sk-second") {
+		t.Errorf("the key came back in a conflict: %s", body)
+	}
+	stored, err := os.ReadFile(d.storedEngineKeyPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != key {
+		t.Errorf("a refused start replaced the stored key with %q", stored)
+	}
+
+	// Status says a key is needed and never what it is.
+	resp, err := srv.Client().Get(srv.URL + "/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(out), key) {
+		t.Errorf("status disclosed the key: %s", out)
+	}
+}
+
+// A config arriving without a key opens the engine: the key travels with the
+// config it accompanied, so a new instruction does not inherit an old
+// credential. A start carrying neither reuses what was stored.
+func TestKeyTravelsWithItsConfig(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetEngineKey("sk-first"); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(d.Handler(""))
+	defer srv.Close()
+
+	// A new config with no key clears it.
+	resp, err := srv.Client().Post(srv.URL+"/v1/start", "application/json",
+		strings.NewReader(`{"runner":"llamacpp","modelId":"m2"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if p := d.storedEngineKeyPath(); p != "" {
+		t.Error("a config carrying no key left the previous key in place")
 	}
 }

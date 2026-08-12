@@ -821,29 +821,27 @@ func TestEnvAlias_ReachesRemote(t *testing.T) {
 	}
 }
 
-// TestEnvAlias_ReachesDaemonOutfit checks the same gate on the daemon: with no
-// path and no ./Outfit it starts idle, but a variable naming one means there is
-// an Outfit to serve from after all.
-func TestEnvAlias_ReachesDaemonOutfit(t *testing.T) {
+// TestEnvAlias_DoesNotReachTheDaemon pins the opposite of what this once
+// asserted. The daemon used to resolve an Outfit — including one OUTFIT_ALIAS
+// named — so that it could serve something nobody had asked it to serve. It is
+// a worker now: what it runs comes from a start request, so neither the
+// variable nor an adjacent file is a source, and an Outfit path is refused
+// outright rather than accepted and ignored.
+func TestEnvAlias_DoesNotReachTheDaemon(t *testing.T) {
 	isolateConfig(t)
 
 	_, path := registerOutfit(t, "PROVIDER llamacpp\nALIAS q3\n")
-	t.Chdir(t.TempDir())
-
-	if _, _, ok, err := resolveDaemonOutfit(""); err != nil || ok {
-		t.Fatalf("resolveDaemonOutfit() = ok %v, err %v; want no Outfit with the variable unset", ok, err)
-	}
-
+	t.Chdir(filepath.Dir(path))
 	t.Setenv("OUTFIT_ALIAS", "q3")
-	sel, got, ok, err := resolveDaemonOutfit("")
-	if err != nil {
-		t.Fatalf("resolveDaemonOutfit with OUTFIT_ALIAS: %v", err)
+
+	err := cmdDaemon([]string{path})
+	if err == nil {
+		t.Fatal("the daemon should refuse an Outfit path")
 	}
-	if !ok || got != path {
-		t.Errorf("resolveDaemonOutfit() = %q, ok %v; want the variable's Outfit %q", got, ok, path)
-	}
-	if sel.Alias != "q3" {
-		t.Errorf("resolved the wrong Outfit: ALIAS = %q", sel.Alias)
+	for _, want := range []string{"takes no Outfit", "start request"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
 	}
 }
 
@@ -890,24 +888,6 @@ func TestEnvAlias_RemoteFallsBackWithoutREMOTE(t *testing.T) {
 	}
 }
 
-// TestEnvAlias_DaemonFailsRatherThanStartingIdle checks the same rule for the
-// daemon, whose fallback is to start with no Outfit at all. A variable that
-// cannot be resolved must be an error, or a typo would be indistinguishable
-// from having meant to start idle.
-func TestEnvAlias_DaemonFailsRatherThanStartingIdle(t *testing.T) {
-	isolateConfig(t)
-	t.Chdir(t.TempDir())
-	t.Setenv("OUTFIT_ALIAS", "nope")
-
-	_, _, ok, err := resolveDaemonOutfit("")
-	if err == nil {
-		t.Fatalf("resolveDaemonOutfit() = ok %v, nil error; want a failure for an unregistered value", ok)
-	}
-	if !strings.Contains(err.Error(), "OUTFIT_ALIAS") {
-		t.Errorf("error %q does not name the variable", err)
-	}
-}
-
 // TestEnvAlias_EmptyDoesNotCountAsNamingOne checks that an exported-but-empty
 // variable — `export OUTFIT_ALIAS=` — leaves the existence gate answering on
 // the working directory alone, so the usual fallbacks still apply.
@@ -918,9 +898,6 @@ func TestEnvAlias_EmptyDoesNotCountAsNamingOne(t *testing.T) {
 
 	if defaultOutfitNamed() {
 		t.Error("an empty OUTFIT_ALIAS should not count as naming an Outfit")
-	}
-	if _, _, ok, err := resolveDaemonOutfit(""); err != nil || ok {
-		t.Errorf("resolveDaemonOutfit() = ok %v, err %v; want the idle start", ok, err)
 	}
 }
 

@@ -37,7 +37,9 @@ const DefaultAPIAddr = ":4242"
 func Listen(addr, token string) (net.Listener, error) {
 	if token == "" && !loopbackAddr(addr) {
 		return nil, fmt.Errorf(
-			"refusing to serve the control API on non-loopback %q without a token: set %s (e.g. in the Outfit's .env), or bind loopback with --api-addr 127.0.0.1:4242",
+			"refusing to serve the control API on non-loopback %q without a token: "+
+				"pass --api-token-file <path>, set %s, or pass --api-token — "+
+				"or bind loopback with --api-addr 127.0.0.1:4242, which needs none",
 			addr, TokenEnvVar)
 	}
 	return net.Listen("tcp", addr)
@@ -129,13 +131,22 @@ func (d *Daemon) handleStart(w http.ResponseWriter, r *http.Request) {
 				fmt.Errorf("an engine is already running (%s); stop it first", engine))
 			return
 		}
-		var dc remote.DeployConfig
-		if err := json.Unmarshal(body, &dc); err != nil {
+		var req StartRequest
+		if err := json.Unmarshal(body, &req); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Errorf("decoding deploy config: %w", err))
 			return
 		}
-		if err := d.Push(dc); err != nil {
+		if err := d.Push(req.DeployConfig); err != nil {
+			// The key is deliberately not stored here: a refused start
+			// changes nothing, config or credential.
 			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+		// The key travels with the config it arrived with, so a config
+		// carrying none opens the engine rather than silently inheriting
+		// the last key.
+		if err := d.SetEngineKey(req.EngineAPIKey); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 	}

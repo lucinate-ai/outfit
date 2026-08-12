@@ -245,18 +245,22 @@ func (c *Config) choose(results []NodeResult, w Want) (*Choice, error) {
 	}
 	rank(matching, w.prefer())
 	best := matching[0]
-	return c.choiceFor(best, w, false)
+	return c.choiceFor(best, w, false, "")
 }
 
 // choiceFor turns a chosen candidate into the address and key a launch needs.
-func (c *Config) choiceFor(best candidate, w Want, woken bool) (*Choice, error) {
+// A woken node carries the key the client just gated it with; a node that was
+// already running was gated by whoever started it, so its key is looked up.
+func (c *Config) choiceFor(best candidate, w Want, woken bool, setKey string) (*Choice, error) {
 	baseURL, err := c.EngineBaseURL(best.entry, best.result.Status)
 	if err != nil {
 		return nil, err
 	}
-	key, err := c.engineKeyFor(best.entry, best.result.Status)
-	if err != nil {
-		return nil, err
+	key := setKey
+	if !woken {
+		if key, err = c.engineKeyFor(best.entry, best.result.Status); err != nil {
+			return nil, err
+		}
 	}
 	return &Choice{
 		Node:    best.entry,
@@ -360,7 +364,9 @@ func hostIsLoopback(host string) bool {
 	return false
 }
 
-// engineKeyFor resolves the key a node's engine requires. A gated engine whose
+// engineKeyFor resolves the key an *already running* engine needs. That engine
+// was gated by whoever started it, so the value has to be looked up rather than
+// known. A gated engine whose
 // node names no variable fails here, before anything is launched: an agent that
 // cannot authenticate is worse than a message saying so.
 func (c *Config) engineKeyFor(n NodeConfig, status daemon.StatusResponse) (string, error) {
