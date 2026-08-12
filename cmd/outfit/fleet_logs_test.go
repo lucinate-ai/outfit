@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,14 +218,21 @@ func TestFollowFleetLogsResumesPerNodeAndStopsWhenCancelled(t *testing.T) {
 
 	// The node appends between polls; the cursor means the second poll sees
 	// only what is new.
+	//
+	// A poll can still be in flight when the loop returns, so the handler's
+	// bookkeeping is shared with the test goroutine.
+	var mu sync.Mutex
 	polls := 0
 	var gotOffsets []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		polls++
 		gotOffsets = append(gotOffsets, r.URL.Query().Get("offset"))
+		seen := polls
+		mu.Unlock()
 		body := daemon.LogsResponse{Content: "first\n", NextOffset: 6, Size: 6}
-		if polls >= 2 {
+		if seen >= 2 {
 			body = daemon.LogsResponse{Content: "second\n", NextOffset: 13, Size: 13}
 		}
 		json.NewEncoder(w).Encode(body)
@@ -251,14 +259,18 @@ func TestFollowFleetLogsResumesPerNodeAndStopsWhenCancelled(t *testing.T) {
 	if !strings.Contains(buf.String(), "first") || !strings.Contains(buf.String(), "second") {
 		t.Errorf("output =\n%s\nwant both polls' output", buf.String())
 	}
-	if len(gotOffsets) < 2 {
-		t.Fatalf("polled %d times, want at least 2", len(gotOffsets))
+	// A poll can outlive the loop, so read a copy rather than the live slice.
+	mu.Lock()
+	got := append([]string(nil), gotOffsets...)
+	mu.Unlock()
+	if len(got) < 2 {
+		t.Fatalf("polled %d times, want at least 2", len(got))
 	}
-	if gotOffsets[0] != "" {
-		t.Errorf("first poll offset = %q, want the tail", gotOffsets[0])
+	if got[0] != "" {
+		t.Errorf("first poll offset = %q, want the tail", got[0])
 	}
-	if gotOffsets[1] != "6" {
-		t.Errorf("second poll offset = %q, want to resume from the first reply", gotOffsets[1])
+	if got[1] != "6" {
+		t.Errorf("second poll offset = %q, want to resume from the first reply", got[1])
 	}
 }
 
@@ -270,13 +282,17 @@ func TestFollowFleetLogsResumesAfterTheLogIsTruncated(t *testing.T) {
 	fleetLogsInterval = time.Millisecond
 	t.Cleanup(func() { fleetLogsInterval = prev })
 
+	var mu sync.Mutex
 	polls := 0
 	var offsets []string
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/logs", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		polls++
 		offsets = append(offsets, r.URL.Query().Get("offset"))
-		switch polls {
+		seen := polls
+		mu.Unlock()
+		switch seen {
 		case 1:
 			// A long log; the cursor ends up at 900.
 			json.NewEncoder(w).Encode(daemon.LogsResponse{
@@ -312,15 +328,19 @@ func TestFollowFleetLogsResumesAfterTheLogIsTruncated(t *testing.T) {
 	if err := followFleetLogsLoop(ctx, cfg, 200, "text", &buf); err != nil {
 		t.Fatalf("a cancelled follow is a clean exit, got: %v", err)
 	}
-	if len(offsets) < 3 {
-		t.Fatalf("polled %d times, want at least 3", len(offsets))
+	// A poll can outlive the loop, so read a copy rather than the live slice.
+	mu.Lock()
+	got := append([]string(nil), offsets...)
+	mu.Unlock()
+	if len(got) < 3 {
+		t.Fatalf("polled %d times, want at least 3", len(got))
 	}
 	// The poll after the stale reply must ask from the log's new end, not
 	// from the stranded cursor.
-	if offsets[2] != "4" {
-		t.Errorf("third poll offset = %q, want 4 — the end the daemon reported", offsets[2])
+	if got[2] != "4" {
+		t.Errorf("third poll offset = %q, want 4 — the end the daemon reported", got[2])
 	}
-	if offsets[2] == "900" {
+	if got[2] == "900" {
 		t.Error("the follow kept the stranded cursor and would never advance")
 	}
 	// And output resumes rather than stopping at the truncation.
