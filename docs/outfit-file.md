@@ -42,6 +42,31 @@ takes a [registered alias](commands/alias.md) in place of a path. Given no path
 at all, it uses the alias `OUTFIT_ALIAS` names, and failing that `./Outfit` in
 the current directory.
 
+## Fetching an Outfit from a URL
+
+An Outfit path can also be an `http://` or `https://` URL, fetched instead of
+read from local disk:
+
+```sh
+outfit apply https://example.com/team/Outfit
+```
+
+A URL ending in `/` is treated like a directory — `Outfit` is appended, so
+`outfit apply https://example.com/team/` fetches
+`https://example.com/team/Outfit`. [`outfit alias`](commands/alias.md) can
+register a URL too, so a team can hand out a short name for a published Outfit
+instead of a link:
+
+```sh
+outfit alias -n team-default https://example.com/team/Outfit
+outfit apply team-default
+```
+
+A relative `PRESET` or `REMOTE` in a URL-sourced Outfit resolves against that
+URL rather than a local directory — see [Syntax](#syntax) below — and is
+fetched only when the command that actually needs it runs, never merely
+because the Outfit itself was read.
+
 ## Running the model on a cloud GPU
 
 For a model too big for your machine, `REMOTE` names the config of a
@@ -56,14 +81,19 @@ PRESET   ./preset.ini
 REMOTE   ./remote.json
 ```
 
-`REMOTE` takes either a path or a bare name. A path (`./remote.json`, or an
-absolute one) is resolved relative to the Outfit, like `PRESET`. A bare name
+`REMOTE` takes a path, a URL, or a bare name. A path (`./remote.json`, or an
+absolute one) is resolved relative to the Outfit, like `PRESET` — or against
+the Outfit's own URL when it was fetched from one; `REMOTE` may also be an
+absolute URL of its own. Either way it is fetched only when a `remote`
+subcommand resolves it, or when `apply` falls back to it for the base URL (see
+below) — never merely because the Outfit was read. A bare name
 (`REMOTE qwen3.6-27b-prod`) selects a named environment from the per-user
 registry at `${XDG_CONFIG_HOME:-~/.config}/outfit/remotes/<name>/remote.json`,
 so deployment state stays per-user and per-instance while only the name lives in
-the committed Outfit. [`outfit remote`](commands/remote.md) reads whichever it
-resolves to. With no path argument the commands consult `./Outfit` when it
-exists and otherwise fall back to the `default` environment; an explicit path
+the committed Outfit — this form is always local, never a URL.
+[`outfit remote`](commands/remote.md) reads whichever it resolves to. With no
+path argument the commands consult `./Outfit` when it exists and otherwise
+fall back to the `default` environment; an explicit path
 (`outfit remote status path/to/Outfit`) requires the Outfit to carry a `REMOTE`
 instruction.
 
@@ -158,10 +188,13 @@ Rules:
   llama.cpp server on a non-default port. `URL`, `BASE-URL`, and `BASE_URL` are
   accepted as aliases.
 - `PRESET` points at a preset `.ini`, used only by
-  [`outfit serve`](commands/serve.md); `apply` ignores it. A relative path is
-  resolved against the Outfit's own directory. The file is read in the flag
-  vocabulary of the engine `PROVIDER` names, so a preset written for llama.cpp
-  is not portable to oMLX and vice versa.
+  [`outfit serve`](commands/serve.md); `apply` ignores it. A relative path
+  resolves against the Outfit's own directory, or against its URL when the
+  Outfit itself was fetched from one; `PRESET` may also be an absolute URL of
+  its own, fetched only when `serve` (or `outfit remote deploy`) builds the
+  launch command — never merely because the Outfit was read. The file is read
+  in the flag vocabulary of the engine `PROVIDER` names, so a preset written
+  for llama.cpp is not portable to oMLX and vice versa.
 - `ENV` sets an environment variable on the machine running `outfit` and is the
   one keyword that **may repeat**. Its value is a single `KEY=VALUE` token (no
   spaces). The `outfit remote` commands read it — along with a `.env` beside the
@@ -209,4 +242,6 @@ PROVIDER openai-compatible
 MODEL    my-model
 ```
 
-Ready-to-use Outfits live under [`examples/`](../examples/).
+Ready-to-use Outfits live under [`examples/`](../examples/), including
+[`examples/remote-outfit/`](../examples/remote-outfit/) for fetching one from
+a URL.

@@ -521,6 +521,7 @@ with a ready-to-apply `Outfit`:
 - [Gemma-4-12B-IT on llama.cpp](examples/llamacpp/gemma4/README.md)
 - [Qwen3.6-35B-A3B on oMLX (Apple Silicon)](examples/omlx/qwen3.6/README.md)
 - [Gemma-4-E2B on oMLX (Apple Silicon)](examples/omlx/gemma-4-e2b/README.md)
+- [Fetching an Outfit from a URL](examples/remote-outfit/README.md)
 
 ## Adding providers and models
 

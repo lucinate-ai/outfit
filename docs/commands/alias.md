@@ -19,6 +19,19 @@ outfit serve big
 outfit harness big -- --agent-arg
 ```
 
+## Registering a URL
+
+The path can be an `http://`/`https://` URL too, so a team can hand out a
+short name for a published Outfit instead of a link:
+
+```sh
+outfit alias -n team-default https://example.com/team/Outfit
+outfit apply team-default
+```
+
+It is stored and resolved just like a local one — see
+[Fetching an Outfit from a URL](../outfit-file.md#fetching-an-outfit-from-a-url).
+
 ## Naming one for the whole shell
 
 `OUTFIT_ALIAS` holds a registered name, and any command given no Outfit uses it:
@@ -69,12 +82,15 @@ them, and is required when an Outfit states no `ALIAS` at all.
 - A real path always beats a registered name, so registering one cannot change
   a command that already worked. When both exist, `outfit` says so and uses the
   path.
-- Names are stored, with absolute paths, in `outfit`'s own config
-  (`${XDG_CONFIG_HOME:-~/.config}/outfit/config.json`) — they are yours and
-  this machine's, never part of an `Outfit`, so a committed `Outfit` stays
-  portable.
+- Names are stored, with absolute paths (a URL is stored as typed), in
+  `outfit`'s own config (`${XDG_CONFIG_HOME:-~/.config}/outfit/config.json`) —
+  they are yours and this machine's, never part of an `Outfit`, so a committed
+  `Outfit` stays portable.
 - Registering parses the Outfit, so a broken file is caught now rather than
-  days later.
+  days later — for a URL, that means fetching it once, at registration time.
+- `outfit alias --list` never makes a network request: a URL-valued alias is
+  printed as registered, with no dangling check either way. A local target
+  that has since gone is still marked `(missing)`.
 - Tab completion knows your aliases — see
   [`outfit completion`](completion.md).
 

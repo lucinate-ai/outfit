@@ -188,7 +188,7 @@ func cmdDaemon(args []string) error {
 // foreground-managed and already running — and stop terminates it, after
 // which serve exits exactly as it does when the engine exits on its own.
 func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serveEngine, argv []string, apiAddr string, logLevel string) error {
-	if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+	if err := applyOutfitEnv(sel, outfitPath); err != nil {
 		return err
 	}
 	token := os.Getenv(daemon.TokenEnvVar)

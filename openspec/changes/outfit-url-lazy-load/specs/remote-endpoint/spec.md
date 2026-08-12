@@ -64,9 +64,17 @@ it.
 - **THEN** the configuration resolves to
   `https://example.com/team/remote.json` and is fetched
 
-#### Scenario: A remote REMOTE is fetched only when resolved
+#### Scenario: A remote REMOTE is fetched only by commands that resolve one
 
-- **WHEN** an Outfit with a URL-form `REMOTE` and a `BASEURL` instruction is
-  applied with `outfit apply`
-- **THEN** the `REMOTE` URL is never fetched, since `BASEURL` already supplies
-  the base URL and nothing else in `apply` consumes `REMOTE`
+- **WHEN** `outfit serve` runs against an Outfit whose `REMOTE` is a URL
+- **THEN** the `REMOTE` URL is never fetched — `serve` has no use for a
+  remote endpoint's control configuration
+
+#### Scenario: Applying names the environment even with an explicit BASEURL
+
+- **WHEN** an Outfit with a URL-form `REMOTE` and its own `BASEURL`
+  instruction is applied with `outfit apply`
+- **THEN** the `REMOTE` URL is still fetched once, to name the harness
+  provider after the deployment's environment (the same read a local-path
+  `REMOTE` already triggers) — only the redundant base-URL lookup is skipped,
+  since `BASEURL` already supplies it

@@ -19,15 +19,18 @@ knows anything but `os.*` — there is no notion of "this reference is remote."
 
 The three consuming commands already pull each of these files on its own
 schedule, not eagerly at parse time: `outfit apply` reads the Outfit and,
-separately, may read a path-form `REMOTE`'s `remote.json` for its `base_url`
-fallback, but never touches `PRESET`. `outfit serve` and
-`outfit remote deploy` are the only readers of `PRESET`. The `remote`
-subcommands are the only readers of a path-form `REMOTE` beyond that one
-`apply` fallback. This proposal's "lazy" requirement is therefore not a new
-behavior to build — it is the existing call graph, preserved as-is, by making
-the one primitive every one of these call sites bottoms out on
-(`os.ReadFile`) dispatch to an HTTP fetch when the reference is a URL, without
-moving *when* any call site fires.
+separately, reads a path-form `REMOTE`'s `remote.json` whenever `REMOTE` is
+set — to name the harness provider after the environment (`remoteEnvName`,
+unconditional) and, only when the Outfit states no `BASEURL` of its own, to
+fall back to the deployment's own address (`remoteBaseURL`) — but it never
+touches `PRESET`. `outfit serve` and `outfit remote deploy` are the only
+readers of `PRESET`. The `remote` subcommands are the only readers of a
+path-form `REMOTE` beyond those two `apply`-time reads. This proposal's
+"lazy" requirement is therefore not a new behavior to build — it is the
+existing call graph, preserved as-is, by making the one primitive every one
+of these call sites bottoms out on (`os.ReadFile`) dispatch to an HTTP fetch
+when the reference is a URL, without moving *when* or *how often* any call
+site fires.
 
 ## Goals / Non-Goals
 

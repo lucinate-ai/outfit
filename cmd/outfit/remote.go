@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/outfitsrc"
 	"github.com/lucinate-ai/outfit/internal/preset"
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
@@ -76,16 +78,22 @@ func cmdRemote(args []string) error {
 //
 // ENV (and .env) apply only to this local process; they are never sent to the
 // deployed instance — deployConfigFor builds the deploy payload from Outfit
-// fields alone. dir is the Outfit's own directory, where its .env lives.
-func applyOutfitEnv(sel outfit.Selection, dir string) error {
-	vars, err := opencode.ParseEnvFile(filepath.Join(dir, ".env"))
-	if err != nil {
-		return err
-	}
-	for key, value := range vars {
-		if os.Getenv(key) == "" {
-			if err := os.Setenv(key, value); err != nil {
-				return err
+// fields alone. outfitPath is the Outfit's own path; its directory is where
+// its .env lives. A URL-sourced Outfit has no local directory to look beside,
+// so its .env read is skipped entirely — not attempted against a nonsense
+// path — leaving the Outfit's own ENV instructions and the process
+// environment as the two remaining sources.
+func applyOutfitEnv(sel outfit.Selection, outfitPath string) error {
+	if !outfitsrc.IsURL(outfitPath) {
+		vars, err := opencode.ParseEnvFile(filepath.Join(filepath.Dir(outfitPath), ".env"))
+		if err != nil {
+			return err
+		}
+		for key, value := range vars {
+			if os.Getenv(key) == "" {
+				if err := os.Setenv(key, value); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -103,8 +111,9 @@ func applyOutfitEnv(sel outfit.Selection, dir string) error {
 // argument, ./Outfit is consulted when present; the per-user config
 // (~/.config/outfit/remote.json) is the fallback, so `outfit remote` still
 // works outside any project. A relative REMOTE resolves against the Outfit's
-// directory, so an Outfit and its remote config travel together — the same
-// rule PRESET uses.
+// own source — a local directory when the Outfit was read from disk,
+// URL-relative resolution when it was fetched from a URL — the same rule
+// PRESET uses.
 func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 	if outfitArg != "" {
 		sel, outfitPath, err := readOutfit("remote", outfitArg)
@@ -114,14 +123,10 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		if sel.Remote == "" {
 			return remote.Config{}, fmt.Errorf("%s has no REMOTE instruction", outfitPath)
 		}
-		if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+		if err := applyOutfitEnv(sel, outfitPath); err != nil {
 			return remote.Config{}, err
 		}
-		path, err := resolveRemotePath(sel.Remote, filepath.Dir(outfitPath))
-		if err != nil {
-			return remote.Config{}, err
-		}
-		return remote.LoadConfigFile(path, os.Getenv)
+		return resolveRemoteConfigForOutfit(sel.Remote, outfitPath)
 	}
 	if defaultOutfitNamed() {
 		sel, outfitPath, err := readOutfit("remote", "")
@@ -129,29 +134,27 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 			return remote.Config{}, err
 		}
 		if sel.Remote != "" {
-			if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+			if err := applyOutfitEnv(sel, outfitPath); err != nil {
 				return remote.Config{}, err
 			}
-			path, err := resolveRemotePath(sel.Remote, filepath.Dir(outfitPath))
-			if err != nil {
-				return remote.Config{}, err
-			}
-			return remote.LoadConfigFile(path, os.Getenv)
+			return resolveRemoteConfigForOutfit(sel.Remote, outfitPath)
 		}
 	}
 	return remote.LoadDefault(os.Getenv)
 }
 
-// resolveRemotePath turns an Outfit's REMOTE value into the config file to read.
-// A bare name selects an environment from the per-user registry; a path is
-// resolved as a file, relative to the Outfit's directory when not absolute —
-// the same rule PRESET uses. Both the control commands and apply's base-URL
-// lookup go through here, so the two never diverge.
-func resolveRemotePath(remoteValue, outfitDir string) (string, error) {
+// resolveRemotePath turns an Outfit's REMOTE value into the config to read. A
+// bare name selects an environment from the per-user registry (always local);
+// a path or URL resolves against the Outfit's own source — outfitPath, the
+// Outfit's own file (not its directory), so a relative REMOTE resolves
+// correctly whether the Outfit came from local disk or a URL. Both the
+// control commands and apply's base-URL lookup go through here, so the two
+// never diverge.
+func resolveRemotePath(remoteValue, outfitPath string) (string, error) {
 	if remote.IsEnvName(remoteValue) {
 		return remote.EnvConfigPath(remoteValue)
 	}
-	return remoteConfigPath(remoteValue, outfitDir), nil
+	return outfitsrc.Resolve(outfitPath, remoteValue)
 }
 
 // defaultOutfitNamed reports whether there is a default Outfit for readOutfit
@@ -181,22 +184,25 @@ func defaultOutfitExists() bool {
 	return false
 }
 
-func remoteConfigPath(remoteValue, outfitDir string) string {
-	if filepath.IsAbs(remoteValue) {
-		return remoteValue
-	}
-	return filepath.Join(outfitDir, remoteValue)
-}
-
 // remoteConfig reads the remote config an Outfit's REMOTE names — a registry
-// environment or a file, per resolveRemotePath. A config that is absent yields
-// the zero Config rather than an error, since an Outfit may name a remote config
-// before the deployment that writes it exists; only a real read or parse failure
-// is reported.
-func remoteConfig(remoteValue, outfitDir string) (remote.Config, error) {
-	path, err := resolveRemotePath(remoteValue, outfitDir)
+// environment or a file/URL, per resolveRemotePath. A config that is absent
+// yields the zero Config rather than an error, since an Outfit may name a
+// remote config before the deployment that writes it exists; only a real
+// read, fetch, or parse failure is reported.
+func remoteConfig(remoteValue, outfitPath string) (remote.Config, error) {
+	path, err := resolveRemotePath(remoteValue, outfitPath)
 	if err != nil {
 		return remote.Config{}, err
+	}
+	if outfitsrc.IsURL(path) {
+		data, err := outfitsrc.Fetch(path)
+		if err != nil {
+			if errors.Is(err, outfitsrc.ErrNotFound) {
+				return remote.Config{}, nil
+			}
+			return remote.Config{}, err
+		}
+		return remote.LoadConfigBytes(data, path, os.Getenv)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -217,8 +223,8 @@ func remoteConfig(remoteValue, outfitDir string) (remote.Config, error) {
 // lives there rather than in the hand-written Outfit — but only as a fallback:
 // an Outfit that states its own BASEURL never asks. A config that is absent, or
 // that predates base_url, yields "" rather than an error.
-func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
-	cfg, err := remoteConfig(remoteValue, outfitDir)
+func remoteBaseURL(remoteValue, outfitPath string) (string, error) {
+	cfg, err := remoteConfig(remoteValue, outfitPath)
 	if err != nil {
 		return "", err
 	}
@@ -230,14 +236,14 @@ func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
 // remote.json it names. It yields "" when there is no REMOTE, or when a
 // path-form REMOTE names a config that is absent or records no environment — in
 // which case the caller keeps the PROVIDER value as the name.
-func remoteEnvName(remoteValue, outfitDir string) (string, error) {
+func remoteEnvName(remoteValue, outfitPath string) (string, error) {
 	if remoteValue == "" {
 		return "", nil
 	}
 	if remote.IsEnvName(remoteValue) {
 		return remoteValue, nil
 	}
-	cfg, err := remoteConfig(remoteValue, outfitDir)
+	cfg, err := remoteConfig(remoteValue, outfitPath)
 	if err != nil {
 		return "", err
 	}
@@ -245,14 +251,21 @@ func remoteEnvName(remoteValue, outfitDir string) (string, error) {
 }
 
 // resolveRemoteConfigForOutfit resolves the remote config for an Outfit's
-// REMOTE value, given the Outfit's directory. Unlike resolveRemoteConfig it
+// REMOTE value, given the Outfit's own path. Unlike resolveRemoteConfig it
 // does not consult the working directory or the per-user fallback — the REMOTE
 // is already known from the parsed Outfit, so it goes straight to resolving
-// that path.
-func resolveRemoteConfigForOutfit(remoteValue, outfitDir string) (remote.Config, error) {
-	path, err := resolveRemotePath(remoteValue, outfitDir)
+// that path, fetching over HTTP when it resolves to a URL.
+func resolveRemoteConfigForOutfit(remoteValue, outfitPath string) (remote.Config, error) {
+	path, err := resolveRemotePath(remoteValue, outfitPath)
 	if err != nil {
 		return remote.Config{}, err
+	}
+	if outfitsrc.IsURL(path) {
+		data, err := outfitsrc.Fetch(path)
+		if err != nil {
+			return remote.Config{}, err
+		}
+		return remote.LoadConfigBytes(data, path, os.Getenv)
 	}
 	return remote.LoadConfigFile(path, os.Getenv)
 }
@@ -963,8 +976,11 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 	// (commonly ngl and jinja) are not lost.
 	var global, params []preset.Param
 	if sel.Preset != "" {
-		presetPath := resolvePresetPath(sel.Preset, outfitPath)
-		data, err := os.ReadFile(presetPath)
+		presetPath, err := resolvePresetPath(sel.Preset, outfitPath)
+		if err != nil {
+			return dc, err
+		}
+		data, err := outfitsrc.Fetch(presetPath)
 		if err != nil {
 			return dc, fmt.Errorf("reading preset %s: %w", presetPath, err)
 		}
@@ -1111,7 +1127,7 @@ func cmdRemoteDeploy(args []string) error {
 	// lines) before any AWS work, so the credentials the deploy signs with, the
 	// region, and the OUTFIT_REMOTE_* overrides all see it. ENV stays local — it
 	// never enters dc, so nothing here reaches the deployed instance.
-	if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+	if err := applyOutfitEnv(sel, outfitPath); err != nil {
 		return err
 	}
 	dc, err := deployConfigFor(sel, outfitPath)

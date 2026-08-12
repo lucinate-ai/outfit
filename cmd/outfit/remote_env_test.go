@@ -43,7 +43,7 @@ func TestApplyOutfitEnv_Precedence(t *testing.T) {
 	sel := outfit.Selection{Env: []outfit.EnvVar{
 		{Key: "OUTFIT_TEST_ENVKW", Value: "from-env-keyword"},
 	}}
-	if err := applyOutfitEnv(sel, dir); err != nil {
+	if err := applyOutfitEnv(sel, filepath.Join(dir, "Outfit")); err != nil {
 		t.Fatalf("applyOutfitEnv: %v", err)
 	}
 
@@ -66,8 +66,23 @@ func TestApplyOutfitEnv_ReadError(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, ".env"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := applyOutfitEnv(outfit.Selection{}, dir); err == nil {
+	if err := applyOutfitEnv(outfit.Selection{}, filepath.Join(dir, "Outfit")); err == nil {
 		t.Error("applyOutfitEnv should surface a .env read error")
+	}
+}
+
+// A URL-sourced Outfit has no local directory to look beside, so its .env
+// read is skipped entirely rather than attempted against a mangled path.
+func TestApplyOutfitEnv_URLSourceSkipsEnvFile(t *testing.T) {
+	sel := outfit.Selection{Env: []outfit.EnvVar{
+		{Key: "OUTFIT_TEST_URL_ENVKW", Value: "from-env-keyword"},
+	}}
+	unsetEnvOnCleanup(t, "OUTFIT_TEST_URL_ENVKW")
+	if err := applyOutfitEnv(sel, "https://example.com/team/Outfit"); err != nil {
+		t.Fatalf("applyOutfitEnv: %v", err)
+	}
+	if got := os.Getenv("OUTFIT_TEST_URL_ENVKW"); got != "from-env-keyword" {
+		t.Errorf("OUTFIT_TEST_URL_ENVKW = %q, want %q (ENV instructions still apply)", got, "from-env-keyword")
 	}
 }
 
