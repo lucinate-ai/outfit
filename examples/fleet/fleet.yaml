@@ -6,6 +6,14 @@
 # This file holds no secrets. A node that needs a bearer token names the
 # environment variable holding it (tokenEnv); the value comes from your
 # environment or the .env beside this file.
+# How to choose when several nodes could serve the same request:
+#   idle   (default) the machine quiet longest wins, so a second agent does not
+#          land on an engine that is mid-request
+#   active the most recently active wins, consolidating work onto one machine
+#          and leaving the rest free to wake for another model, or sleep
+# `outfit harness --prefer <value>` overrides this for one launch.
+prefer: idle
+
 nodes:
   # A Mac on the LAN serving MLX models. Its daemon listens on the default
   # port, and it is reachable over the network — so it needs a token.
@@ -23,3 +31,20 @@ nodes:
   # daemon needs no token, so this node names none.
   - name: local
     host: 127.0.0.1
+
+  # A node whose engine outfit cannot work out for itself. `host`/`port` above
+  # name the *daemon*; the engine is a different port, and the daemon normally
+  # reports it. Declare one when it cannot: a container publishing the engine on
+  # a different port than it binds inside, or a proxy in front of it. Each field
+  # falls back on its own, so a port alone is a complete answer.
+  #
+  # An engine that needs a key names the variable holding it, exactly as the
+  # daemon's token does — the daemon says a key is required, never what it is.
+  - name: behind-docker
+    host: docker-host.local
+    tokenEnv: DOCKER_HOST_TOKEN
+    engineTokenEnv: DOCKER_HOST_ENGINE_KEY
+    engine:
+      port: 18080          # published port
+      # host: https://engine.example   # a proxy in front of it
+      # path: /openai                  # when it is not the usual /v1

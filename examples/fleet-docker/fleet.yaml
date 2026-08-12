@@ -3,18 +3,31 @@
 #
 # No secrets here: each node names the environment variable holding its token,
 # resolved from your environment or the .env beside this file.
+#
+# Each node also declares where its *engine* answers. `port` above is the
+# daemon's; the engine is a different port, and normally the daemon reports it
+# — but here it binds 8080 inside the container and is published on another
+# port outside, which the daemon cannot know. That is what `engine:` is for.
+prefer: idle
+
 nodes:
   - name: studio
     host: 127.0.0.1
     port: 14242
     tokenEnv: STUDIO_TOKEN
+    engine:
+      port: 18080
 
   - name: gpu-box
     host: 127.0.0.1
     port: 14243
     tokenEnv: GPU_BOX_TOKEN
+    engine:
+      port: 18081
 
   - name: laptop
     host: 127.0.0.1
     port: 14244
     tokenEnv: LAPTOP_TOKEN
+    engine:
+      port: 18082

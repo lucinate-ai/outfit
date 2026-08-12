@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -87,6 +88,7 @@ func cmdDaemon(args []string) error {
 			}
 			argv = withMetricsArgs(argv, engine)
 			d.SetScrape(scrapeTargetFor(engine, "", argv))
+			d.SetEngineEndpoint(engineEndpointFor(engine, "", argv))
 			return argv, nil
 		}
 		if !hasOutfit {
@@ -108,6 +110,7 @@ func cmdDaemon(args []string) error {
 		}
 		d.SetServed(sel.Provider, model)
 		d.SetScrape(scrapeTargetFor(engine, sel.BaseURL, argv))
+		d.SetEngineEndpoint(engineEndpointFor(engine, sel.BaseURL, argv))
 		return argv, nil
 	}
 	// Nothing starts on boot; the listener is the daemon's whole job, so a
@@ -175,6 +178,7 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 	}
 	d.SetServed(sel.Provider, model)
 	d.SetScrape(scrapeTargetFor(engine, sel.BaseURL, argv))
+	d.SetEngineEndpoint(engineEndpointFor(engine, sel.BaseURL, argv))
 
 	// The engine sits in its own process group, so Ctrl+C reaches only this
 	// process — relay it as a stop. Installed before the engine starts so no
@@ -308,31 +312,105 @@ func scrapeTargetFor(engine serveEngine, baseURL string, argv []string) metrics.
 	if engine.metricsEngine == "" {
 		return metrics.ScrapeTarget{}
 	}
-	key, host, port := "", "", ""
+	bind := engineBindFrom(argv)
+	if b := bindBaseURL(bind.host, bind.port); b != "" {
+		baseURL = b
+	}
+	if baseURL == "" {
+		baseURL = engine.defaultBaseURL
+	}
+	return metrics.ScrapeTarget{BaseURL: baseURL, Engine: engine.metricsEngine, APIKey: bind.key}
+}
+
+// engineBind is what the engine's own command line says about where it listens
+// and whether it is gated. Both the metrics scrape and the endpoint status
+// reports read it, so the two cannot disagree about the same engine.
+type engineBind struct {
+	host string
+	port string
+	key  string
+}
+
+// engineBindFrom reads the bind and key out of an engine command. The key is a
+// literal --api-key or the contents of an --api-key-file (how the cloud
+// delivers it).
+func engineBindFrom(argv []string) engineBind {
+	var b engineBind
 	for i, a := range argv {
 		if i+1 >= len(argv) {
 			break
 		}
 		switch a {
 		case "--api-key":
-			key = argv[i+1]
+			b.key = argv[i+1]
 		case "--api-key-file":
 			if data, err := os.ReadFile(argv[i+1]); err == nil {
-				key = strings.TrimSpace(string(data))
+				b.key = strings.TrimSpace(string(data))
 			}
 		case "--host":
-			host = argv[i+1]
+			b.host = argv[i+1]
 		case "--port":
-			port = argv[i+1]
+			b.port = argv[i+1]
 		}
 	}
-	if bind := bindBaseURL(host, port); bind != "" {
-		baseURL = bind
+	return b
+}
+
+// engineEndpointFor describes where an engine serves inference, for the
+// daemon's status to report to a router. It reads the same command line the
+// scrape target does, so a node cannot advertise one address and be scraped on
+// another.
+//
+// The port follows the same precedence as the scrape: the engine's own --port,
+// then the Outfit's BASEURL, then the engine's compiled-in default. When none
+// of those yields a port, nil is returned — a router is told nothing rather
+// than a guess, and the fleet file's per-node override is the way through.
+func engineEndpointFor(engine serveEngine, baseURL string, argv []string) *daemon.EngineEndpoint {
+	bind := engineBindFrom(argv)
+	port := bind.port
+	path := ""
+	if port == "" && baseURL != "" {
+		if u, err := url.Parse(baseURL); err == nil {
+			port, path = u.Port(), u.Path
+		}
 	}
-	if baseURL == "" {
-		baseURL = engine.defaultBaseURL
+	if port == "" && engine.defaultBaseURL != "" {
+		if u, err := url.Parse(engine.defaultBaseURL); err == nil {
+			port = u.Port()
+		}
 	}
-	return metrics.ScrapeTarget{BaseURL: baseURL, Engine: engine.metricsEngine, APIKey: key}
+	n, err := strconv.Atoi(port)
+	if err != nil || n <= 0 {
+		return nil
+	}
+	// "/v1" is what an OpenAI-compatible client appends for itself, so
+	// reporting it would be noise; anything else is a real prefix.
+	if path == "/" || path == "/v1" {
+		path = ""
+	}
+	return &daemon.EngineEndpoint{
+		Port:         n,
+		Path:         path,
+		LoopbackOnly: bindIsLoopback(bind.host, engine.defaultBindLoopback),
+		RequiresKey:  bind.key != "",
+	}
+}
+
+// bindIsLoopback reports whether an engine bound to host answers only on this
+// machine. An engine that states no --host falls back to whether its own
+// default bind is loopback, which differs by engine: llama.cpp binds 127.0.0.1
+// unless told otherwise, vLLM binds every interface.
+func bindIsLoopback(host string, byDefault bool) bool {
+	switch host {
+	case "":
+		return byDefault
+	case "0.0.0.0", "::", "[::]", "*":
+		return false
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return host == "localhost"
 }
 
 // bindBaseURL turns the engine's --host/--port into the URL to scrape it on,

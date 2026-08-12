@@ -145,3 +145,57 @@ func TestParse_Remote(t *testing.T) {
 		t.Error("duplicate REMOTE should error")
 	}
 }
+
+func TestParse_Fleet(t *testing.T) {
+	sel, err := Parse([]byte("PROVIDER llamacpp\nMODEL qwen3-27b\nFLEET ./fleet.yaml\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Fleet != "./fleet.yaml" {
+		t.Errorf("Fleet = %q, want ./fleet.yaml", sel.Fleet)
+	}
+	if sel.FleetIsEndpoint() {
+		t.Error("a path should not read as an endpoint")
+	}
+	if out := Format(sel); !strings.Contains(out, "FLEET    ./fleet.yaml") {
+		t.Errorf("Format should emit FLEET, got:\n%s", out)
+	}
+	if _, err := Parse([]byte("PROVIDER x\nFLEET a\nFLEET b\n")); err == nil {
+		t.Error("duplicate FLEET should error")
+	}
+}
+
+// A FLEET naming a URL is the gateway shape: it parses, so the eventual
+// gateway needs no new keyword, and it is distinguishable from a path.
+func TestParse_FleetEndpoint(t *testing.T) {
+	sel, err := Parse([]byte("PROVIDER llamacpp\nFLEET http://gateway.internal:4000\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sel.FleetIsEndpoint() {
+		t.Errorf("FLEET %q should read as an endpoint", sel.Fleet)
+	}
+}
+
+// REMOTE and FLEET each name where the model is served from, so an Outfit
+// stating both is a mistake. BASEURL is the pinned address that already wins
+// over REMOTE, so pairing it with FLEET is not a conflict.
+func TestParse_FleetAndRemoteConflict(t *testing.T) {
+	_, err := Parse([]byte("PROVIDER x\nFLEET ./fleet.yaml\nREMOTE ./remote.json\n"))
+	if err == nil {
+		t.Fatal("FLEET with REMOTE should error")
+	}
+	for _, want := range []string{"REMOTE", "FLEET"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %s, got %q", want, err)
+		}
+	}
+
+	sel, err := Parse([]byte("PROVIDER x\nFLEET ./fleet.yaml\nBASEURL http://pinned/v1\n"))
+	if err != nil {
+		t.Fatalf("FLEET with BASEURL should parse: %v", err)
+	}
+	if sel.BaseURL != "http://pinned/v1" || sel.Fleet != "./fleet.yaml" {
+		t.Errorf("both should survive parsing, got %+v", sel)
+	}
+}

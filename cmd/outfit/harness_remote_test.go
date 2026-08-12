@@ -57,8 +57,8 @@ func TestApplyBeforeLaunch_RemoteKeySilencesTheMissingKeyWarning(t *testing.T) {
 	h, _ := harness.Lookup("opencode")
 	var sel outfitSelectionResult
 	out := captureStdout(t, func() {
-		sel.selection, sel.envDir, sel.resp, sel.err = applyBeforeLaunch(
-			outfitPathFlag{set: true, path: dir}, "", h, nil)
+		sel.selection, sel.envDir, sel.resp, _, sel.err = applyBeforeLaunch(
+			outfitPathFlag{set: true, path: dir}, "", h, nil, routeOptions{})
 	})
 	if sel.err != nil {
 		t.Fatalf("applyBeforeLaunch: %v", sel.err)
@@ -80,7 +80,8 @@ func TestApplyBeforeLaunch_RemoteKeySilencesTheMissingKeyWarning(t *testing.T) {
 	}
 }
 
-// outfitSelectionResult carries applyBeforeLaunch's four results out of the
+// outfitSelectionResult carries the applyBeforeLaunch results these tests read
+// out of the
 // output-capturing closure.
 type outfitSelectionResult struct {
 	selection outfit.Selection
@@ -115,8 +116,8 @@ func TestApplyBeforeLaunch_FailsWhenNoKeyCanBeHad(t *testing.T) {
 	var res outfitSelectionResult
 	captureStderr(t, func() {
 		captureStdout(t, func() {
-			res.selection, res.envDir, res.resp, res.err = applyBeforeLaunch(
-				outfitPathFlag{set: true, path: dir}, "", h, nil)
+			res.selection, res.envDir, res.resp, _, res.err = applyBeforeLaunch(
+				outfitPathFlag{set: true, path: dir}, "", h, nil, routeOptions{})
 		})
 	})
 	if res.err == nil {
@@ -149,8 +150,8 @@ func TestApplyBeforeLaunch_CarriesOnWhenTheKeyIsAlreadySet(t *testing.T) {
 	var stdout string
 	stderr := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
-			res.selection, res.envDir, res.resp, res.err = applyBeforeLaunch(
-				outfitPathFlag{set: true, path: dir}, "", h, nil)
+			res.selection, res.envDir, res.resp, _, res.err = applyBeforeLaunch(
+				outfitPathFlag{set: true, path: dir}, "", h, nil, routeOptions{})
 		})
 	})
 	if res.err != nil {
@@ -184,8 +185,8 @@ func TestApplyBeforeLaunch_CountsAnEnvInstructionAsTheKey(t *testing.T) {
 	var res outfitSelectionResult
 	captureStderr(t, func() {
 		captureStdout(t, func() {
-			res.selection, res.envDir, res.resp, res.err = applyBeforeLaunch(
-				outfitPathFlag{set: true, path: dir}, "", h, nil)
+			res.selection, res.envDir, res.resp, _, res.err = applyBeforeLaunch(
+				outfitPathFlag{set: true, path: dir}, "", h, nil, routeOptions{})
 		})
 	})
 	if res.err != nil {
@@ -207,7 +208,7 @@ func TestApplyBeforeLaunch_AnnouncesTheFetch(t *testing.T) {
 	var stdout string
 	stderr := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
-			if _, _, _, err := applyBeforeLaunch(outfitPathFlag{set: true, path: dir}, "", h, nil); err != nil {
+			if _, _, _, _, err := applyBeforeLaunch(outfitPathFlag{set: true, path: dir}, "", h, nil, routeOptions{}); err != nil {
 				t.Fatalf("applyBeforeLaunch: %v", err)
 			}
 		})
@@ -231,8 +232,8 @@ func TestApplyBeforeLaunch_LocalOutfitFetchesNothing(t *testing.T) {
 	var res outfitSelectionResult
 	stderr := captureStderr(t, func() {
 		captureStdout(t, func() {
-			res.selection, res.envDir, res.resp, res.err = applyBeforeLaunch(
-				outfitPathFlag{set: true, path: dir}, "", h, nil)
+			res.selection, res.envDir, res.resp, _, res.err = applyBeforeLaunch(
+				outfitPathFlag{set: true, path: dir}, "", h, nil, routeOptions{})
 		})
 	})
 	if res.err != nil {

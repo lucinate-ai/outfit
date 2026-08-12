@@ -60,6 +60,40 @@ variable chooses which Outfit, never whether you are dressed. See
 | `--set` | Store the default harness and exit |
 | `--get` | Print the active harness instead of launching |
 | `--providers` | Path to a custom catalogue, for the applied Outfit |
+| `--fleet` | Route through this fleet file (overrides the Outfit's `FLEET`) |
+| `--node` | Pin the launch to one fleet node |
+| `--prefer` | Rank fleet nodes by `idle` or `active` (overrides the fleet file) |
+| `--no-wake` | Fail rather than starting an engine on an idle fleet node |
+| `--wake-timeout` | How long to wait for a woken node's engine (default 5m) |
+
+## Launching against your fleet
+
+An Outfit with a [`FLEET`](../outfit-file.md#running-the-model-on-another-machine-you-own)
+instruction sends the agent to a machine on your network instead of a local
+engine:
+
+```sh
+outfit harness my-outfit          # picks a node, launches the agent at it
+outfit harness --node gpu-box my-outfit
+outfit harness --prefer active my-outfit
+```
+
+outfit queries the fleet, prefers a node already serving the Outfit's model,
+and points the launched agent at that node's engine — the same injection that
+carries a [`REMOTE`](remote.md) endpoint's address and key, with a selection
+step in front. It reports which node it chose, and why, before the agent
+starts.
+
+When nothing is serving that model, outfit picks a node that is not running,
+tells it what to serve, starts it, and waits for its engine to answer. A node
+that is already running is never stopped to make room — someone else may be
+using it — so a fleet with every machine busy on other models fails rather than
+displacing anyone. `--no-wake` turns starting off entirely.
+
+Which node wins among several that could all serve you is a
+[`prefer` setting](fleet.md#spreading-or-consolidating): `idle` (the default)
+takes the machine that has been quiet longest, keeping a second agent off an
+engine that is mid-request; `active` consolidates onto the busy one instead.
 
 ## Notes
 
@@ -72,3 +106,5 @@ variable chooses which Outfit, never whether you are dressed. See
 
 - [`outfit show`](show.md) — what the active harness has configured
 - [`outfit apply`](apply.md) — dress without launching
+- [`outfit fleet route`](fleet.md#which-node-would-i-get) — which node a launch would pick
+- [`examples/fleet-local/`](../../examples/fleet-local/) — routing at a single local node, end to end

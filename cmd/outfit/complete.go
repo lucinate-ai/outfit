@@ -151,10 +151,12 @@ var commands = map[string]command{
 		positional: kindAlias, positionals: 1,
 	},
 	"fleet": {
-		subcommands: []string{"status", "metrics", "logs", "start", "stop"},
-		flags:       []string{"--fleet", "--format", "--watch", "-w", "--follow", "-f", "--limit"},
+		subcommands: []string{"status", "metrics", "logs", "route", "start", "stop"},
+		flags: []string{"--fleet", "--format", "--watch", "-w", "--follow", "-f", "--limit",
+			"--node", "--prefer"},
 		values: map[string]candidateKind{
 			"--fleet": kindFile, "--format": kindNone,
+			"--node": kindNone, "--prefer": kindNone,
 		},
 	},
 	"export": {
@@ -169,9 +171,12 @@ var commands = map[string]command{
 		positional: kindFile, positionals: 1,
 	},
 	"harness": {
-		flags: []string{"--set", "--get", "--harness", "-H", "--outfit", "-O", "--providers"},
+		flags: []string{"--set", "--get", "--harness", "-H", "--outfit", "-O", "--providers",
+			"--fleet", "--node", "--prefer", "--no-wake", "--wake-timeout"},
 		values: map[string]candidateKind{
 			"--set": kindHarness, "--harness": kindHarness, "-H": kindHarness,
+			"--fleet": kindFile, "--node": kindNone, "--prefer": kindNone,
+			"--wake-timeout": kindNone,
 			// --outfit's value is optional, so it is not consumed as a separate
 			// word; naming it here is what completes `--outfit=<TAB>`.
 			"--outfit": kindAlias, "-O": kindAlias,

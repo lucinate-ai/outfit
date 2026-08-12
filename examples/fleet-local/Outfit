@@ -1,0 +1,11 @@
+# Gemma-4-12B-IT, served by a daemon on this machine and reached through the
+# fleet. Same model and preset as examples/llamacpp/gemma4 — the only addition
+# is FLEET, which is what turns `outfit harness` from "assume something is
+# listening on :8080" into "find a node, start one if need be, then launch".
+PROVIDER llamacpp
+ALIAS    gemma-4-12b-it
+CONTEXT  32768            # match the preset's ctx-size
+PRESET   ./preset.ini     # what a woken node is told to run
+FLEET    ./fleet.yaml     # the fleet to route through (this machine)
+# No BASEURL: the address is whichever node gets chosen. Pinning one here
+# would be taken at its word and turn routing off.

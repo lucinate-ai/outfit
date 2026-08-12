@@ -30,10 +30,41 @@ const DefaultFile = "fleet.yaml"
 // through its stats Lambda) slots in without a file format change.
 const KindDaemon = "daemon"
 
+// Prefer is how routing ranks several nodes that could all serve a request.
+// Which answer is right depends on the fleet, not on the code, so it is a
+// setting rather than a decision.
+type Prefer string
+
+const (
+	// PreferIdle takes the node inactive longest: work spreads, and a node
+	// mid-request is the last one chosen because it is the least idle of
+	// all. The default — piling onto a busy engine degrades a session
+	// someone is already in, while over-spreading only costs a wake.
+	PreferIdle Prefer = "idle"
+	// PreferActive takes the most recently active node: sessions
+	// consolidate onto one engine, leaving the rest free to be woken for
+	// another model or left asleep.
+	PreferActive Prefer = "active"
+)
+
+// ParsePrefer validates an activity preference from a file or a flag.
+func ParsePrefer(s string) (Prefer, error) {
+	switch Prefer(s) {
+	case PreferIdle, PreferActive:
+		return Prefer(s), nil
+	}
+	return "", fmt.Errorf("unknown preference %q: use %q or %q", s, PreferIdle, PreferActive)
+}
+
 // Config is a parsed fleet.yaml: the nodes, plus where the file was read from
 // (the directory whose .env supplies token values).
 type Config struct {
 	Nodes []NodeConfig `yaml:"nodes"`
+	// Prefer ranks nodes that could all serve a request. It belongs to the
+	// file rather than to a node because it describes how this cluster
+	// should be used — spread the work, or consolidate it. Empty means
+	// PreferIdle.
+	Prefer Prefer `yaml:"prefer"`
 
 	// Path is the file this was read from, and Dir its directory — the .env
 	// beside it fills token references.
@@ -57,6 +88,25 @@ type NodeConfig struct {
 	// token. The token itself is never written here. Empty means the daemon
 	// needs no token (a loopback-only daemon).
 	TokenEnv string `yaml:"tokenEnv"`
+	// EngineTokenEnv names the environment variable holding the key this
+	// node's *engine* requires — a different credential from the daemon's
+	// bearer token, and a node may need either, both, or neither. As with
+	// TokenEnv, the value is never written here.
+	EngineTokenEnv string `yaml:"engineTokenEnv"`
+	// Engine overrides where this node's engine serves, for the setups a
+	// daemon cannot describe: an engine behind a reverse proxy, a container
+	// publishing it on a different port than it binds inside, a node
+	// reached through a tunnel.
+	Engine *EngineOverride `yaml:"engine"`
+}
+
+// EngineOverride is a node's declared engine endpoint. Each field is optional
+// and falls back independently to what routing would otherwise derive — the
+// node's own host, and the port and path the daemon reports.
+type EngineOverride struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+	Path string `yaml:"path"`
 }
 
 // BaseURL is the root of this node's control API.
@@ -110,6 +160,11 @@ func Resolve(flagPath string) (*Config, error) {
 func (c *Config) validate() error {
 	if len(c.Nodes) == 0 {
 		return fmt.Errorf("no nodes: list at least one under `nodes:`")
+	}
+	if c.Prefer != "" {
+		if _, err := ParsePrefer(string(c.Prefer)); err != nil {
+			return err
+		}
 	}
 	seen := map[string]bool{}
 	for i := range c.Nodes {
@@ -177,20 +232,39 @@ func (c *Config) Names() []string {
 // configuration error, reported against that node rather than surfacing later
 // as an authentication failure.
 func (c *Config) Token(n NodeConfig) (string, error) {
-	if n.TokenEnv == "" {
+	return c.resolveTokenEnv(n, n.TokenEnv)
+}
+
+// EngineToken resolves the key a node's engine requires, from the variable the
+// node names. It is a different credential from the daemon's bearer token —
+// one authorises driving the node, the other authorises using its engine — but
+// it is referenced and resolved identically, so neither is ever written in the
+// fleet file.
+func (c *Config) EngineToken(n NodeConfig) (string, error) {
+	return c.resolveTokenEnv(n, n.EngineTokenEnv)
+}
+
+// resolveTokenEnv reads one of a node's token references: the process
+// environment first, then the .env beside the fleet file — the precedence
+// outfit uses everywhere, so an exported value wins and the .env only fills a
+// gap. A node naming no variable needs no token. A node naming one that is set
+// nowhere is a configuration error, reported against that node rather than
+// surfacing later as an authentication failure.
+func (c *Config) resolveTokenEnv(n NodeConfig, name string) (string, error) {
+	if name == "" {
 		return "", nil
 	}
-	if v := os.Getenv(n.TokenEnv); v != "" {
+	if v := os.Getenv(name); v != "" {
 		return v, nil
 	}
 	vars, err := opencode.ParseEnvFile(filepath.Join(c.Dir, ".env"))
 	if err != nil {
 		return "", err
 	}
-	if v := vars[n.TokenEnv]; v != "" {
+	if v := vars[name]; v != "" {
 		return v, nil
 	}
 	return "", fmt.Errorf(
 		"%s is not set (node %q): export it, or put it in the .env beside %s",
-		n.TokenEnv, n.Name, c.Path)
+		name, n.Name, c.Path)
 }

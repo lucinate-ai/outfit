@@ -13,6 +13,7 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/metrics"
+	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
 // RequestTimeout bounds one call to a node. A fleet view has to stay snappy:
@@ -141,8 +142,20 @@ func (c *Client) Logs(ctx context.Context, offset int64, limit int) (daemon.Logs
 
 // Start asks the daemon to start its engine, returning the resulting status.
 func (c *Client) Start(ctx context.Context) (daemon.StatusResponse, error) {
+	return c.StartWith(ctx, nil)
+}
+
+// StartWith asks the daemon to start its engine on a deploy config it carries,
+// so a caller can say what to run and run it in one call. A nil config starts
+// from what the node already has. The daemon validates the config against what
+// it can serve and stores it only if the start is accepted.
+func (c *Client) StartWith(ctx context.Context, dc *remote.DeployConfig) (daemon.StatusResponse, error) {
 	var out daemon.StatusResponse
-	err := c.do(ctx, http.MethodPost, "/v1/start", nil, &out)
+	var body any
+	if dc != nil {
+		body = dc
+	}
+	err := c.do(ctx, http.MethodPost, "/v1/start", body, &out)
 	return out, err
 }
 

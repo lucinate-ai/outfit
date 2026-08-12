@@ -1,0 +1,12 @@
+# What a *client* wears to use this fleet — the Outfit you would have on your
+# laptop, as opposed to node/Outfit, which is what each node serves.
+#
+# The difference that matters is the missing BASEURL. A node's Outfit pins its
+# own local engine; a client's must not, because the whole point is that outfit
+# picks a node and fills the address in. An Outfit that states one is taken at
+# its word and never routed.
+PROVIDER llamacpp
+MODEL    org/fake-model
+ALIAS    fake-model
+CONTEXT  4096
+FLEET    ../fleet.yaml

@@ -389,3 +389,85 @@ func TestListenGuard(t *testing.T) {
 	}
 	l.Close()
 }
+
+// The engine endpoint is what a router needs and cannot guess: the engine's
+// own port, not the control API's. It appears only while an engine runs, and
+// never carries the key itself — saying a key is required is a fact a caller
+// needs, handing the key over is not.
+func TestStatusReportsEngineEndpoint(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	d.SetEngineEndpoint(&EngineEndpoint{Port: 8080, LoopbackOnly: true, RequiresKey: true})
+
+	// Idle: an address for a process that does not exist is worse than none.
+	if got := d.Status(); got.Engine != nil {
+		t.Errorf("idle daemon reported an engine endpoint: %+v", got.Engine)
+	}
+
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Sup.Stop()
+	waitForState(t, d.Sup, StateRunning)
+
+	got := d.Status()
+	if got.Engine == nil {
+		t.Fatal("running engine reported no endpoint")
+	}
+	if got.Engine.Port != 8080 {
+		t.Errorf("port = %d, want the engine's 8080", got.Engine.Port)
+	}
+	if !got.Engine.LoopbackOnly || !got.Engine.RequiresKey {
+		t.Errorf("endpoint lost its flags: %+v", got.Engine)
+	}
+
+	// The serialised reply must not carry a key under any name.
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(encoded)), "sekrit") {
+		t.Errorf("status leaked a key: %s", encoded)
+	}
+	var decoded struct {
+		Engine map[string]any `json:"engine"`
+	}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for field := range decoded.Engine {
+		switch field {
+		case "port", "path", "loopbackOnly", "requiresKey":
+		default:
+			t.Errorf("engine endpoint serialised unexpected field %q", field)
+		}
+	}
+
+	// Stopping takes the address away again.
+	d.Sup.Stop()
+	waitForState(t, d.Sup, StateStopped)
+	if got := d.Status(); got.Engine != nil {
+		t.Errorf("stopped daemon reported an engine endpoint: %+v", got.Engine)
+	}
+}
+
+// A daemon that cannot work out where its engine serves reports nothing rather
+// than a guess: the fleet file's per-node override is the way through.
+func TestStatusOmitsUnknownEngineEndpoint(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Sup.Stop()
+	waitForState(t, d.Sup, StateRunning)
+	if got := d.Status(); got.Engine != nil {
+		t.Errorf("endpoint reported without one being set: %+v", got.Engine)
+	}
+}

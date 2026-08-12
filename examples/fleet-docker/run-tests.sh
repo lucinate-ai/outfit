@@ -239,6 +239,62 @@ test_start_stop_one_node() {
 }
 
 #######################################
+# Assert routing picks a node and wakes one when nothing is serving. This is
+# the published-port case: the engine binds 8080 inside each container and is
+# published on another port outside, so it only works because fleet.yaml
+# declares a per-node `engine:` block.
+# Globals:
+#   HERE, OUTFIT_BIN
+#######################################
+test_routing() {
+  echo "Routing a launch at a node"
+  # A client's Outfit, not the node's: node/Outfit pins its own engine's
+  # BASEURL, which is taken at its word and never routed.
+  local outfit_file="${HERE}/client/Outfit"
+  local out
+
+  # Nothing is serving yet, so route reports what a launch would wake and
+  # starts nothing itself.
+  out="$("${OUTFIT_BIN}" fleet route --fleet "${HERE}/fleet.yaml" "${outfit_file}" 2>&1)"
+  assert_contains "route says nothing is serving the model" "${out}" "is serving"
+  assert_contains "route names the node a launch would wake" "${out}" "would wake"
+  assert_contains "route says it started nothing" "${out}" "Nothing has been started"
+  # Whatever studio was before, it is not running: reporting a route must not
+  # start an engine. (An earlier test leaves it `stopped` rather than `idle`.)
+  local state_after
+  state_after="$(node_state studio)"
+  if [[ "${state_after}" != "running" ]]; then
+    pass "route really started nothing"
+  else
+    fail "route really started nothing" "any state but running" "${state_after}"
+  fi
+
+  # With a node up, routing picks it and resolves its published engine port.
+  fleet start studio >/dev/null
+  wait_for_state studio running 30 || true
+  out="$("${OUTFIT_BIN}" fleet route --fleet "${HERE}/fleet.yaml" "${outfit_file}" 2>&1)"
+  assert_contains "route picks the running node" "${out}" "Would use studio"
+  assert_contains "route resolves the published engine port" "${out}" "18080"
+  assert_contains "route names the preference in force" "${out}" "prefer idle"
+
+  # The endpoint it reports is one that actually answers.
+  local base_url
+  base_url="$(printf '%s\n' "${out}" | sed -n 's/.*Would use studio at \([^ ]*\).*/\1/p')"
+  if curl -fsS --max-time 5 "${base_url%/v1}/health" >/dev/null 2>&1; then
+    pass "the routed endpoint answers"
+  else
+    fail "the routed endpoint answers" "a live engine at ${base_url}" "no answer"
+  fi
+
+  # A second node, chosen by pinning rather than by ranking.
+  out="$("${OUTFIT_BIN}" fleet route --fleet "${HERE}/fleet.yaml" --node gpu-box "${outfit_file}" 2>&1)"
+  assert_contains "a pinned node is reported even when idle" "${out}" "gpu-box"
+
+  fleet stop studio >/dev/null
+  wait_for_state studio stopped 30 || true
+}
+
+#######################################
 # Assert metrics come from the engine, through the daemon's collector.
 #######################################
 test_metrics() {
@@ -355,6 +411,8 @@ main() {
   test_cold_start
   echo
   test_start_stop_one_node
+  echo
+  test_routing
   echo
   test_metrics
   echo

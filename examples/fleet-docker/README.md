@@ -44,9 +44,29 @@ always the same numbers, and nothing is inferring anything.
 That trade is deliberate: what is being demonstrated (and tested) is the fleet
 control path, not inference.
 
+**Also real**: routing. Each node's engine binds `8080` inside its container and
+is published on a different port outside (`18080`–`18082`), which its daemon has
+no way to know — so `fleet.yaml` declares a per-node `engine:` block, and that is
+the case those blocks exist for. `outfit fleet route` resolves the published port
+and the endpoint it names genuinely answers. What you cannot do here is get a
+useful reply out of the agent: the fake engine serves `/health` and `/metrics`
+and nothing else.
+
+Note the two Outfits. [`node/Outfit`](node/Outfit) is what each node *serves*,
+and pins its own engine's `BASEURL`. [`client/Outfit`](client/Outfit) is what
+you would wear to *use* the fleet: same model, no `BASEURL`, and a `FLEET`
+naming the file above. An Outfit that pins an address is taken at its word and
+never routed, which is why the two cannot be the same file.
+
 ## Things worth trying
 
 ```sh
+# Which node would a harness launch pick? (Changes nothing.)
+outfit fleet route ./client/Outfit
+
+# Actually launch an agent against the fleet, waking a node if none is serving.
+outfit harness ./client/Outfit
+
 # A node that goes away: the row degrades, the rest keep reporting, exit 0.
 docker compose stop gpu-box
 outfit fleet status --fleet ./fleet.yaml

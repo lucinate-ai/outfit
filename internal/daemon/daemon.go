@@ -48,12 +48,14 @@ type Daemon struct {
 	// test can age an engine without waiting.
 	Now func() time.Time
 
-	act activity
+	act    activity
+	sample engineSample
 
-	mu     sync.Mutex
-	runner string
-	model  string
-	scrape metrics.ScrapeTarget
+	mu       sync.Mutex
+	runner   string
+	model    string
+	scrape   metrics.ScrapeTarget
+	endpoint *EngineEndpoint
 }
 
 // now reads the daemon's clock, defaulting to the wall clock.
@@ -71,6 +73,22 @@ func (d *Daemon) SetScrape(target metrics.ScrapeTarget) {
 	d.mu.Lock()
 	d.scrape = target
 	d.mu.Unlock()
+}
+
+// SetEngineEndpoint records where the engine about to run serves inference,
+// for status to report. Set alongside each start, beside SetScrape, so it
+// always describes the engine that runs; nil means the endpoint could not be
+// determined, and status then reports none rather than guessing one.
+func (d *Daemon) SetEngineEndpoint(ep *EngineEndpoint) {
+	d.mu.Lock()
+	d.endpoint = ep
+	d.mu.Unlock()
+}
+
+func (d *Daemon) engineEndpoint() *EngineEndpoint {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.endpoint
 }
 
 // SetServed records what the daemon is serving, for status and metrics.
@@ -154,6 +172,9 @@ func (d *Daemon) StartEngine() error {
 	// existed — the race the control plane used to close with a last-wake
 	// timestamp of its own.
 	d.act.markActive(d.now())
+	// The previous engine's counters must not be reported against this one,
+	// for the same reason its counter baseline is dropped.
+	d.sample.forget()
 	return nil
 }
 
@@ -172,6 +193,34 @@ type StatusResponse struct {
 	// read time, so it is a convenience for a caller that would otherwise
 	// parse a timestamp in a shell pipeline — LastActiveAt is the fact.
 	IdleSeconds int `json:"idleSeconds,omitempty"`
+	// Engine says where the running engine serves inference. Absent unless
+	// an engine is running: an address for a process that does not exist is
+	// worse than no address.
+	Engine *EngineEndpoint `json:"engine,omitempty"`
+}
+
+// EngineEndpoint is where the supervised engine answers inference requests.
+// It reports parts rather than a URL on purpose: a daemon knows its engine
+// binds 127.0.0.1:8080, which is useless to anyone else, and it cannot know
+// the name a client reaches this host by — a LAN name, a tailscale name, a
+// published container port. The caller composes these against the host it
+// already has.
+type EngineEndpoint struct {
+	// Port is the port the engine listens on — the engine's, never the
+	// control API's.
+	Port int `json:"port"`
+	// Path is the OpenAI-compatible path prefix, when it is not the usual
+	// /v1. Empty means the default.
+	Path string `json:"path,omitempty"`
+	// LoopbackOnly marks an engine bound to loopback, which therefore
+	// answers only on this machine. It turns a remote caller's connection
+	// refused into something it can explain.
+	LoopbackOnly bool `json:"loopbackOnly,omitempty"`
+	// RequiresKey says the engine was started with an API key, so a caller
+	// needs one. The key itself is never reported: a caller authorised to
+	// drive this node is not thereby authorised to be handed its engine's
+	// credential.
+	RequiresKey bool `json:"requiresKey,omitempty"`
 }
 
 // Status reports the supervised state, what is being served, where the
@@ -187,6 +236,10 @@ func (d *Daemon) Status() StatusResponse {
 		LogPath:       d.Sup.LogPath,
 	}
 	resp.LastActiveAt, resp.IdleSeconds = d.activity()
+	// Only a running engine has an address worth reporting.
+	if state == StateRunning {
+		resp.Engine = d.engineEndpoint()
+	}
 	return resp
 }
 
@@ -223,28 +276,23 @@ func (d *Daemon) Metrics(ctx context.Context) metrics.Stats {
 		if d.Collector != nil {
 			d.Collector.System(ctx, &stats)
 		}
-		d.mu.Lock()
-		scrape := d.scrape
-		d.mu.Unlock()
-		if scrape.BaseURL != "" {
-			tokens, err := metrics.ScrapeTokenStats(ctx, scrape)
-			if err != nil {
-				// Reported, not swallowed. A silent omission here once hid a
-				// scraper pointed at the wrong port for every cloud llama.cpp
-				// deployment: the token block simply never appeared, and with
-				// no observation to make, the activity record never moved.
-				// An absent *source* is omitted quietly; a source that is
-				// there and failing is an error worth showing.
-				stats.Errors = append(stats.Errors,
-					fmt.Sprintf("engine metrics scrape (%s): %v", scrape.BaseURL, err))
-				tokens = nil
-			}
-			// Feed it through the same path the background sampler uses: one
-			// place decides whether a sample counts as activity, so a client
-			// polling metrics refreshes the record rather than racing it.
-			d.act.observe(tokens, d.now())
-			stats.Tokens = tokens
+		// The engine's counters come from the background sampler, never from
+		// a scrape taken here. A busy engine does not answer its own metrics
+		// endpoint — llama.cpp serves it from the queue it serves inference
+		// from — so scraping inline made this handler block for as long as
+		// the engine had work, which is precisely when a caller is watching.
+		tokens, err, baseURL := d.sample.read()
+		if err != nil {
+			// Reported, not swallowed. A silent omission here once hid a
+			// scraper pointed at the wrong port for every cloud llama.cpp
+			// deployment: the token block simply never appeared, and with
+			// no observation to make, the activity record never moved.
+			// An absent *source* is omitted quietly; a source that is
+			// there and failing is an error worth showing.
+			stats.Errors = append(stats.Errors,
+				fmt.Sprintf("engine metrics scrape (%s): %v", baseURL, err))
 		}
+		stats.Tokens = tokens
 	}
 	// Outside the running branch, so a stopped or crashed engine still reports
 	// when work last happened — the record survives a stop precisely so it can

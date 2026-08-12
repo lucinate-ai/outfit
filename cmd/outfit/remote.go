@@ -851,11 +851,25 @@ func isCloudOwned(key string) bool {
 	return cloudOwnedFlags[preset.CanonicalKey(key)]
 }
 
-// dropCloudOwned returns the params the deployment should keep.
-func dropCloudOwned(params []preset.Param) []preset.Param {
+// isNodeOwned reports whether a fleet node's daemon sets this preset key
+// itself. It is the cloud's set minus the bind: a node is a machine the
+// operator owns, so where its engine listens is their choice to make. Dropping
+// it left a woken engine on llama.cpp's loopback default however the preset was
+// written — reachable from nobody else in the fleet, which is the whole point
+// of a fleet.
+func isNodeOwned(key string) bool {
+	switch preset.CanonicalKey(key) {
+	case "host", "port":
+		return false
+	}
+	return isCloudOwned(key)
+}
+
+// dropOwned returns the params the destination does not set for itself.
+func dropOwned(owned func(string) bool, params []preset.Param) []preset.Param {
 	var kept []preset.Param
 	for _, p := range params {
-		if !isCloudOwned(p.Key) {
+		if !owned(p.Key) {
 			kept = append(kept, p)
 		}
 	}
@@ -867,7 +881,32 @@ func dropCloudOwned(params []preset.Param) []preset.Param {
 // picks the runner, MODEL or the preset's hf names the weights, CONTEXT the
 // window, ALIAS the served name, and whatever else the preset sets becomes the
 // runner's own flags.
+//
+// A context size is required, because a cloud instance has to be sized before
+// it is provisioned. deployConfigWithoutContext is the same derivation for a
+// caller where that is not true.
 func deployConfigFor(sel outfit.Selection, outfitPath string) (remote.DeployConfig, error) {
+	return deployConfig(sel, outfitPath, deployTarget{requireContext: true, owns: isCloudOwned})
+}
+
+// deployConfigForNode derives the same config for a machine that already
+// exists — a fleet node being woken. Two things differ from a cloud
+// deployment, both because the machine is the operator's rather than the
+// deployment's: sizing falls back to the engine's own default, so an Outfit
+// that `outfit serve` runs happily needs no CONTEXT added merely to be routed;
+// and the preset's bind survives, so an engine told to listen on 0.0.0.0 does.
+func deployConfigForNode(sel outfit.Selection, outfitPath string) (remote.DeployConfig, error) {
+	return deployConfig(sel, outfitPath, deployTarget{owns: isNodeOwned})
+}
+
+// deployTarget is what the derivation cannot decide for itself: whether a
+// context size is required, and which preset flags the destination assigns.
+type deployTarget struct {
+	requireContext bool
+	owns           func(key string) bool
+}
+
+func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) (remote.DeployConfig, error) {
 	var dc remote.DeployConfig
 
 	runner, err := runnerFor(sel.Provider)
@@ -919,14 +958,16 @@ func deployConfigFor(sel outfit.Selection, outfitPath string) (remote.DeployConf
 	if context == "" {
 		context = presetValue("ctx-size", global, params)
 	}
-	if context == "" {
+	if context == "" && target.requireContext {
 		return dc, fmt.Errorf("no context size: set CONTEXT in %s, or ctx-size in its preset", outfitPath)
 	}
-	n, err := contextsize.Parse(context)
-	if err != nil {
-		return dc, err
+	if context != "" {
+		n, err := contextsize.Parse(context)
+		if err != nil {
+			return dc, err
+		}
+		dc.ContextSize = n
 	}
-	dc.ContextSize = n
 
 	// The served name is what a coding agent asks for. ALIAS is the friendly
 	// name; without one the repo id is served under its own name.
@@ -935,7 +976,7 @@ func deployConfigFor(sel outfit.Selection, outfitPath string) (remote.DeployConf
 		dc.ServedModelName = dc.ModelID
 	}
 
-	dc.ServeArgs = preset.Flags(dropCloudOwned(global), dropCloudOwned(params))
+	dc.ServeArgs = preset.Flags(dropOwned(target.owns, global), dropOwned(target.owns, params))
 	if dc.ServeArgs == nil {
 		dc.ServeArgs = []string{}
 	}

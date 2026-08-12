@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -397,6 +398,13 @@ func TestScrapeTargetForReadsAPIKeyFile(t *testing.T) {
 }
 
 func TestCmdServe_ForegroundWithoutAPIListensNowhere(t *testing.T) {
+	// This probes a fixed port, so it can only tell "serve opened a listener"
+	// from "serve did not" when that port starts out free. A developer running
+	// `outfit daemon` on this machine — which examples/fleet-local encourages
+	// — would otherwise see this fail as though serve had leaked a listener.
+	probe := fmt.Sprintf("127.0.0.1:%d", daemon.DefaultAPIPort)
+	requireFreePort(t, probe)
+
 	// A plain foreground serve must not open the control API. The engine
 	// exits immediately; if an API listener had started it would outlive it.
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
@@ -407,9 +415,24 @@ func TestCmdServe_ForegroundWithoutAPIListensNowhere(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	if _, err := http.Get(fmt.Sprintf("http://127.0.0.1%s/v1/status", daemon.DefaultAPIAddr)); err == nil {
+	if _, err := http.Get("http://" + probe + "/v1/status"); err == nil {
 		t.Fatal("plain serve left a control API listening")
 	}
+}
+
+// requireFreePort skips the test when something is already listening on addr,
+// naming what it found so the skip is not mistaken for a passing assertion.
+// It must be given the same host:port the assertion probes: binding the
+// wildcard address can succeed while a specific one is taken, which would let
+// the guard pass and the assertion still fail.
+func requireFreePort(t *testing.T, addr string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Skipf("something is already listening on %s (%v): "+
+			"this test can only prove serve opened no listener when the port starts free", addr, err)
+	}
+	ln.Close()
 }
 
 // TestScrapeTargetForHonoursTheEngineBind pins the regression that left every
@@ -465,5 +488,210 @@ func TestScrapeTargetForHonoursTheEngineBind(t *testing.T) {
 	}
 	if got := scrapeTargetFor(vllm, "", []string{"vllm", "--host", "0.0.0.0", "--port", "7000"}); got.BaseURL != "http://127.0.0.1:7000" {
 		t.Errorf("vLLM BaseURL = %q, want its stated bind", got.BaseURL)
+	}
+}
+
+// The endpoint a node advertises to a router is derived from the same command
+// line the metrics scrape reads, so the two cannot disagree about one engine.
+func TestEngineEndpointFor(t *testing.T) {
+	llama, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vllm, err := engineFor("vllm")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		engine  serveEngine
+		baseURL string
+		argv    []string
+		want    *daemon.EngineEndpoint
+	}{
+		{
+			name:   "the engine's own bind wins",
+			engine: llama,
+			argv:   []string{"llama-server", "--host", "0.0.0.0", "--port", "9001"},
+			want:   &daemon.EngineEndpoint{Port: 9001},
+		},
+		{
+			name:    "the Outfit's base url when the command says nothing",
+			engine:  llama,
+			baseURL: "http://127.0.0.1:9000/v1",
+			argv:    []string{"llama-server"},
+			want:    &daemon.EngineEndpoint{Port: 9000, LoopbackOnly: true},
+		},
+		{
+			name:   "llama.cpp binds loopback by default",
+			engine: llama,
+			argv:   []string{"llama-server"},
+			want:   &daemon.EngineEndpoint{Port: 8080, LoopbackOnly: true},
+		},
+		{
+			name:   "vLLM binds every interface by default",
+			engine: vllm,
+			argv:   []string{"vllm", "serve", "m"},
+			want:   &daemon.EngineEndpoint{Port: 8000},
+		},
+		{
+			name:   "a gated engine says so and nothing more",
+			engine: llama,
+			argv:   []string{"llama-server", "--api-key", "sk-secret", "--port", "8080"},
+			want:   &daemon.EngineEndpoint{Port: 8080, LoopbackOnly: true, RequiresKey: true},
+		},
+		{
+			name:    "a real path prefix is reported, /v1 is not",
+			engine:  llama,
+			baseURL: "http://127.0.0.1:9000/openai",
+			argv:    []string{"llama-server"},
+			want:    &daemon.EngineEndpoint{Port: 9000, Path: "/openai", LoopbackOnly: true},
+		},
+		{
+			name:   "no port anywhere yields no endpoint",
+			engine: serveEngine{},
+			argv:   []string{"omlx-cli", "serve"},
+			want:   nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := engineEndpointFor(tc.engine, tc.baseURL, tc.argv)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("endpoint = %+v, want none", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("no endpoint derived")
+			}
+			if *got != *tc.want {
+				t.Errorf("endpoint = %+v, want %+v", *got, *tc.want)
+			}
+		})
+	}
+}
+
+// The reported port is the engine's, never the control API's — nothing in the
+// reply implies one from the other.
+func TestEngineEndpointIsNotTheAPIPort(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep := engineEndpointFor(engine, "", []string{"llama-server", "--port", "8080"})
+	if ep == nil {
+		t.Fatal("no endpoint derived")
+	}
+	if ep.Port == daemon.DefaultAPIPort {
+		t.Errorf("engine port %d is the control API's default port", ep.Port)
+	}
+}
+
+// The key reaches the scrape, which needs it, and never the endpoint, which
+// does not.
+func TestEngineEndpointNeverCarriesTheKey(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "api-key")
+	mustWrite(t, keyFile, "sk-from-file\n")
+	argv := []string{"llama-server", "--api-key-file", keyFile}
+
+	if target := scrapeTargetFor(engine, "", argv); target.APIKey != "sk-from-file" {
+		t.Errorf("the scrape lost the key it needs: %+v", target)
+	}
+	ep := engineEndpointFor(engine, "", argv)
+	if ep == nil || !ep.RequiresKey {
+		t.Fatalf("endpoint should report a key is required: %+v", ep)
+	}
+	if encoded, err := json.Marshal(ep); err != nil {
+		t.Fatal(err)
+	} else if strings.Contains(string(encoded), "sk-from-file") {
+		t.Errorf("endpoint leaked the key: %s", encoded)
+	}
+}
+
+// A fleet node is a machine the operator owns, so the preset's bind is theirs
+// to choose. The cloud assigns its own, and dropping it there is right; doing
+// the same for a node left every woken engine on llama.cpp's loopback default
+// however the preset was written, so no other machine in the fleet could reach
+// it.
+func TestNodeDeployConfigKeepsThePresetBind(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "preset.ini"), `
+[*]
+host  = 0.0.0.0
+port  = 9090
+ngl   = 99
+
+[qwen]
+hf       = org/model:Q4_K_M
+ctx-size = 4096
+`)
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nALIAS qwen\nPRESET ./preset.ini\n")
+	sel, _, err := readOutfit("test", outfitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	node, err := deployConfigForNode(sel, outfitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(node.ServeArgs, " ")
+	for _, want := range []string{"--host 0.0.0.0", "--port 9090"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("a node's serve args should keep %q, got: %s", want, args)
+		}
+	}
+	// Everything the daemon supplies from the config itself still goes, so the
+	// engine is not told twice.
+	for _, unwanted := range []string{"--hf-repo", "--ctx-size", "--alias"} {
+		if strings.Contains(args, unwanted) {
+			t.Errorf("a node's serve args should not repeat %q, got: %s", unwanted, args)
+		}
+	}
+
+	// The cloud assigns its own bind, so it is still dropped there.
+	sel.Context = "4096" // the cloud requires one
+	cloud, err := deployConfigFor(sel, outfitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloudArgs := strings.Join(cloud.ServeArgs, " ")
+	for _, unwanted := range []string{"--host", "--port"} {
+		if strings.Contains(cloudArgs, unwanted) {
+			t.Errorf("the cloud sets its own bind, so %q should be dropped, got: %s", unwanted, cloudArgs)
+		}
+	}
+}
+
+// The bind reaching the engine is only half of it: the daemon must then report
+// that engine as reachable, or routing refuses a node that is in fact fine.
+func TestNodeBindReachesTheReportedEndpoint(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{"llama-server", "--hf-repo", "org/model", "--host", "0.0.0.0", "--port", "9090"}
+
+	ep := engineEndpointFor(engine, "", argv)
+	if ep == nil {
+		t.Fatal("no endpoint derived")
+	}
+	if ep.Port != 9090 {
+		t.Errorf("reported port = %d, want the preset's 9090", ep.Port)
+	}
+	if ep.LoopbackOnly {
+		t.Error("an engine bound to 0.0.0.0 was reported as loopback-only, so routing would refuse a reachable node")
+	}
+	// And the scrape follows the same bind, so the two cannot disagree.
+	if target := scrapeTargetFor(engine, "", argv); !strings.Contains(target.BaseURL, "9090") {
+		t.Errorf("scrape target = %q, want the engine's own port", target.BaseURL)
 	}
 }

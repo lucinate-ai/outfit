@@ -380,9 +380,10 @@ func TestMarkActiveExported(t *testing.T) {
 	}
 }
 
-// TestMetricsObservesActivity covers the single-observe path: a client polling
-// /v1/metrics feeds the same activity record the background sampler does, so
-// the two cannot hold different ideas of the latest counter.
+// TestMetricsObservesActivity covers the single-observe path: the background
+// sampler is the only thing that reads the engine's counters, and /v1/metrics
+// reports what it last saw. One observer means the record and the reply cannot
+// hold different ideas of the latest counter.
 func TestMetricsObservesActivity(t *testing.T) {
 	engineMetrics := &fakeEngine{counter: 100}
 	engine := httptest.NewServer(engineMetrics)
@@ -402,9 +403,10 @@ while true; do sleep 0.05; done`)
 	waitForState(t, d.Sup, StateRunning)
 	defer d.Sup.Stop()
 
-	// The first scrape is the counter baseline, so the record still reads from
-	// the start — no sampler is running here, only these calls.
+	// The first sample is the counter baseline, so the record still reads from
+	// the start — the sampler is driven by hand here, one reading at a time.
 	clock.set(baseTime.Add(time.Minute))
+	d.sampleOnce(context.Background())
 	if stats := d.Metrics(context.Background()); stats.Tokens == nil {
 		t.Fatal("metrics carried no token stats")
 	}
@@ -412,11 +414,11 @@ while true; do sleep 0.05; done`)
 		t.Errorf("the first metrics scrape counted as activity (last active %v)", got)
 	}
 
-	// A moved counter observed through /v1/metrics is activity.
+	// A moved counter seen by the sampler is activity.
 	moved := baseTime.Add(2 * time.Minute)
 	clock.set(moved)
 	engineMetrics.set(500)
-	d.Metrics(context.Background())
+	d.sampleOnce(context.Background())
 	if got, _ := d.act.snapshot(); !got.Equal(moved) {
 		t.Errorf("a moved counter seen via metrics was not recorded (last active %v)", got)
 	}
@@ -425,6 +427,7 @@ while true; do sleep 0.05; done`)
 	// and the reply simply omits the token stats.
 	engine.Close()
 	clock.set(baseTime.Add(3 * time.Minute))
+	d.sampleOnce(context.Background())
 	stats := d.Metrics(context.Background())
 	if stats.Tokens != nil {
 		t.Errorf("a failed scrape still reported tokens: %+v", stats.Tokens)
@@ -466,6 +469,9 @@ while true; do sleep 0.05; done`)
 		t.Fatal(err)
 	}
 	waitForState(t, d.Sup, StateRunning)
+	// The sampler takes a reading as soon as an engine is up; that first one
+	// is the counter baseline, which is what lets the next one see movement.
+	d.sampleOnce(context.Background())
 
 	// Starting counts as activity, so the record reads from the start time.
 	// Five minutes later the engine has done nothing more, and metrics reports
@@ -490,6 +496,7 @@ while true; do sleep 0.05; done`)
 	worked := baseTime.Add(6 * time.Minute)
 	clock.set(worked)
 	engineMetrics.set(500)
+	d.sampleOnce(context.Background())
 	if stats = d.Metrics(context.Background()); stats.LastActiveAt != worked.Format(time.RFC3339) {
 		t.Errorf("after work: metrics last active = %q, want %q", stats.LastActiveAt, worked.Format(time.RFC3339))
 	}
@@ -497,9 +504,11 @@ while true; do sleep 0.05; done`)
 		t.Errorf("an engine that just worked reported %ds idle, want 0", stats.IdleSeconds)
 	}
 
-	// Polling with an unchanged counter is not itself activity: reading the
-	// record must not refresh it, or a --watch loop would keep an idle engine
-	// looking busy for as long as someone is watching.
+	// Polling is not itself activity: reading the record must not refresh it,
+	// or a --watch loop would keep an idle engine looking busy for as long as
+	// someone is watching. Polling no longer even reads the engine, so this
+	// holds by construction — it is asserted because it is the property that
+	// matters, not the mechanism that delivers it.
 	for i := 1; i <= 3; i++ {
 		clock.set(worked.Add(time.Duration(i) * time.Minute))
 		stats = d.Metrics(context.Background())
@@ -547,6 +556,7 @@ while true; do sleep 0.05; done`)
 	waitForState(t, d.Sup, StateRunning)
 	defer d.Sup.Stop()
 
+	d.sampleOnce(context.Background())
 	stats := d.Metrics(context.Background())
 	if stats.Tokens != nil {
 		t.Errorf("a failed scrape still reported tokens: %+v", stats.Tokens)
@@ -559,4 +569,88 @@ while true; do sleep 0.05; done`)
 	if !strings.Contains(stats.Errors[0], "127.0.0.1:1") {
 		t.Errorf("error %q does not name the address it tried", stats.Errors[0])
 	}
+}
+
+// TestMetricsDoesNotBlockOnABusyEngine is the regression this caching exists
+// for. llama.cpp serves /metrics from the same queue it serves inference from,
+// so an engine processing a prompt does not answer a scrape until it finishes.
+// The handler used to scrape inline, so /v1/metrics blocked for as long as the
+// engine had work — past the fleet client's own timeout, which meant the fleet
+// view went blank exactly when there was something worth watching.
+func TestMetricsDoesNotBlockOnABusyEngine(t *testing.T) {
+	// An engine that never answers its metrics endpoint, which is what a busy
+	// llama.cpp looks like for the duration of a long prompt.
+	blocked := make(chan struct{})
+	defer close(blocked)
+	engine := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-blocked
+	}))
+	defer engine.Close()
+
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: engine.URL, Engine: "llamacpp"})
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateRunning)
+	defer d.Sup.Stop()
+
+	done := make(chan metrics.Stats, 1)
+	go func() { done <- d.Metrics(context.Background()) }()
+	select {
+	case stats := <-done:
+		// The counters are absent — nothing has been sampled — but the
+		// engine's state and everything else still answer.
+		if stats.State != string(StateRunning) {
+			t.Errorf("state = %q, want running", stats.State)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("metrics blocked on a busy engine: a client watching the fleet would time out")
+	}
+}
+
+// Counters must appear promptly after an engine starts, not a full sample
+// interval later. Serving the sampler's last reading introduced that window,
+// and the fleet's own integration test walked straight into it: start a node,
+// read metrics, see nothing.
+func TestCountersAppearSoonAfterAStart(t *testing.T) {
+	engineMetrics := &fakeEngine{counter: 100}
+	engine := httptest.NewServer(engineMetrics)
+	defer engine.Close()
+
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	// A sample interval far longer than this test is willing to wait: what is
+	// being tested is that the counters do not depend on it.
+	d.SampleInterval = time.Hour
+	old := catchUpInterval
+	catchUpInterval = 10 * time.Millisecond
+	defer func() { catchUpInterval = old }()
+
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: engine.URL, Engine: "llamacpp"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go d.SampleActivity(ctx)
+
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Sup.Stop()
+	waitForState(t, d.Sup, StateRunning)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if stats := d.Metrics(context.Background()); stats.Tokens != nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("no token counters within 3s of the engine starting, with an hour-long sample interval")
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/metrics"
+	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
 // Outcome classifies how a node call ended. A fleet view renders these as rows
@@ -47,6 +48,9 @@ type Node interface {
 	Status(ctx context.Context) (daemon.StatusResponse, error)
 	Metrics(ctx context.Context) (metrics.Stats, error)
 	Start(ctx context.Context) (daemon.StatusResponse, error)
+	// StartWith starts the engine on a deploy config the caller supplies,
+	// which is how a router wakes a node to serve what it wants.
+	StartWith(ctx context.Context, dc *remote.DeployConfig) (daemon.StatusResponse, error)
 	Stop(ctx context.Context) (daemon.StatusResponse, error)
 	Logs(ctx context.Context, offset int64, limit int) (daemon.LogsResponse, error)
 }
@@ -70,6 +74,10 @@ func (n *daemonNode) Metrics(ctx context.Context) (metrics.Stats, error) {
 
 func (n *daemonNode) Start(ctx context.Context) (daemon.StatusResponse, error) {
 	return n.client.Start(ctx)
+}
+
+func (n *daemonNode) StartWith(ctx context.Context, dc *remote.DeployConfig) (daemon.StatusResponse, error) {
+	return n.client.StartWith(ctx, dc)
 }
 
 func (n *daemonNode) Stop(ctx context.Context) (daemon.StatusResponse, error) {

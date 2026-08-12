@@ -87,6 +87,38 @@ Because `PROVIDER` names the engine, this is the same file that would run the
 model locally with [`outfit serve`](commands/serve.md) — pointed at a bigger
 machine.
 
+## Running the model on another machine you own
+
+`FLEET` names a [fleet file](commands/fleet.md#fleetyaml) — the machines on your
+network running `outfit daemon` — and lets `outfit harness` pick one for you:
+
+```dockerfile
+# Outfit
+PROVIDER llamacpp
+MODEL    qwen3-27b
+FLEET    ./fleet.yaml
+```
+
+Launching against it queries the fleet, picks a node already serving that model,
+and points the agent at that node's engine. When nothing is serving it, outfit
+starts one and waits for it to load — so the machine you sat down at needs
+nothing but a path to the fleet file. `outfit harness --fleet=<path>` overrides
+the instruction, `--node <name>` pins one machine, and `--no-wake` refuses to
+start anything.
+
+`FLEET` and `REMOTE` are mutually exclusive: each is a different answer to where
+the model is served from, and an Outfit stating both fails to parse rather than
+picking one. As with `REMOTE`, note the missing `BASEURL` — the address is
+whichever node gets chosen. Writing one pins the address and turns routing off,
+and outfit says so rather than choosing a node and discarding it.
+
+A `FLEET` may also name a URL rather than a file, for a single endpoint that has
+already done the choosing. That is the shape the outfit gateway will take; it is
+not implemented yet, and naming one today fails saying so.
+
+See [`outfit fleet route`](commands/fleet.md#which-node-would-i-get) to check
+which node you would get before launching anything.
+
 ## Syntax
 
 One instruction per line: a keyword followed by a single value.
@@ -101,6 +133,7 @@ One instruction per line: a keyword followed by a single value.
 | `BASEURL`  | no                               | `--base-url`   | `BASEURL https://gateway/v1`   |
 | `PRESET`   | no                               | `outfit serve` | `PRESET ./preset.ini`          |
 | `REMOTE`   | no                               | `outfit remote` | `REMOTE ./remote.json`        |
+| `FLEET`    | no                               | `outfit harness`, `outfit fleet` | `FLEET ./fleet.yaml` |
 | `ENV`      | no (repeatable)                  | `outfit remote`, `outfit harness` | `ENV AWS_PROFILE=prod` |
 
 Rules:

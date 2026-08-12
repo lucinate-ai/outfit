@@ -214,3 +214,141 @@ func TestLiteralTokenIsNotAField(t *testing.T) {
 		t.Errorf("Token = %q, %v; a literal `token:` must not be used", tok, err)
 	}
 }
+
+// A node may declare where its engine serves, for the setups a daemon cannot
+// describe. Each field falls back independently.
+func TestEngineOverride(t *testing.T) {
+	path := writeFleet(t, `
+nodes:
+  - name: proxied
+    host: node.local
+    engine:
+      host: proxy.local
+      port: 8443
+      path: /openai
+  - name: published
+    host: node2.local
+    engine:
+      port: 18080
+  - name: plain
+    host: node3.local
+`, "")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	full, _ := cfg.Node("proxied")
+	if full.Engine == nil {
+		t.Fatal("engine block not parsed")
+	}
+	if full.Engine.Host != "proxy.local" || full.Engine.Port != 8443 || full.Engine.Path != "/openai" {
+		t.Errorf("engine = %+v", *full.Engine)
+	}
+
+	partial, _ := cfg.Node("published")
+	if partial.Engine == nil || partial.Engine.Port != 18080 {
+		t.Fatalf("partial override lost its port: %+v", partial.Engine)
+	}
+	if partial.Engine.Host != "" {
+		t.Errorf("an undeclared host should stay empty so it falls back, got %q", partial.Engine.Host)
+	}
+
+	if plain, _ := cfg.Node("plain"); plain.Engine != nil {
+		t.Errorf("a node with no engine block should carry none, got %+v", plain.Engine)
+	}
+}
+
+// The engine key is a reference like the daemon token, resolved the same way,
+// and the two are independent credentials.
+func TestEngineTokenResolution(t *testing.T) {
+	path := writeFleet(t, `
+nodes:
+  - name: gated
+    host: gated.local
+    tokenEnv: NODE_TOKEN
+    engineTokenEnv: NODE_ENGINE_KEY
+  - name: open
+    host: open.local
+`, "NODE_ENGINE_KEY=from-dotenv\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gated, _ := cfg.Node("gated")
+
+	// The .env beside the file fills a gap.
+	got, err := cfg.EngineToken(gated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "from-dotenv" {
+		t.Errorf("engine token = %q, want the .env value", got)
+	}
+
+	// An exported value wins, as everywhere else in outfit.
+	t.Setenv("NODE_ENGINE_KEY", "exported")
+	if got, err := cfg.EngineToken(gated); err != nil || got != "exported" {
+		t.Errorf("engine token = %q, %v; want the exported value", got, err)
+	}
+
+	// A node naming no engine variable needs no engine key.
+	open, _ := cfg.Node("open")
+	if got, err := cfg.EngineToken(open); err != nil || got != "" {
+		t.Errorf("token = %q, %v; want empty and no error", got, err)
+	}
+}
+
+func TestEngineTokenUnsetNamesTheVariable(t *testing.T) {
+	path := writeFleet(t, `
+nodes:
+  - name: gated
+    host: gated.local
+    engineTokenEnv: NOWHERE_ENGINE_KEY
+`, "")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, _ := cfg.Node("gated")
+	_, err = cfg.EngineToken(node)
+	if err == nil {
+		t.Fatal("an unset engine token variable should be a config error")
+	}
+	for _, want := range []string{"NOWHERE_ENGINE_KEY", "gated"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %s, got %q", want, err)
+		}
+	}
+}
+
+func TestPreferSetting(t *testing.T) {
+	cases := map[string]Prefer{
+		"prefer: active\n": PreferActive,
+		"prefer: idle\n":   PreferIdle,
+		"":                 "", // absent: the selector applies the idle default
+	}
+	for decl, want := range cases {
+		t.Run(strings.TrimSpace(decl), func(t *testing.T) {
+			cfg, err := Load(writeFleet(t, decl+"nodes:\n  - name: a\n    host: a.local\n", ""))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Prefer != want {
+				t.Errorf("Prefer = %q, want %q", cfg.Prefer, want)
+			}
+		})
+	}
+}
+
+func TestPreferRejectsUnknownValue(t *testing.T) {
+	_, err := Load(writeFleet(t, "prefer: whatever\nnodes:\n  - name: a\n    host: a.local\n", ""))
+	if err == nil {
+		t.Fatal("an unknown prefer value should fail to parse")
+	}
+	for _, want := range []string{"idle", "active"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got %q", want, err)
+		}
+	}
+}
