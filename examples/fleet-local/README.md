@@ -46,7 +46,12 @@ decision on a real network:
 
 - **No token.** A daemon on loopback needs none. Any node reachable across a
   network does — the daemon refuses to listen on a non-loopback address without
-  one.
+  one, and takes it from `--api-token-file`, `OUTFIT_API_TOKEN`, or
+  `--api-token`.
+- **No engine key.** An engine on loopback needs no gating either. On a shared
+  network, name the variable holding one with `engineTokenEnv` and the client
+  gates the engine with it when it starts it — the node never holds a key of
+  its own.
 - **No `engine:` block.** The daemon reports the port its engine serves on, and
   llama.cpp's default is what the preset uses. You need a block when the daemon
   cannot know: a container publishing the engine elsewhere, or a proxy.
@@ -73,8 +78,8 @@ needs no `MODEL` line.
 
 ## Running it
 
-Start the daemon once. In this directory it reads `./Outfit`, so
-`outfit fleet start local` also works without a client:
+Start the daemon once. It takes no arguments and reads no files — it runs what
+a start request tells it to, and until then it sits idle:
 
 ```sh
 outfit daemon
@@ -88,6 +93,10 @@ outfit fleet status        # local: idle
 outfit fleet route         # which node a launch would pick, changing nothing
 outfit harness -O          # wear ./Outfit, route, wake if needed, launch
 ```
+
+The first launch is what tells the node anything at all: until then it has no
+config and a bare `outfit fleet start local` would say so. After one launch it
+has the config stored, so `fleet start` restarts the same thing.
 
 `outfit fleet route` before your first launch:
 

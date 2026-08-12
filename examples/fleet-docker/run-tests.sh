@@ -193,6 +193,20 @@ cleanup() {
 }
 
 #######################################
+# Assert a node that has never been told anything cannot be started. The
+# daemon reads no Outfit, so until a client sends a config there is nothing
+# for `fleet start` to run — and it says so rather than guessing.
+#######################################
+test_untold_node_cannot_start() {
+  echo "A node that has been told nothing"
+  local out
+  out="$(fleet_with_stderr start laptop || true)"
+  assert_contains "starting an untold node says there is nothing to serve" \
+    "${out}" "nothing to serve"
+  assert_equals "and nothing started" "$(node_state laptop)" "idle"
+}
+
+#######################################
 # Assert the fleet is usable from cold: every node up, nothing started.
 #######################################
 test_cold_start() {
@@ -214,6 +228,8 @@ test_cold_start() {
 #######################################
 test_start_stop_one_node() {
   echo "Driving one node"
+  # By now routing has woken studio once, so it has a config stored. Before
+  # that it had nothing: a node is told what to run, it does not know.
   fleet start studio >/dev/null
   if wait_for_state studio running 30; then
     pass "fleet start studio brings it up"
@@ -248,8 +264,7 @@ test_start_stop_one_node() {
 #######################################
 test_routing() {
   echo "Routing a launch at a node"
-  # A client's Outfit, not the node's: node/Outfit pins its own engine's
-  # BASEURL, which is taken at its word and never routed.
+  # The only Outfit here: the nodes hold none.
   local outfit_file="${HERE}/client/Outfit"
   local out
 
@@ -269,9 +284,34 @@ test_routing() {
     fail "route really started nothing" "any state but running" "${state_after}"
   fi
 
-  # With a node up, routing picks it and resolves its published engine port.
-  fleet start studio >/dev/null
-  wait_for_state studio running 30 || true
+  # A real routed launch: it wakes studio, gates its engine with the key only
+  # this side holds, and hands the agent the address it resolved. The harness
+  # is a stub that prints what it was given, and HOME/XDG_CONFIG_HOME are
+  # redirected so the run cannot touch the caller's own harness config.
+  local sandbox="${HERE}/.routing-sandbox"
+  rm -rf "${sandbox}"
+  mkdir -p "${sandbox}/bin" "${sandbox}/home"
+  cat > "${sandbox}/bin/opencode" <<'STUB'
+#!/usr/bin/env bash
+echo "HARNESS base_url=${OPENAI_BASE_URL:-<unset>} key=${OPENAI_API_KEY:-<unset>}"
+STUB
+  chmod +x "${sandbox}/bin/opencode"
+
+  local launch
+  launch="$(PATH="${sandbox}/bin:${PATH}" HOME="${sandbox}/home" \
+    XDG_CONFIG_HOME="${sandbox}/home/.config" \
+    "${OUTFIT_BIN}" harness -O="${outfit_file}" -H opencode 2>&1 || true)"
+  assert_contains "a routed launch wakes the node" "${launch}" "Waking studio"
+  assert_contains "the agent is pointed at the published engine port" "${launch}" "18080"
+  assert_contains "the agent is given the key the client set" \
+    "${launch}" "key=${STUDIO_ENGINE_KEY}"
+  if wait_for_state studio running 30; then
+    pass "the launch left the node running"
+  else
+    fail "the launch left the node running" "running" "$(node_state studio)"
+  fi
+  rm -rf "${sandbox}"
+
   out="$("${OUTFIT_BIN}" fleet route --fleet "${HERE}/fleet.yaml" "${outfit_file}" 2>&1)"
   assert_contains "route picks the running node" "${out}" "Would use studio"
   assert_contains "route resolves the published engine port" "${out}" "18080"
@@ -290,6 +330,25 @@ test_routing() {
   out="$("${OUTFIT_BIN}" fleet route --fleet "${HERE}/fleet.yaml" --node gpu-box "${outfit_file}" 2>&1)"
   assert_contains "a pinned node is reported even when idle" "${out}" "gpu-box"
 
+  # studio names an engine key, so the engine it was woken with is gated —
+  # with a key that only ever existed on this side.
+  local status
+  status="$(curl -fsS -H "Authorization: Bearer ${STUDIO_TOKEN}" \
+    http://127.0.0.1:14242/v1/status 2>/dev/null || true)"
+  assert_contains "a woken node reports its engine needs a key" "${status}" '"requiresKey":true'
+  assert_not_contains "the node never discloses the key" "${status}" "${STUDIO_ENGINE_KEY}"
+  # The key reached the engine as a path, not a literal. The shim echoes its
+  # own argv into the engine log, which is where that can be checked — in the
+  # process list the shim has already exec'd and replaced itself.
+  local enginelog
+  enginelog="$(fleet logs studio --limit 50 2>/dev/null || true)"
+  assert_contains "the engine was gated by file" "${enginelog}" "--api-key-file"
+  assert_not_contains "the key itself never reaches the command line" \
+    "${enginelog}" "${STUDIO_ENGINE_KEY}"
+  local psout
+  psout="$(docker compose -f "${HERE}/compose.yaml" exec -T studio ps ax 2>/dev/null || true)"
+  assert_not_contains "the key is not in the node's process list" "${psout}" "${STUDIO_ENGINE_KEY}"
+
   fleet stop studio >/dev/null
   wait_for_state studio stopped 30 || true
 }
@@ -299,8 +358,10 @@ test_routing() {
 #######################################
 test_metrics() {
   echo "Metrics from a real engine"
-  fleet start gpu-box >/dev/null
-  wait_for_state gpu-box running 30 || true
+  # studio is the node that has been told what to run — a start needs a
+  # config, and only a client can supply one.
+  fleet start studio >/dev/null
+  wait_for_state studio running 30 || true
 
   local out
   out="$(fleet metrics)"
@@ -353,7 +414,9 @@ test_unauthorized() {
 #######################################
 test_crash_and_recover() {
   echo "A crashed engine is reported and recoverable"
-  fleet start studio >/dev/null
+  # Ensure it is up: an earlier test may have left it running, and a start
+  # against a running engine is the daemon's conflict, not a failure here.
+  fleet start studio >/dev/null 2>&1 || true
   wait_for_state studio running 30 || true
 
   local engine_pid
@@ -410,9 +473,11 @@ main() {
   echo
   test_cold_start
   echo
-  test_start_stop_one_node
+  test_untold_node_cannot_start
   echo
   test_routing
+  echo
+  test_start_stop_one_node
   echo
   test_metrics
   echo

@@ -1,7 +1,0 @@
-# What this node serves. The model is never downloaded: the llama-server shim
-# starts a fake engine instead, so no weights and no GPU are involved.
-PROVIDER llamacpp
-MODEL    org/fake-model
-ALIAS    fake-model
-CONTEXT  4096
-BASEURL  http://127.0.0.1:8080/v1

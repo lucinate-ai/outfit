@@ -11,10 +11,14 @@
 prefer: idle
 
 nodes:
+  # studio's engine is gated: the client sends this key when it starts the
+  # engine, and uses the same value to talk to it. The node holds no key of
+  # its own, so there is nothing to keep in step.
   - name: studio
     host: 127.0.0.1
     port: 14242
     tokenEnv: STUDIO_TOKEN
+    engineTokenEnv: STUDIO_ENGINE_KEY
     engine:
       port: 18080
 

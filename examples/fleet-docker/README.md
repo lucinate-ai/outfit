@@ -52,11 +52,17 @@ and the endpoint it names genuinely answers. What you cannot do here is get a
 useful reply out of the agent: the fake engine serves `/health` and `/metrics`
 and nothing else.
 
-Note the two Outfits. [`node/Outfit`](node/Outfit) is what each node *serves*,
-and pins its own engine's `BASEURL`. [`client/Outfit`](client/Outfit) is what
-you would wear to *use* the fleet: same model, no `BASEURL`, and a `FLEET`
-naming the file above. An Outfit that pins an address is taken at its word and
-never routed, which is why the two cannot be the same file.
+There is only one Outfit here, and it belongs to the client:
+[`client/Outfit`](client/Outfit). The nodes hold nothing — their daemons start
+with no arguments and no files, and run whatever a start request tells them to.
+That is why the container's `CMD` is a bare `outfit daemon`.
+
+`studio`'s engine is also **gated**. Its `fleet.yaml` entry names
+`STUDIO_ENGINE_KEY`, which lives only on this side: the client sends it when it
+starts the engine, and uses the same value to talk to it. Nothing is kept in
+step between two ends, because only one end holds it. The node will tell you a
+key is required and never what it is, and the key reaches the engine as a file
+path — `docker compose exec studio ps ax` shows `--api-key-file`, not the key.
 
 ## Things worth trying
 
@@ -101,7 +107,7 @@ cannot quietly stop working.
 | `Dockerfile` | Builds outfit from this working tree, adds the Imposter engine and the shim. |
 | `shim/llama-server` | Stands in for the engine binary. Execs the Imposter engine **directly**, so the daemon supervises it as its own child. |
 | `engine/` | What the fake engine serves: `/health`, and a `/metrics` outfit can parse. |
-| `node/Outfit` | What each node serves — the model is never fetched. |
+| `client/Outfit` | What a *client* wears to use the fleet: a model, and a `FLEET`. The nodes hold no Outfit at all. |
 
 Two details that are easy to get wrong, and matter:
 

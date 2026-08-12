@@ -50,26 +50,26 @@
 
 ## 5. Documentation and examples
 
-- [ ] 5.1 Update `docs/openapi.yaml` with the start request's key field, stating
+- [x] 5.1 Update `docs/openapi.yaml` with the start request's key field, stating
       that it is never returned
-- [ ] 5.2 Document the daemon's inputs in `docs/commands/serve.md` — its flags
+- [x] 5.2 Document the daemon's inputs in `docs/commands/serve.md` — its flags
       and its API, and that it reads no Outfit, preset or fleet file
-- [ ] 5.3 Document the token sources in `docs/env-vars.md` and the serve docs,
+- [x] 5.3 Document the token sources in `docs/env-vars.md` and the serve docs,
       recommending the file form and stating what the literal flag costs
-- [ ] 5.4 Rewrite `examples/fleet-local` for a daemon started with no Outfit,
+- [x] 5.4 Rewrite `examples/fleet-local` for a daemon started with no Outfit,
       and drop the paragraph about `fleet start` working standalone
-- [ ] 5.5 Rewrite `examples/fleet-docker`: remove `node/Outfit` and the `CMD`
+- [x] 5.5 Rewrite `examples/fleet-docker`: remove `node/Outfit` and the `CMD`
       that passes it, gate one node's engine to cover the key path, and assert
       it in `run-tests.sh`
-- [ ] 5.6 Update `AGENTS.md`: the daemon's two inputs, the key's path to the
+- [x] 5.6 Update `AGENTS.md`: the daemon's two inputs, the key's path to the
       engine, and why the token's literal flag reverses an earlier decision
 
 ## 6. Verification
 
-- [ ] 6.1 `gofmt`, `go vet`, and `go test ./... -cover` at or above 80%
-- [ ] 6.2 `openspec validate client-driven-daemon --strict`, and `concord check`
+- [x] 6.1 `gofmt`, `go vet`, and `go test ./... -cover` at or above 80%
+- [x] 6.2 `openspec validate client-driven-daemon --strict`, and `concord check`
       clean once `fleet-harness-routing` has archived
-- [ ] 6.3 Run the `fleet-docker` example end to end, including a routed launch
+- [x] 6.3 Run the `fleet-docker` example end to end, including a routed launch
       against a gated node
-- [ ] 6.4 Confirm by hand on a running node that the engine's key appears in no
+- [x] 6.4 Confirm by hand on a running node that the engine's key appears in no
       process listing and no API reply

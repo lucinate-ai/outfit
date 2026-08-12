@@ -11,6 +11,12 @@
 # abnormal death is a real non-zero exit and reads as `crashed`.
 set -euo pipefail
 
+# Echo the command line into the daemon's engine log before consuming it — the
+# loop below shifts every argument away. This is what lets the tests check how
+# the engine was gated: a key must arrive as --api-key-file <path>, never as a
+# literal argument.
+echo "llama-server shim: argv: $*"
+
 port=8080
 # llama-server takes many flags; only the port matters here. Everything else is
 # ignored on purpose, so new engine flags can never break the shim.

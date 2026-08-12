@@ -297,7 +297,18 @@ func (d *Daemon) Status() StatusResponse {
 	resp.LastActiveAt, resp.IdleSeconds = d.activity()
 	// Only a running engine has an address worth reporting.
 	if state == StateRunning {
-		resp.Engine = d.engineEndpoint()
+		if ep := d.engineEndpoint(); ep != nil {
+			// The endpoint is derived when the command is built, which is
+			// before the key arguments are appended — so whether a key is
+			// required is the daemon's own fact, not something to read back
+			// out of an argv it has not finished assembling. A caller that
+			// picks up an already-running node has nothing else to go on.
+			reported := *ep
+			if d.storedEngineKeyPath() != "" {
+				reported.RequiresKey = true
+			}
+			resp.Engine = &reported
+		}
 	}
 	return resp
 }

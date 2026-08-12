@@ -13,8 +13,9 @@ from the environment or a `.env` beside the Outfit — never written into an
 | `OUTFIT_ALIAS` | every command that takes an Outfit path | A name registered with [`outfit alias`](commands/alias.md), used when the command is given no path. Precedence: the path or alias argument > `OUTFIT_ALIAS` > `./Outfit`. It holds a registry name, never a path, and a same-named file in the working directory does not shadow it. It decides *which* Outfit is the default, not *whether* one is applied — a bare `outfit harness` still applies nothing, and `outfit alias` ignores it. |
 | `OUTFIT_PROVIDERS` | `list`, `add`, `apply`, … | Path to a `providers.yaml` that overrides the built-in catalogue. Precedence: `--providers` flag > `OUTFIT_PROVIDERS` > embedded. |
 | `OUTFIT_BASE_URL` | `add`, `apply` | Base-URL override for the provider being configured. Precedence: `--base-url`/`-u` > `OUTFIT_BASE_URL` > the provider's own option var > the catalogue default. |
-| `OUTFIT_API_TOKEN` | `outfit daemon`, `outfit serve --api` | Bearer token for the daemon control API. Read from the environment (or the `.env` beside the Outfit), never a flag. A non-loopback API listen without it refuses to start. |
+| `OUTFIT_API_TOKEN` | `outfit daemon`, `outfit serve --api` | Bearer token for the daemon control API. One of three sources, alongside `--api-token-file` (recommended) and `--api-token` (readable via `ps`); two at once is an error. A non-loopback API listen without any of them refuses to start. |
 | *(per-node, named by `tokenEnv`)* | `outfit fleet` | A fleet node's bearer token. `fleet.yaml` names the variable rather than holding the value; it resolves from the environment, then the `.env` beside the fleet file. See [fleet](commands/fleet.md). |
+| *(per-node, named by `engineTokenEnv`)* | `outfit fleet`, `outfit harness` | The key a fleet node's **engine** is gated with. Resolved the same way, and supplied by the client when it starts that engine — so the node holds no key of its own and the two ends cannot disagree. See [fleet](commands/fleet.md). |
 
 ## Remote (`outfit remote`)
 

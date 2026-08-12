@@ -697,3 +697,47 @@ func TestKeyTravelsWithItsConfig(t *testing.T) {
 		t.Error("a config carrying no key left the previous key in place")
 	}
 }
+
+// Whether a key is required is the daemon's own fact. The endpoint is derived
+// while the command is being built, before the key arguments are appended, so
+// reading it back out of that argv would report a gated engine as open — and a
+// client picking up an already-running node has nothing else to go on.
+func TestStatusReportsAGatedEngineEvenWhenDerivedEarly(t *testing.T) {
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	// Exactly what the CLI does: the endpoint is set from the argv before the
+	// key exists on it.
+	d.SetEngineEndpoint(&EngineEndpoint{Port: 8080})
+	d.EngineKeyArgs = func(_ *remote.DeployConfig, path string) ([]string, error) {
+		return []string{"--api-key-file", path}, nil
+	}
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetEngineKey("sk"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Sup.Stop()
+	waitForState(t, d.Sup, StateRunning)
+
+	got := d.Status()
+	if got.Engine == nil || !got.Engine.RequiresKey {
+		t.Fatalf("a gated engine reported %+v, want requiresKey", got.Engine)
+	}
+	// Clearing the key opens it again.
+	d.Sup.Stop()
+	waitForState(t, d.Sup, StateStopped)
+	if err := d.SetEngineKey(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateRunning)
+	if got := d.Status(); got.Engine == nil || got.Engine.RequiresKey {
+		t.Errorf("an ungated engine reported %+v", got.Engine)
+	}
+}

@@ -41,7 +41,6 @@ RUN curl -fsSL -o /tmp/imposter.tar.gz \
 COPY --from=build /out/outfit /usr/local/bin/outfit
 COPY examples/fleet-docker/shim/llama-server /usr/local/bin/llama-server
 COPY examples/fleet-docker/engine /opt/engine
-COPY examples/fleet-docker/node/Outfit /opt/node/Outfit
 RUN chmod +x /usr/local/bin/llama-server
 
 # A container has no useful $HOME, so pin outfit's config directory — the same
@@ -51,5 +50,6 @@ WORKDIR /opt/node
 
 EXPOSE 4242
 # Bind the control API on all interfaces so other containers can reach it; a
-# token is required for that, supplied per-node by compose.
-CMD ["outfit", "daemon", "--api-addr", "0.0.0.0:4242", "./Outfit"]
+# token is required for that, supplied per-node by compose. No Outfit and no
+# arguments: the daemon runs what a start request tells it to.
+CMD ["outfit", "daemon", "--api-addr", "0.0.0.0:4242"]
