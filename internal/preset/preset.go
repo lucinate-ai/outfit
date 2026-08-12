@@ -273,6 +273,10 @@ var boolean = map[string]bool{
 	"spec-default": true, "cont-batching": true, "no-cont-batching": true,
 	"mlock": true, "embedding": true, "embeddings": true, "verbose": true,
 	"cpu-moe": true, "color": true,
+	// --mmproj-auto/--no-mmproj is a bare boolean pair. It matters for a repo
+	// that publishes a projector beside the weights: -hf loads it
+	// automatically, and --no-mmproj is the only way to ask for text-only.
+	"mmproj-auto": true, "no-mmproj": true,
 }
 
 // CanonicalKey resolves a preset key to the canonical long-form flag name that

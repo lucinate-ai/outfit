@@ -186,6 +186,8 @@ func TestFlagFor(t *testing.T) {
 		{"mmap", "0", nil},
 		{"jinja", "true", []string{"--jinja"}},
 		{"kv-unified", "false", nil},
+		{"no-mmproj", "1", []string{"--no-mmproj"}},
+		{"spec-draft-ngl", "999", []string{"--spec-draft-ngl", "999"}},
 		{"top-k", "0", []string{"--top-k", "0"}},
 		{"c", "8192", []string{"--ctx-size", "8192"}},
 		{"x", "", []string{"-x"}},                        // unknown single char → short flag
