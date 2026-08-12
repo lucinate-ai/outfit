@@ -11,23 +11,25 @@
 import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { runnerSpec } from '../runners';
 import { errorName, findLatestAmi, runInstance } from './aws';
-import { type DeployConfig, type Runner, RUNNERS } from './deploy-config';
+import { type DeployConfig, RUNNERS } from './deploy-config';
 
 const s3 = new S3Client({});
 
 /**
- * The file whose presence means "these weights are complete" — the runner
- * spec's sentinel, written last by the S3 sync.
+ * Whether the weights for this config are already seeded: every key the runner
+ * expects — its sentinel plus any named companions — must be there. Missing
+ * any one means absent, so adding a companion to an already-seeded model
+ * re-seeds rather than starting an instance without it.
  */
-function sentinelKey(runner: Runner, weightsPrefix: string): string {
-  return runnerSpec(runner).weightsSentinel(weightsPrefix);
+export async function weightsPresent(bucket: string, cfg: DeployConfig): Promise<boolean> {
+  const keys = runnerSpec(cfg.runner).weightsKeys(cfg, cfg.weightsPrefix);
+  const found = await Promise.all(keys.map((Key) => objectExists(bucket, Key)));
+  return found.every(Boolean);
 }
 
-/** Whether the weights for this config are already seeded. */
-export async function weightsPresent(bucket: string, cfg: DeployConfig): Promise<boolean> {
-  const Key = sentinelKey(cfg.runner, cfg.weightsPrefix);
+async function objectExists(Bucket: string, Key: string): Promise<boolean> {
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key }));
+    await s3.send(new HeadObjectCommand({ Bucket, Key }));
     return true;
   } catch (err) {
     const name = errorName(err);

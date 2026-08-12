@@ -260,6 +260,14 @@ var canonical = map[string]string{
 	"mg": "main-gpu", "mm": "mmproj", "mmu": "mmproj-url",
 	"mu": "model-url", "tb": "threads-batch", "to": "timeout",
 	"kvu": "kv-unified",
+	// Speculative decoding. The draft-model spellings matter beyond rendering:
+	// `outfit remote deploy` drops the flags the cloud sets itself by canonical
+	// name, and a drafter path written as `md` would otherwise slip past that
+	// check and reach the instance, where the local path does not exist.
+	"md": "spec-draft-model", "model-draft": "spec-draft-model",
+	"hfd": "spec-draft-hf", "hfrd": "spec-draft-hf", "hf-repo-draft": "spec-draft-hf",
+	"ngld": "spec-draft-ngl", "gpu-layers-draft": "spec-draft-ngl",
+	"n-gpu-layers-draft": "spec-draft-ngl",
 	// single-character short flags
 	"t": "threads", "c": "ctx-size", "n": "n-predict", "b": "batch-size",
 	"s": "seed", "m": "model", "a": "alias", "v": "verbose", "p": "prompt",
