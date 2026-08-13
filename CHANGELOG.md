@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.21.0] - 2026-08-13
+### Added
+- feat(daemon): summarise every control-API request on a levelled logger
+- feat(daemon): take the engine key from the client, read no Outfit
+- feat(fleet): route a harness launch at a fleet node (#73)
+
+### Changed
+- chore: archive add-daemon-request-logging and sync its spec
+- chore: archive add-fleet-logs-command and sync its specs
+- chore: archive client-driven-daemon and sync its specs
+- chore: archive fleet-harness-routing and sync its specs
+- chore: ignore the binary the fleet example's tests build
+- docs: warn on merging un-archived changes
+- test(fleet): fix the data race in the follow-logs tests
+
 ## [1.20.0] - 2026-08-11
 ### Added
 - feat(fleet): add outfit fleet logs and a daemon logs endpoint
