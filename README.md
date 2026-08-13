@@ -184,8 +184,8 @@ outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
 outfit unalias <name>                    # drop a registered name
 outfit serve  [path] [--dry-run] [-a]    # run the PROVIDER's inference server, from the PRESET
                                          #   (-a/--api serves the control API beside it)
-outfit daemon [--api-addr <addr>] [--loopback] # supervise an engine via the control API
-                                         #   (starts nothing until asked over the API)
+outfit daemon [--api-addr <addr>] [--loopback] # supervise an engine via the control API — reads
+                                         #   no Outfit, starts nothing until asked over the API
 outfit fleet <status|metrics|start|stop> # observe and drive the engines in fleet.yaml
                                          #   (one outfit watching every machine you run)
 outfit export [--provider <name>]        # print the current config as an Outfit
@@ -205,8 +205,8 @@ outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]
 Short flags: `-p` (provider), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
 
 Anywhere a `[path]` appears above you can put a name registered with
-[`outfit alias`](#aliases) instead — or leave it out and let `OUTFIT_ALIAS`
-name one.
+[`outfit alias`](#aliases) instead, an `http(s)` URL, fetched instead of read
+from disk — or leave it out and let `OUTFIT_ALIAS` name one.
 
 ## Documentation
 
@@ -259,13 +259,15 @@ BASEURL  https://gateway/v1         # optional; API base URL override
 outfit apply              # reads ./Outfit and applies it
 outfit apply path/to/Outfit
 outfit apply path/to/dir  # or a directory that holds an Outfit
+outfit apply https://example.com/team/Outfit   # or a URL, fetched instead of read
 outfit harness -O         # apply ./Outfit, then launch the agent wearing it
 outfit export > Outfit    # capture your current setup as an Outfit
 ```
 
 An `Outfit` describes one provider selection and applies exactly like the
 equivalent `add`. Full syntax is in [`docs/outfit-file.md`](docs/outfit-file.md),
-and ready-to-use examples live under [`examples/`](examples/).
+and ready-to-use examples live under [`examples/`](examples/), including
+[fetching one from a URL](examples/remote-outfit/).
 
 ## Aliases
 
@@ -279,6 +281,14 @@ Added alias "qwen3.6-27b" for /home/me/models/qwen3.6/Outfit …
 $ outfit apply   qwen3.6-27b      # from anywhere, no path needed
 $ outfit serve   qwen3.6-27b
 $ outfit harness qwen3.6-27b -- --some-agent-arg
+```
+
+The path can be a URL too — hand out a short name for a published `Outfit`
+instead of a link:
+
+```sh
+outfit alias -n team-default https://example.com/team/Outfit
+outfit apply team-default
 ```
 
 Set `OUTFIT_ALIAS` and the name is implied for a whole shell:
@@ -345,10 +355,12 @@ cover: launching a *single* model. Details in
 `outfit daemon` runs a long-lived agent that supervises one engine and serves
 a small control API: status, start, stop, metrics — token counters scraped
 from the engine plus GPU/CPU/RAM readings from the host — and a deploy-config
-push. It starts *nothing* on boot: the engine runs only when a start request
-asks, and the request can carry the deploy config (runner, model, flags) to
-run — or fall back to a previously pushed one. With neither, a start says so.
-Stopping the engine leaves the daemon answering.
+push. It's a worker: it reads no Outfit, no preset, and no `fleet.yaml`, and
+takes no Outfit path of its own — what it runs is decided entirely by
+whoever asks it, over the API. It starts *nothing* on boot: the engine runs
+only when a start request asks, and the request can carry the deploy config
+(runner, model, flags) to run — or fall back to a previously pushed one. With
+neither, a start says so. Stopping the engine leaves the daemon answering.
 
 It also keeps an eye on whether the engine is actually doing anything: it
 reads the engine's counters every 15 seconds and reports `lastActiveAt` and
@@ -359,15 +371,17 @@ from raw counters yourself.
 ```sh
 OUTFIT_API_TOKEN=…  outfit daemon           # control API on :4242
 outfit daemon --loopback                    # loopback-only (127.0.0.1:4242), needs no token
+outfit daemon --api-token-file /run/secrets/outfit-token   # from a service manager
 outfit daemon --log-level warn              # quiet on a node a fleet polls
 ```
 
-The API is bearer-token authenticated: under `serve --api`, `OUTFIT_API_TOKEN`
-comes from the `.env` beside the Outfit; the daemon reads no Outfit, so its
-token comes from the environment its service manager gives it or
-`--api-token-file`. A non-loopback listen without a token refuses to start —
-which is exactly what `--loopback` is for. `outfit serve -a/--api` exposes the
-same API beside an ordinary foreground serve.
+The API is bearer-token authenticated — `OUTFIT_API_TOKEN`, `--api-token`, or
+`--api-token-file` (giving two at once is an error, since the daemon reads no
+Outfit and so has no adjacent `.env` to fall back to); a non-loopback listen
+without a token refuses to start — which is exactly what `--loopback` is for.
+`outfit serve -a/--api` exposes the same API beside an ordinary foreground
+serve, and — because that command *does* read an Outfit — takes its token
+from the environment as usual, `.env` included.
 
 Every request is summarised on stderr — method, path, status, duration, size,
 caller — alongside the engine's starts, stops and crashes. Never the token and

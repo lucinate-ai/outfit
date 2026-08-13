@@ -8,6 +8,7 @@ the server behind it.
 outfit serve              # reads ./Outfit and runs its PROVIDER's server
 outfit serve path/to/Outfit
 outfit serve qwen3.6-27b  # a name registered with `outfit alias`
+outfit serve https://example.com/Outfit   # a URL, fetched instead of read from disk
 outfit serve --dry-run    # print the command without launching the server
 ```
 
@@ -83,8 +84,12 @@ Keys map straight to flags — `ctx-size = 262144` becomes `--ctx-size 262144`,
 - With no `ALIAS`, a preset holding exactly one section serves that one.
 - Several sections and no `ALIAS` is an error — name one.
 
-A relative `PRESET` path resolves against the Outfit's own directory, so the
-pair can travel together.
+A relative `PRESET` path resolves against the Outfit's own directory — or
+against its URL, when the Outfit itself was fetched from one — so the pair
+can travel together either way. `PRESET` may also be an absolute URL of its
+own, fetched only when `serve` builds the command, never merely because the
+Outfit was read. See [Fetching an Outfit from a
+URL](../outfit-file.md#fetching-an-outfit-from-a-url).
 
 ## oMLX
 
