@@ -235,3 +235,76 @@ func TestCmdServe_DryRunOutputIsUnaffectedByTheLevel(t *testing.T) {
 		t.Errorf("dry run printed no command: %q", plain)
 	}
 }
+
+func TestCmdServe_APILevelComesFromTheOutfitEnv(t *testing.T) {
+	// serve validates --log-level up front, which pre-empts the resolution
+	// inside runServeForegroundAPI — so the only way to reach that second
+	// resolution is a level supplied by the Outfit's own .env, which is loaded
+	// later. That path is the one that proves the .env is honoured at all.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(daemon.TokenEnvVar, "sekrit")
+	// t.Setenv restores whatever this was before, even though applyOutfitEnv
+	// sets it directly — without this the .env below would leak into the rest
+	// of the suite and stop later daemons starting at all.
+	t.Setenv(daemon.LevelEnvVar, "")
+	stubEngineDaemon(t, filepath.Join(t.TempDir(), "args"))
+
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL org/model:Q4_K_M\n")
+	mustWrite(t, filepath.Join(dir, ".env"), "OUTFIT_LOG_LEVEL=chatty\n")
+
+	addr := freeAddr(t)
+	err := cmdServe([]string{"-a", "--api-addr", addr, outfitPath})
+	if err == nil {
+		t.Fatal("a bad OUTFIT_LOG_LEVEL in the .env was accepted")
+	}
+	if !strings.Contains(err.Error(), "chatty") {
+		t.Errorf("error does not name the offending value: %v", err)
+	}
+	// And it failed before anything listened: the address is still free.
+	ln, lerr := net.Listen("tcp", addr)
+	if lerr != nil {
+		t.Fatalf("the API listened despite the bad level: %v", lerr)
+	}
+	ln.Close()
+}
+
+func TestCmdServe_ForegroundAPIRecordsTheEngineLifecycle(t *testing.T) {
+	// The daemon and serve --api wire two loggers each — the daemon's and the
+	// supervisor's. A path that wired only the first would still summarise
+	// requests, so the engine records are what prove the second is wired here.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(daemon.TokenEnvVar, "tok")
+	t.Setenv(daemon.LevelEnvVar, "")
+	stubEngineDaemon(t, filepath.Join(t.TempDir(), "args"))
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL org/model:Q4_K_M\n")
+
+	addr := freeAddr(t)
+	read := captureStderrFile(t)
+	done := make(chan error, 1)
+	go func() { done <- cmdServe([]string{"-a", "--api-addr", addr, outfitPath}) }()
+
+	waitForLog(t, read, "engine started")
+	base := "http://" + addr
+	if code, _ := apiDo(t, "POST", base+"/v1/stop", "tok", ""); code != 200 {
+		t.Fatalf("stop = %d", code)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serve exited with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not exit after the engine stopped")
+	}
+
+	out := read()
+	for _, want := range []string{"engine started", "stopping engine", "engine exited"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("serve --api did not record %q:\n%s", want, out)
+		}
+	}
+}

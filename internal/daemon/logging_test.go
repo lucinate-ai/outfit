@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -83,11 +84,39 @@ func TestResolveLevelPrefersFlagOverEnvironment(t *testing.T) {
 	if got, err := ResolveLevel(""); err != nil || got != slog.LevelInfo {
 		t.Fatalf("unset ResolveLevel = %v, %v; want info", got, err)
 	}
+	// A flag of nothing but spaces is no flag at all, so the variable still
+	// decides rather than the whitespace parsing as the default.
+	t.Setenv(LevelEnvVar, "error")
+	if got, err := ResolveLevel("   "); err != nil || got != slog.LevelError {
+		t.Fatalf("ResolveLevel(\"   \") = %v, %v; want the environment's error", got, err)
+	}
+
 	// A bad variable is still an error — it is not silently ignored because it
 	// came from the environment rather than the command line.
 	t.Setenv(LevelEnvVar, "chatty")
 	if _, err := ResolveLevel(""); err == nil {
 		t.Error("a bad OUTFIT_LOG_LEVEL was accepted")
+	}
+}
+
+func TestLevelNamesMatchWhatParses(t *testing.T) {
+	// The CLI's flag help and its tab completion are built from LevelNames, so
+	// a name offered there that ParseLevel rejects would complete to a value
+	// that refuses to start.
+	names := LevelNames()
+	if len(names) == 0 {
+		t.Fatal("LevelNames() is empty")
+	}
+	for _, name := range names {
+		if _, err := ParseLevel(name); err != nil {
+			t.Errorf("LevelNames offers %q, which ParseLevel rejects: %v", name, err)
+		}
+	}
+	// And it is a copy: a caller mangling the slice cannot reach the parser's
+	// own list.
+	names[0] = "mangled"
+	if LevelNames()[0] == "mangled" {
+		t.Error("LevelNames returns the package's own slice")
 	}
 }
 
@@ -574,5 +603,216 @@ func TestFailedStartRecordsTheReason(t *testing.T) {
 	}
 	if !strings.Contains(out, "level=ERROR") {
 		t.Errorf("a failed start was not recorded at error severity: %s", out)
+	}
+}
+
+func TestServerErrorIsRecordedAtErrorSeverity(t *testing.T) {
+	// The severity table promises 5xx at error, and only a server-side failure
+	// can show it. A log path that is a directory reads as an error rather than
+	// a missing log, which is the daemon's own failure to answer.
+	var buf syncBuffer
+	d := loggingDaemon(t, &buf, slog.LevelError)
+	d.Sup.LogPath = t.TempDir()
+	srv := httptest.NewServer(d.Handler(""))
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL + "/v1/logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (the log path is a directory)", resp.StatusCode)
+	}
+
+	recs := requestRecords(parseRecords(t, buf.String()))
+	if len(recs) != 1 {
+		t.Fatalf("got %d summaries at error level, want the 500: %s", len(recs), buf.String())
+	}
+	if recs[0].level != "ERROR" || recs[0].fields["status"] != "500" {
+		t.Errorf("summary = status %s at %s, want 500 at ERROR",
+			recs[0].fields["status"], recs[0].level)
+	}
+}
+
+func TestSummaryDefaultsTheStatusWhenAHandlerSetsNone(t *testing.T) {
+	// Every handler here goes through writeJSON, which always calls
+	// WriteHeader — but the default is what keeps a future one honest, and a
+	// summary reporting status 0 would be worse than useless.
+	for _, tc := range []struct {
+		name      string
+		handler   http.HandlerFunc
+		wantBytes bool
+	}{
+		{
+			name:    "writes nothing at all",
+			handler: func(http.ResponseWriter, *http.Request) {},
+		},
+		{
+			name:      "writes a body without a header",
+			handler:   func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("hello")) },
+			wantBytes: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf syncBuffer
+			srv := httptest.NewServer(summarize(captureLogger(&buf, slog.LevelDebug), tc.handler))
+			defer srv.Close()
+
+			resp, err := srv.Client().Get(srv.URL + "/anything")
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+
+			recs := requestRecords(parseRecords(t, buf.String()))
+			if len(recs) != 1 {
+				t.Fatalf("got %d summaries, want 1: %s", len(recs), buf.String())
+			}
+			if got := recs[0].fields["status"]; got != "200" {
+				t.Errorf("status = %q, want the 200 a silent handler actually sent", got)
+			}
+			if recs[0].level != "INFO" {
+				t.Errorf("level = %s, want INFO", recs[0].level)
+			}
+			if wantBytes := recs[0].fields["bytes"] != "0"; wantBytes != tc.wantBytes {
+				t.Errorf("bytes = %q, want non-zero: %v", recs[0].fields["bytes"], tc.wantBytes)
+			}
+		})
+	}
+}
+
+func TestGraceEscalationIsRecordedAtWarn(t *testing.T) {
+	// An engine that ignores SIGTERM is a property of that engine, and the
+	// docs promise the escalation survives a level that silences routine
+	// traffic.
+	var buf syncBuffer
+	logPath := filepath.Join(t.TempDir(), "engine.log")
+	s := NewSupervisor(logPath)
+	s.Logger = captureLogger(&buf, slog.LevelWarn)
+	s.Grace = 100 * time.Millisecond
+	// The trap has to be installed before the stop arrives, or the engine dies
+	// politely and there is no escalation to record — so the engine announces
+	// itself once it is ignoring TERM, and the test waits for that.
+	engine := stubEngine(t, `trap '' TERM
+echo deaf
+while true; do sleep 0.05; done`)
+	if err := s.Start([]string{engine}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if data, _ := os.ReadFile(logPath); strings.Contains(string(data), "deaf") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the engine never reported ignoring TERM")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := s.Stop(); err != nil {
+		t.Fatal(err)
+	}
+
+	recs := parseRecords(t, buf.String())
+	var found bool
+	for _, r := range recs {
+		if strings.Contains(r.fields["msg"], "grace period") {
+			found = true
+			if r.level != "WARN" {
+				t.Errorf("the escalation was recorded at %s, want WARN", r.level)
+			}
+			if r.fields["engine"] != engine {
+				t.Errorf("record does not name the engine: %v", r.fields)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("a kill after the grace window went unrecorded: %s", buf.String())
+	}
+	// The ordinary stop record is silenced at warn; only the escalation is not.
+	if strings.Contains(buf.String(), `msg="stopping engine"`) {
+		t.Errorf("an ordinary stop was recorded at warn: %s", buf.String())
+	}
+}
+
+func TestUnreadableStoredConfigIsRecorded(t *testing.T) {
+	// The first thing a start does is read the stored config; a corrupt one
+	// used to reach the caller and vanish.
+	var buf syncBuffer
+	d := testDaemon(t, "exit 0")
+	d.Logger = captureLogger(&buf, slog.LevelInfo)
+	d.Sup.Logger = d.Logger
+	if err := os.WriteFile(d.configPath(), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := d.StartEngine()
+	if err == nil {
+		t.Fatal("a start over a corrupt deploy config succeeded")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "engine start failed") || !strings.Contains(out, "level=ERROR") {
+		t.Errorf("the unreadable config was not recorded at error severity: %s", out)
+	}
+	// Nothing was started off the back of it.
+	if state, _, _ := d.Sup.Status(); state != StateIdle {
+		t.Errorf("state = %s after a failed start, want idle", state)
+	}
+	if strings.Contains(out, "engine started") {
+		t.Errorf("an engine was started despite the failure: %s", out)
+	}
+}
+
+func TestAFailedLaunchIsNotRecordedAsAStart(t *testing.T) {
+	// The start record is written after cmd.Start returns, so a launch that
+	// never happened must leave no trace of an engine that never ran — the
+	// assertion that matters here is the absent record, not the error.
+	var buf syncBuffer
+	s := NewSupervisor(filepath.Join(t.TempDir(), "engine.log"))
+	s.Logger = captureLogger(&buf, slog.LevelDebug)
+
+	missing := filepath.Join(t.TempDir(), "no-such-engine")
+	if err := s.Start([]string{missing}); err == nil {
+		t.Fatal("starting a non-existent binary succeeded")
+	}
+	out := buf.String()
+	if strings.Contains(out, "engine started") {
+		t.Errorf("a launch that failed was recorded as a start: %s", out)
+	}
+	if strings.Contains(out, "engine command") {
+		t.Errorf("a command that never ran was recorded: %s", out)
+	}
+	if state, _, _ := s.Status(); state != StateIdle {
+		t.Errorf("state = %s after a failed launch, want idle", state)
+	}
+}
+
+func TestStartEngineRecordsASupervisorFailure(t *testing.T) {
+	// The daemon's own record of a start that the supervisor refused: the
+	// engine binary is gone, so nothing ran and the reason has to survive.
+	var buf syncBuffer
+	d := testDaemon(t, "exit 0")
+	d.Logger = captureLogger(&buf, slog.LevelInfo)
+	d.Sup.Logger = d.Logger
+	if err := d.Push(remote.DeployConfig{Runner: "llamacpp", ModelID: "org/model"}); err != nil {
+		t.Fatal(err)
+	}
+	// Point the built command at nothing.
+	d.BuildArgv = func(*remote.DeployConfig) ([]string, error) {
+		return []string{filepath.Join(t.TempDir(), "no-such-engine")}, nil
+	}
+
+	if err := d.StartEngine(); err == nil {
+		t.Fatal("a start with a missing binary succeeded")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "engine start failed") || !strings.Contains(out, "level=ERROR") {
+		t.Errorf("the supervisor's refusal was not recorded at error severity: %s", out)
+	}
+	// The daemon says it is starting before it knows the outcome; what it must
+	// not do is claim the engine started.
+	if strings.Contains(out, `msg="engine started"`) {
+		t.Errorf("an engine that never launched was recorded as started: %s", out)
 	}
 }
