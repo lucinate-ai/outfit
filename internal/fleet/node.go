@@ -49,8 +49,9 @@ type Node interface {
 	Metrics(ctx context.Context) (metrics.Stats, error)
 	Start(ctx context.Context) (daemon.StatusResponse, error)
 	// StartWith starts the engine on a deploy config the caller supplies,
-	// which is how a router wakes a node to serve what it wants.
-	StartWith(ctx context.Context, dc *remote.DeployConfig) (daemon.StatusResponse, error)
+	// gated with the key it supplies — which is how a router wakes a node to
+	// serve what it wants, and how that engine comes to be gated at all.
+	StartWith(ctx context.Context, dc *remote.DeployConfig, engineKey string) (daemon.StatusResponse, error)
 	Stop(ctx context.Context) (daemon.StatusResponse, error)
 	Logs(ctx context.Context, offset int64, limit int) (daemon.LogsResponse, error)
 }
@@ -76,8 +77,8 @@ func (n *daemonNode) Start(ctx context.Context) (daemon.StatusResponse, error) {
 	return n.client.Start(ctx)
 }
 
-func (n *daemonNode) StartWith(ctx context.Context, dc *remote.DeployConfig) (daemon.StatusResponse, error) {
-	return n.client.StartWith(ctx, dc)
+func (n *daemonNode) StartWith(ctx context.Context, dc *remote.DeployConfig, engineKey string) (daemon.StatusResponse, error) {
+	return n.client.StartWith(ctx, dc, engineKey)
 }
 
 func (n *daemonNode) Stop(ctx context.Context) (daemon.StatusResponse, error) {

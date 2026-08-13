@@ -36,6 +36,11 @@ type Daemon struct {
 	// BuildArgv turns the source of what to serve into the engine command.
 	// dc is the stored deploy config, or nil to serve from the Outfit.
 	BuildArgv func(dc *remote.DeployConfig) ([]string, error)
+	// EngineKeyArgs turns the path of the written key file into the
+	// arguments that gate this engine, or an error when the engine has no
+	// way to be gated by a file. Supplied by the CLI, which owns engine
+	// flag spellings; nil means no engine here can be gated.
+	EngineKeyArgs func(dc *remote.DeployConfig, keyPath string) ([]string, error)
 	// ValidateConfig rejects a pushed deploy config this host cannot serve.
 	ValidateConfig func(remote.DeployConfig) error
 	// Collector gathers system stats; nil skips them.
@@ -149,9 +154,51 @@ func (d *Daemon) Push(dc remote.DeployConfig) error {
 	return nil
 }
 
-// StartEngine starts the engine from the stored deploy config when one
-// exists, from the Outfit otherwise (BuildArgv with nil dc). With neither
-// source BuildArgv reports what is missing.
+// StartRequest is the body of a start call: what to run, and the key the
+// engine is gated with. One definition so the client that sends it and the
+// daemon that reads it cannot drift.
+type StartRequest struct {
+	remote.DeployConfig
+	// EngineAPIKey gates the engine. It is supplied by the caller — a node
+	// sources no key of its own — and travels with the config it
+	// accompanies: a start carrying a config and no key opens the engine,
+	// while a start carrying neither reuses what was stored.
+	EngineAPIKey string `json:"engineApiKey,omitempty"`
+}
+
+// engineKeyFile is where a supplied key is kept: written for the engine to
+// read, and re-read on a later bare start so a restart is gated the same way.
+func (d *Daemon) engineKeyFile() string {
+	return filepath.Join(d.Dir, "engine-api-key")
+}
+
+// SetEngineKey stores the key the engine is to be gated with, or clears it
+// when given none. The file is 0600 and replaced rather than appended: one
+// key, never an accumulation.
+func (d *Daemon) SetEngineKey(key string) error {
+	if key == "" {
+		if err := os.Remove(d.engineKeyFile()); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+	if err := os.MkdirAll(d.Dir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(d.engineKeyFile(), []byte(key), 0o600)
+}
+
+// storedEngineKeyPath is the key file's path when one is stored, else "".
+func (d *Daemon) storedEngineKeyPath() string {
+	if _, err := os.Stat(d.engineKeyFile()); err != nil {
+		return ""
+	}
+	return d.engineKeyFile()
+}
+
+// StartEngine starts the engine from the stored deploy config, gated with the
+// stored key when there is one. With nothing stored, BuildArgv reports what is
+// missing.
 func (d *Daemon) StartEngine() error {
 	dc, err := d.StoredConfig()
 	if err != nil {
@@ -160,6 +207,18 @@ func (d *Daemon) StartEngine() error {
 	argv, err := d.BuildArgv(dc)
 	if err != nil {
 		return err
+	}
+	// The key reaches the engine as a path, never a value: a command line is
+	// readable by every local user, and the key exists to exclude them.
+	if keyPath := d.storedEngineKeyPath(); keyPath != "" {
+		if d.EngineKeyArgs == nil {
+			return fmt.Errorf("this engine cannot be gated: no key-file option is known for it")
+		}
+		keyArgs, err := d.EngineKeyArgs(dc, keyPath)
+		if err != nil {
+			return err
+		}
+		argv = append(argv, keyArgs...)
 	}
 	if dc != nil {
 		d.SetServed(dc.Runner, dc.ModelID)
@@ -238,7 +297,18 @@ func (d *Daemon) Status() StatusResponse {
 	resp.LastActiveAt, resp.IdleSeconds = d.activity()
 	// Only a running engine has an address worth reporting.
 	if state == StateRunning {
-		resp.Engine = d.engineEndpoint()
+		if ep := d.engineEndpoint(); ep != nil {
+			// The endpoint is derived when the command is built, which is
+			// before the key arguments are appended — so whether a key is
+			// required is the daemon's own fact, not something to read back
+			// out of an argv it has not finished assembling. A caller that
+			// picks up an already-running node has nothing else to go on.
+			reported := *ep
+			if d.storedEngineKeyPath() != "" {
+				reported.RequiresKey = true
+			}
+			resp.Engine = &reported
+		}
 	}
 	return resp
 }

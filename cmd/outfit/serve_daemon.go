@@ -31,33 +31,35 @@ import (
 
 // cmdDaemon is `outfit daemon`: a long-lived foreground process that
 // supervises one engine and serves the control API — the API is the command's
-// whole purpose, so it is always on. Nothing starts on boot: the engine runs
-// only when a start request asks, sourced from the request's own deploy
-// config, the stored one, or the adjacent Outfit, in that order.
+// whole purpose, so it is always on.
+//
+// It is a worker: its inputs are its flags and its API, and nothing else. It
+// reads no Outfit, no preset and no fleet file, so what a node runs is decided
+// by the client that asks rather than by whatever file the daemon happened to
+// be started next to. Nothing starts on boot either: the engine runs only when
+// a start request asks, from the config that request carries or the one stored
+// from a previous ask.
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
-	var apiAddr string
+	var apiAddr, apiToken, apiTokenFile string
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
+	fs.StringVar(&apiTokenFile, "api-token-file", "", "read the control API's bearer token from this file")
+	fs.StringVar(&apiToken, "api-token", "", "the control API's bearer token")
 	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
-	var path string
 	if rest := fs.Args(); len(rest) > 0 {
-		path = rest[0]
+		return fmt.Errorf(
+			"outfit daemon takes no Outfit (got %q): it runs what a start request tells it to.\n"+
+				"Push a config with `outfit fleet start <node>` from a machine holding the Outfit, "+
+				"or launch through it with `outfit harness`",
+			rest[0])
 	}
 
-	sel, outfitPath, hasOutfit, err := resolveDaemonOutfit(path)
+	token, err := daemonToken(apiToken, apiTokenFile)
 	if err != nil {
 		return err
 	}
-	if hasOutfit {
-		// The Outfit's local environment (its .env, then ENV) must be in
-		// place before the API token is read from it.
-		if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
-			return err
-		}
-	}
-	token := os.Getenv(daemon.TokenEnvVar)
 
 	// The handler goes in before anything starts, so a signal at any point
 	// from here on shuts down cleanly rather than killing the process.
@@ -77,42 +79,26 @@ func cmdDaemon(args []string) error {
 		ValidateConfig: validateDeployConfig,
 	}
 	d.BuildArgv = func(dc *remote.DeployConfig) ([]string, error) {
-		if dc != nil {
-			engine, err := engineFor(dc.Runner)
-			if err != nil {
-				return nil, err
-			}
-			argv, err := argvFromDeployConfig(engine, *dc)
-			if err != nil {
-				return nil, err
-			}
-			argv = withMetricsArgs(argv, engine)
-			d.SetScrape(scrapeTargetFor(engine, "", argv))
-			d.SetEngineEndpoint(engineEndpointFor(engine, "", argv))
-			return argv, nil
-		}
-		if !hasOutfit {
+		if dc == nil {
 			return nil, fmt.Errorf(
-				"nothing to serve: the daemon started with no Outfit and no deploy config has been pushed")
+				"nothing to serve: no deploy config has been pushed to this daemon.\n" +
+					"Send one with a start request — `outfit harness` does it for you when its " +
+					"Outfit names this fleet, and `outfit fleet start <node>` reuses the last one")
 		}
-		engine, err := engineFor(sel.Provider)
+		engine, err := engineFor(dc.Runner)
 		if err != nil {
 			return nil, err
 		}
-		argv, err := buildServeArgv(engine, sel, outfitPath)
+		argv, err := argvFromDeployConfig(engine, *dc)
 		if err != nil {
 			return nil, err
 		}
 		argv = withMetricsArgs(argv, engine)
-		model := sel.Model
-		if model == "" {
-			model = sel.Alias
-		}
-		d.SetServed(sel.Provider, model)
-		d.SetScrape(scrapeTargetFor(engine, sel.BaseURL, argv))
-		d.SetEngineEndpoint(engineEndpointFor(engine, sel.BaseURL, argv))
+		d.SetScrape(scrapeTargetFor(engine, "", argv))
+		d.SetEngineEndpoint(engineEndpointFor(engine, "", argv))
 		return argv, nil
 	}
+	d.EngineKeyArgs = engineKeyArgs
 	// Nothing starts on boot; the listener is the daemon's whole job, so a
 	// port conflict or the tokenless non-loopback refusal fails immediately.
 	ln, err := daemon.Listen(apiAddr, token)
@@ -223,20 +209,41 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 	return waitErr
 }
 
-// resolveDaemonOutfit resolves the Outfit a daemon serves from. An explicit
-// path must resolve; with none, having no default Outfit at all is fine — the
-// daemon can start idle on a stored or future deploy config — but a default
-// that is named and then fails to read is still an error. OUTFIT_ALIAS names
-// one as surely as a ./Outfit does, so it counts here too.
-func resolveDaemonOutfit(path string) (outfit.Selection, string, bool, error) {
-	if path == "" && !defaultOutfitNamed() {
-		return outfit.Selection{}, "", false, nil
+// daemonToken resolves the control API's bearer token. Three sources, because
+// the daemon reads no Outfit and so no longer picks one up from an adjacent
+// `.env`: a file, the environment, or the command line.
+//
+// The literal flag is offered here and refused for the *engine's* key, which
+// looks inconsistent until you notice they are different kinds of secret. This
+// token is configured locally by whoever runs the daemon, on a machine they
+// have already decided to trust with it; the engine's key is set remotely by a
+// client and persists on the node afterwards. A blanket "never on a command
+// line" covered both and was too broad for the first. The trade-off — a command
+// line is readable by every local user — belongs in the documentation rather
+// than in this flag's one-line help, which would otherwise argue with itself.
+//
+// Two sources at once is a conflict rather than a precedence: a silent winner
+// between two credentials is how an afternoon disappears into a 401 against the
+// wrong value.
+func daemonToken(literal, file string) (string, error) {
+	if literal != "" && file != "" {
+		return "", fmt.Errorf("--api-token and --api-token-file both given: pass one")
 	}
-	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
-	if err != nil {
-		return outfit.Selection{}, "", false, err
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("reading the API token from %s: %w", file, err)
+		}
+		token := strings.TrimSpace(string(data))
+		if token == "" {
+			return "", fmt.Errorf("the API token file %s is empty", file)
+		}
+		return token, nil
 	}
-	return sel, outfitPath, true, nil
+	if literal != "" {
+		return literal, nil
+	}
+	return os.Getenv(daemon.TokenEnvVar), nil
 }
 
 // argvFromDeployConfig builds the engine command from a pushed deploy config:
@@ -320,6 +327,27 @@ func scrapeTargetFor(engine serveEngine, baseURL string, argv []string) metrics.
 		baseURL = engine.defaultBaseURL
 	}
 	return metrics.ScrapeTarget{BaseURL: baseURL, Engine: engine.metricsEngine, APIKey: bind.key}
+}
+
+// engineKeyArgs gates an engine with a key the caller supplied, by pointing the
+// engine at the file the daemon wrote. An engine with no key-file option is
+// refused rather than gated with a literal argument: a command line is readable
+// by every local user, which is the population the key exists to exclude.
+func engineKeyArgs(dc *remote.DeployConfig, keyPath string) ([]string, error) {
+	if dc == nil {
+		return nil, fmt.Errorf("cannot gate an engine without knowing which one it is")
+	}
+	engine, err := engineFor(dc.Runner)
+	if err != nil {
+		return nil, err
+	}
+	if engine.apiKeyFileFlag == "" {
+		return nil, fmt.Errorf(
+			"%s cannot be gated with an API key: it has no option to read one from a file, "+
+				"and outfit will not pass a key on a command line where any local user can read it",
+			dc.Runner)
+	}
+	return []string{engine.apiKeyFileFlag, keyPath}, nil
 }
 
 // engineBind is what the engine's own command line says about where it listens

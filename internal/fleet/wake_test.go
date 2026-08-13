@@ -33,6 +33,8 @@ type fakeNode struct {
 	started bool
 	// pushed is the deploy config the start carried.
 	pushed *remote.DeployConfig
+	// pushedKey is the engine key the start carried.
+	pushedKey string
 
 	srv        *httptest.Server
 	engineLn   net.Listener
@@ -75,9 +77,11 @@ func newFakeNode(t *testing.T, state, model string) *fakeNode {
 			json.NewEncoder(w).Encode(daemon.Error{Error: f.startErr})
 			return
 		}
-		var dc remote.DeployConfig
-		json.NewDecoder(r.Body).Decode(&dc)
+		var req daemon.StartRequest
+		json.NewDecoder(r.Body).Decode(&req)
+		dc := req.DeployConfig
 		f.pushed = &dc
+		f.pushedKey = req.EngineAPIKey
 		f.started = true
 		f.state = string(daemon.StateRunning)
 		if dc.ModelID != "" {
@@ -325,5 +329,76 @@ func TestWakePrefersANodeThatAlreadyHasTheModel(t *testing.T) {
 	defer cold.mu.Unlock()
 	if cold.started {
 		t.Error("the cold node should not have been started")
+	}
+}
+
+// The client gates the engine it starts, with the key its own fleet entry
+// names — so the value it hands the agent is the value the engine checks,
+// rather than something it has to look up and hope matches.
+func TestWakeGatesTheEngineWithTheClientsKey(t *testing.T) {
+	shortWake(t)
+	t.Setenv("BOX_ENGINE_KEY", "sk-from-the-client")
+	node := newFakeNode(t, string(daemon.StateIdle), "")
+	cfg := fleetOf(t, []string{"box"}, node)
+	cfg.Nodes[0].EngineTokenEnv = "BOX_ENGINE_KEY"
+
+	choice, err := cfg.Wake(context.Background(), Want{Model: "m"},
+		remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}, statusOf(t, cfg), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	if node.pushedKey != "sk-from-the-client" {
+		t.Errorf("the node was started with key %q, want the client's", node.pushedKey)
+	}
+	if choice.APIKey != "sk-from-the-client" {
+		t.Errorf("the agent would be given %q, want the key the engine was gated with", choice.APIKey)
+	}
+}
+
+// A node naming no key wakes an ungated engine, which is right for one reached
+// over loopback.
+func TestWakeWithoutAKeyIsUngated(t *testing.T) {
+	shortWake(t)
+	node := newFakeNode(t, string(daemon.StateIdle), "")
+	cfg := fleetOf(t, []string{"box"}, node)
+
+	choice, err := cfg.Wake(context.Background(), Want{Model: "m"},
+		remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}, statusOf(t, cfg), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if choice.APIKey != "" {
+		t.Errorf("APIKey = %q, want none", choice.APIKey)
+	}
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	if node.pushedKey != "" {
+		t.Errorf("the node was gated with %q despite no key being named", node.pushedKey)
+	}
+}
+
+// A variable that resolves to nothing fails before any engine is started.
+func TestWakeFailsOnAnUnresolvableKey(t *testing.T) {
+	shortWake(t)
+	node := newFakeNode(t, string(daemon.StateIdle), "")
+	cfg := fleetOf(t, []string{"box"}, node)
+	cfg.Nodes[0].EngineTokenEnv = "NOWHERE_ENGINE_KEY"
+
+	_, err := cfg.Wake(context.Background(), Want{Model: "m"},
+		remote.DeployConfig{Runner: "llamacpp", ModelID: "m"}, statusOf(t, cfg), nil)
+	if err == nil {
+		t.Fatal("expected a failure")
+	}
+	for _, want := range []string{"NOWHERE_ENGINE_KEY", "box"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got: %v", want, err)
+		}
+	}
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	if node.started {
+		t.Error("an engine was started despite the key failing to resolve")
 	}
 }

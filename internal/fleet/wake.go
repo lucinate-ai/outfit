@@ -54,8 +54,16 @@ func (c *Config) Wake(ctx context.Context, w Want, dc remote.DeployConfig, resul
 			refused = append(refused, fmt.Sprintf("%s: %v", cand.entry.Name, err))
 			continue
 		}
+		// The key the engine will be gated with is resolved before it starts,
+		// so a variable that is set nowhere fails before anything runs rather
+		// than after. A node naming none wakes an ungated engine, which is
+		// right for one reached over loopback.
+		engineKey, err := c.EngineToken(cand.entry)
+		if err != nil {
+			return nil, err
+		}
 		log("Waking %s to serve %s...\n", cand.entry.Name, w.wanted())
-		status, err := node.StartWith(ctx, &dc)
+		status, err := node.StartWith(ctx, &dc, engineKey)
 		if err != nil {
 			// Another client may have woken this node first. That is
 			// another route to the same place, not a failure — re-read
@@ -64,7 +72,7 @@ func (c *Config) Wake(ctx context.Context, w Want, dc remote.DeployConfig, resul
 				if status, err = node.Status(ctx); err == nil && w.matches(status.Model) {
 					log("%s was already started by someone else; using it.\n", cand.entry.Name)
 					cand.result = NodeResult{Name: cand.entry.Name, Outcome: OutcomeOK, Status: status}
-					return c.choiceFor(cand, w, true)
+					return c.choiceFor(cand, w, true, engineKey)
 				}
 			}
 			refused = append(refused, fmt.Sprintf("%s: %v", cand.entry.Name, err))
@@ -75,7 +83,7 @@ func (c *Config) Wake(ctx context.Context, w Want, dc remote.DeployConfig, resul
 			return nil, err
 		}
 		cand.result = NodeResult{Name: cand.entry.Name, Outcome: OutcomeOK, Status: ready}
-		return c.choiceFor(cand, w, true)
+		return c.choiceFor(cand, w, true, engineKey)
 	}
 	return nil, fmt.Errorf(
 		"no node in %s could serve %s:\n  %s",

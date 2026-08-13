@@ -80,6 +80,11 @@ type serveEngine struct {
 	// defaultBaseURL is where the engine listens when the Outfit states no
 	// BASEURL, so the scraper can still find /metrics.
 	defaultBaseURL string
+	// apiKeyFileFlag is the engine's option for reading its API key from a
+	// file. Empty means the engine has no such option and so cannot be
+	// gated: the alternative is passing the key as a literal argument,
+	// where every local user can read it, which is worse than not gating.
+	apiKeyFileFlag string
 	// defaultBindLoopback says whether this engine binds loopback when its
 	// command states no --host. It decides whether a node can tell a remote
 	// router "my engine answers only on this machine" — llama.cpp binds
@@ -105,6 +110,7 @@ func engineFor(provider string) (serveEngine, error) {
 			installHint:         "install llama.cpp (e.g. brew install llama.cpp) or check the path",
 			metricsArgs:         []string{"--metrics"},
 			metricsEngine:       "llamacpp",
+			apiKeyFileFlag:      "--api-key-file",
 			defaultBaseURL:      "http://127.0.0.1:8080",
 			defaultBindLoopback: true,
 		}, nil

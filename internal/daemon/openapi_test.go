@@ -37,6 +37,7 @@ const openAPIPath = "../../docs/openapi.yaml"
 func schemaFor() map[string]any {
 	return map[string]any{
 		"StatusResponse": StatusResponse{},
+		"StartRequest":   StartRequest{},
 		"EngineEndpoint": EngineEndpoint{},
 		"Message":        Message{},
 		"LogsResponse":   LogsResponse{},
@@ -54,10 +55,52 @@ func schemaFor() map[string]any {
 type openAPIDoc struct {
 	Paths      map[string]map[string]yaml.Node `yaml:"paths"`
 	Components struct {
-		Schemas map[string]struct {
-			Properties map[string]yaml.Node `yaml:"properties"`
-		} `yaml:"schemas"`
+		Schemas map[string]schemaNode `yaml:"schemas"`
 	} `yaml:"components"`
+}
+
+// schemaNode is one schema, which may state its properties directly or compose
+// them with allOf. Go's embedded structs flatten into one JSON object, so a
+// schema describing an embedding type composes the same way, and the comparison
+// below has to flatten both sides to stay honest.
+type schemaNode struct {
+	Properties map[string]yaml.Node `yaml:"properties"`
+	AllOf      []struct {
+		Ref        string               `yaml:"$ref"`
+		Properties map[string]yaml.Node `yaml:"properties"`
+	} `yaml:"allOf"`
+}
+
+// flatProperties returns every property a schema serialises, following allOf
+// into the schemas it composes. A $ref outside components/schemas, or one that
+// names nothing, contributes nothing — which surfaces as a missing field rather
+// than passing silently.
+func (d openAPIDoc) flatProperties(name string) map[string]yaml.Node {
+	out := map[string]yaml.Node{}
+	var walk func(string, map[string]bool)
+	walk = func(n string, seen map[string]bool) {
+		if seen[n] {
+			return
+		}
+		seen[n] = true
+		schema, ok := d.Components.Schemas[n]
+		if !ok {
+			return
+		}
+		for k, v := range schema.Properties {
+			out[k] = v
+		}
+		for _, member := range schema.AllOf {
+			for k, v := range member.Properties {
+				out[k] = v
+			}
+			if ref := strings.TrimPrefix(member.Ref, "#/components/schemas/"); ref != member.Ref {
+				walk(ref, seen)
+			}
+		}
+	}
+	walk(name, map[string]bool{})
+	return out
 }
 
 func loadOpenAPI(t *testing.T) openAPIDoc {
@@ -125,19 +168,19 @@ func TestOpenAPISchemasMatchGoTypes(t *testing.T) {
 	doc := loadOpenAPI(t)
 
 	for name, value := range schemaFor() {
-		schema, ok := doc.Components.Schemas[name]
-		if !ok {
+		if _, ok := doc.Components.Schemas[name]; !ok {
 			t.Errorf("Go type %T has no %q schema in %s", value, name, openAPIPath)
 			continue
 		}
+		properties := doc.flatProperties(name)
 		want := jsonFieldNames(reflect.TypeOf(value))
 		for _, field := range want {
-			if _, ok := schema.Properties[field]; !ok {
+			if _, ok := properties[field]; !ok {
 				t.Errorf("%s.%s is serialised by %T but missing from the %q schema in %s",
 					name, field, value, name, openAPIPath)
 			}
 		}
-		for field := range schema.Properties {
+		for field := range properties {
 			if !contains(want, field) {
 				t.Errorf("the %q schema in %s describes %q, which %T does not serialise",
 					name, openAPIPath, field, value)

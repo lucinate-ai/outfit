@@ -70,17 +70,19 @@ paths:
       operationId: startEngine
       summary: Start the engine.
       description: |
-        The body may carry a deploy config naming what to run — validated and
-        persisted exactly as a push, then started. With no body, the stored
-        deploy config is served, else the Outfit the daemon sits beside.
+        The body may carry a deploy config naming what to run, and the key the
+        engine is gated with — validated and persisted exactly as a push, then
+        started. With no body, the stored deploy config is served, gated with
+        the stored key; with nothing stored, the start fails saying so.
 
-        A body sent with a rejected start is not stored.
+        A body sent with a rejected start is not stored, neither its config nor
+        its key.
       requestBody:
         required: false
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DeployConfig"
+              $ref: "#/components/schemas/StartRequest"
       responses:
         "200":
           description: The engine started; the reply is its new state.
@@ -89,7 +91,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/StatusResponse"
         "400":
-          description: The config is invalid, the engine failed to start, or there is nothing to serve.
+          description: |
+            The config is invalid, the engine failed to start, there is nothing
+            to serve, or a key was supplied for an engine that cannot be gated
+            by one.
           content:
             application/json:
               schema:
@@ -250,6 +255,30 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    StartRequest:
+      type: object
+      description: |
+        The body of a start request: what to run, and the key the engine is
+        gated with. Mirrors Go's daemon.StartRequest, which embeds a
+        DeployConfig.
+      allOf:
+        - $ref: '#/components/schemas/DeployConfig'
+        - type: object
+          properties:
+            engineApiKey:
+              type: string
+              description: |
+                The API key the engine is started with. Supplied by the caller
+                — a node sources no key of its own — and travelling with the
+                config it accompanies: a start carrying a config and no key
+                opens the engine, while a start carrying neither reuses what
+                was stored.
+
+                It is never returned. No reply, error, or log line produced by
+                this API contains it, and the daemon passes it to the engine
+                as a file path rather than an argument, so it does not appear
+                in the node's process list either.
+
     StatusResponse:
       type: object
       description: The supervised engine's state. Mirrors Go's daemon.StatusResponse.

@@ -142,18 +142,21 @@ func (c *Client) Logs(ctx context.Context, offset int64, limit int) (daemon.Logs
 
 // Start asks the daemon to start its engine, returning the resulting status.
 func (c *Client) Start(ctx context.Context) (daemon.StatusResponse, error) {
-	return c.StartWith(ctx, nil)
+	return c.StartWith(ctx, nil, "")
 }
 
 // StartWith asks the daemon to start its engine on a deploy config it carries,
 // so a caller can say what to run and run it in one call. A nil config starts
 // from what the node already has. The daemon validates the config against what
 // it can serve and stores it only if the start is accepted.
-func (c *Client) StartWith(ctx context.Context, dc *remote.DeployConfig) (daemon.StatusResponse, error) {
+func (c *Client) StartWith(ctx context.Context, dc *remote.DeployConfig, engineKey string) (daemon.StatusResponse, error) {
 	var out daemon.StatusResponse
 	var body any
 	if dc != nil {
-		body = dc
+		// The key travels with the config, in the one request that runs it:
+		// the caller decides what the engine is gated with, and therefore
+		// knows what to hand the agent.
+		body = daemon.StartRequest{DeployConfig: *dc, EngineAPIKey: engineKey}
 	}
 	err := c.do(ctx, http.MethodPost, "/v1/start", body, &out)
 	return out, err

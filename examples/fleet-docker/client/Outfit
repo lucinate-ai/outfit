@@ -1,10 +1,10 @@
-# What a *client* wears to use this fleet — the Outfit you would have on your
-# laptop, as opposed to node/Outfit, which is what each node serves.
+# What a client wears to use this fleet — the Outfit you would have on your
+# laptop. It is the only Outfit in this example: the nodes hold none, and run
+# whatever a start request tells them to.
 #
-# The difference that matters is the missing BASEURL. A node's Outfit pins its
-# own local engine; a client's must not, because the whole point is that outfit
-# picks a node and fills the address in. An Outfit that states one is taken at
-# its word and never routed.
+# Note the missing BASEURL. The whole point is that outfit picks a node and
+# fills the address in; an Outfit that states one is taken at its word and
+# never routed.
 PROVIDER llamacpp
 MODEL    org/fake-model
 ALIAS    fake-model

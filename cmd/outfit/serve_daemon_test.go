@@ -151,37 +151,52 @@ func TestCmdDaemon_RefusesTokenlessNonLoopback(t *testing.T) {
 	}
 }
 
-func TestCmdDaemon_ServesOutfitOnRequestOnly(t *testing.T) {
+// TestCmdDaemon_LifecycleFromItsAPI covers the daemon as a worker: its token
+// comes from a file rather than an Outfit's .env, an adjacent Outfit is not a
+// source, and everything it runs arrives over the API. What it used to do —
+// serve the Outfit it was started beside — is gone, so a bare start with
+// nothing stored says so.
+func TestCmdDaemon_LifecycleFromItsAPI(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv(daemon.TokenEnvVar, "")
 	argsFile := filepath.Join(t.TempDir(), "args")
 	stubEngineDaemon(t, argsFile)
+
+	// An Outfit sits right here and must be ignored entirely.
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL org/model:Q4_K_M\n")
-	// The .env beside the Outfit carries the API token — the daemon must load
-	// it before reading the token.
-	mustWrite(t, filepath.Join(dir, ".env"), "OUTFIT_API_TOKEN=sekrit\n")
+	t.Chdir(dir)
+
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	mustWrite(t, tokenFile, "sekrit\n") // trailing newline must not be part of it
 
 	waitAddr := apiAddrFromStdout(t)
 	done := make(chan error, 1)
-	go func() { done <- cmdDaemon([]string{"--api-addr", "127.0.0.1:0", filepath.Join(dir, "Outfit")}) }()
+	go func() {
+		done <- cmdDaemon([]string{"--api-addr", "127.0.0.1:0", "--api-token-file", tokenFile})
+	}()
 	base := "http://" + waitAddr()
 
-	// The .env token gates the API.
+	// The file's token gates the API, whitespace trimmed.
 	if code, _ := apiDo(t, "GET", base+"/v1/status", "", ""); code != http.StatusUnauthorized {
 		t.Fatalf("tokenless status = %d, want 401", code)
 	}
-
-	// No auto-start: the daemon idles beside a perfectly good Outfit.
 	code, body := apiDo(t, "GET", base+"/v1/status", "sekrit", "")
 	if code != 200 || body["state"] != "idle" {
 		t.Fatalf("boot status = %d %v, want idle", code, body)
 	}
 
-	// A bare start serves the Outfit.
-	if code, body := apiDo(t, "POST", base+"/v1/start", "sekrit", ""); code != 200 || body["state"] != "running" ||
-		body["runner"] != "llamacpp" {
-		t.Fatalf("start = %d %v", code, body)
+	// The adjacent Outfit is not a source: a bare start has nothing to serve.
+	if code, body := apiDo(t, "POST", base+"/v1/start", "sekrit", ""); code != http.StatusBadRequest ||
+		!strings.Contains(body["error"].(string), "nothing to serve") {
+		t.Fatalf("bare start beside an Outfit = %d %v, want a refusal", code, body)
+	}
+
+	// What it runs arrives over the API.
+	cfg := `{"runner":"llamacpp","modelId":"org/model","quant":"Q4_K_M","contextSize":4096}`
+	if code, body := apiDo(t, "POST", base+"/v1/start", "sekrit", cfg); code != 200 ||
+		body["state"] != "running" || body["runner"] != "llamacpp" {
+		t.Fatalf("start with a config = %d %v", code, body)
 	}
 	if _, body := apiDo(t, "GET", base+"/v1/status", "sekrit", ""); body["logPath"] == nil {
 		t.Fatal("status has no logPath")
@@ -198,7 +213,8 @@ func TestCmdDaemon_ServesOutfitOnRequestOnly(t *testing.T) {
 		t.Fatalf("start while running = %d %v", code, body)
 	}
 
-	// Stop over the API, idempotently; the daemon itself keeps answering.
+	// Stop over the API, idempotently; the daemon itself keeps answering, and
+	// a bare restart serves the config it was given.
 	if code, body := apiDo(t, "POST", base+"/v1/stop", "sekrit", ""); code != 200 || body["state"] != "stopped" {
 		t.Fatalf("stop = %d %v", code, body)
 	}
@@ -693,5 +709,70 @@ func TestNodeBindReachesTheReportedEndpoint(t *testing.T) {
 	// And the scrape follows the same bind, so the two cannot disagree.
 	if target := scrapeTargetFor(engine, "", argv); !strings.Contains(target.BaseURL, "9090") {
 		t.Errorf("scrape target = %q, want the engine's own port", target.BaseURL)
+	}
+}
+
+// The daemon reads no Outfit, so its token no longer arrives from an adjacent
+// `.env`. Three sources replace it, and two at once is a conflict rather than
+// a silent precedence.
+func TestDaemonToken(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "token")
+	mustWrite(t, file, "  from-file\n")
+
+	t.Setenv(daemon.TokenEnvVar, "from-env")
+	if got, err := daemonToken("", file); err != nil || got != "from-file" {
+		t.Errorf("file = %q, %v; want the trimmed file contents", got, err)
+	}
+	if got, err := daemonToken("from-flag", ""); err != nil || got != "from-flag" {
+		t.Errorf("flag = %q, %v", got, err)
+	}
+	if got, err := daemonToken("", ""); err != nil || got != "from-env" {
+		t.Errorf("env = %q, %v", got, err)
+	}
+
+	t.Setenv(daemon.TokenEnvVar, "")
+	if got, err := daemonToken("", ""); err != nil || got != "" {
+		t.Errorf("nothing = %q, %v; want empty, which loopback permits", got, err)
+	}
+
+	// A conflict names both rather than choosing.
+	_, err := daemonToken("from-flag", file)
+	if err == nil {
+		t.Fatal("two sources should be a conflict")
+	}
+	for _, want := range []string{"--api-token", "--api-token-file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q, got: %v", want, err)
+		}
+	}
+
+	// An unreadable or empty file fails rather than listening with no token.
+	if _, err := daemonToken("", filepath.Join(dir, "nope")); err == nil {
+		t.Error("a missing token file should fail")
+	}
+	empty := filepath.Join(dir, "empty")
+	mustWrite(t, empty, "\n")
+	if _, err := daemonToken("", empty); err == nil {
+		t.Error("an empty token file should fail")
+	}
+}
+
+// The engine's key reaches it by path or not at all. An engine with no
+// key-file option is refused, because the alternative is a literal argument
+// every local user can read.
+func TestEngineKeyArgs(t *testing.T) {
+	args, err := engineKeyArgs(&remote.DeployConfig{Runner: "llamacpp"}, "/state/key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(args, " ") != "--api-key-file /state/key" {
+		t.Errorf("args = %v", args)
+	}
+
+	if _, err := engineKeyArgs(&remote.DeployConfig{Runner: "vllm"}, "/state/key"); err == nil {
+		t.Error("an engine with no key-file option should be refused")
+	} else if !strings.Contains(err.Error(), "command line") {
+		t.Errorf("the refusal should say why, got: %v", err)
 	}
 }

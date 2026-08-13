@@ -151,11 +151,21 @@ of you exits. Two related surfaces build on it:
   [outfit's config directory](../env-vars.md#config-directory-resolution),
   tracks its state
   (`idle`, `running`, `stopped`, `crashed` — a crash is reported, never
-  auto-restarted), and starts **nothing** until a start request asks. The
-  start can carry the deploy config to run; otherwise a previously pushed
-  config, or the Outfit the daemon sits beside, is used. Stopping the engine
-  leaves the daemon answering; only a signal ends it. The daemon stays in the
-  foreground itself; background it with tmux, systemd, launchd or similar.
+  auto-restarted), and starts **nothing** until a start request asks. Stopping
+  the engine leaves the daemon answering; only a signal ends it. The daemon
+  stays in the foreground itself; background it with tmux, systemd, launchd or
+  similar.
+
+The daemon is a worker: **its inputs are its flags and its API, and nothing
+else**. It reads no Outfit, no preset and no `fleet.yaml`, and takes no Outfit
+path — passing one is an error rather than being quietly ignored. What a node
+runs is decided by the client that asks: the start request's own deploy config,
+or the one stored from a previous ask. With neither, a start says so.
+
+That is why a node and a client want different files. A client's Outfit names a
+model and a fleet; a node holds nothing. See
+[`examples/fleet-local/`](../../examples/fleet-local/) for the whole shape on one
+machine.
 
 The API listens on `:4242` (change with `--api-addr`) and speaks JSON.
 See [HTTP Control API](../http-api.md) for details, or
@@ -164,15 +174,50 @@ See [HTTP Control API](../http-api.md) for details, or
 | Endpoint | Meaning |
 | -------- | ------- |
 | `GET /v1/status` | Engine state, what is served, the engine log path, and how long it has been idle |
-| `POST /v1/start` | Start the engine (optional deploy-config body; 409 while one runs) |
+| `POST /v1/start` | Start the engine (optional deploy-config body, optionally carrying the engine's API key; 409 while one runs) |
 | `POST /v1/stop` | Stop the engine (idempotent; never ends the daemon) |
 | `GET /v1/metrics` | Engine token counters plus host GPU/CPU/RAM |
 | `PUT /v1/deploy-config` | Set what the *next* start serves |
 
-Requests carry `Authorization: Bearer $OUTFIT_API_TOKEN`. The token is read
-from the environment (the `.env` beside the Outfit works — it is loaded
-first), never from a flag; a non-loopback listen with no token refuses to
-start. A supervised engine gets its own `/metrics` endpoint switched on
+Requests carry `Authorization: Bearer <token>`. The token comes from one of
+three places, and giving two at once is an error rather than a silent
+precedence:
+
+| Source | Notes |
+| ------ | ----- |
+| `--api-token-file <path>` | The file's contents, trimmed. |
+| `OUTFIT_API_TOKEN` | The environment. |
+| `--api-token <value>` | The token itself. |
+
+A non-loopback listen with no token refuses to start; a loopback one needs
+none.
+
+Which to use is a question about who else can log in to that machine. A command
+line is readable by every local user through `ps`, so `--api-token` discloses
+the token to anyone with a shell there; the file and environment forms do not.
+On a machine only you can reach, that costs nothing.
+
+**From a service manager, use `--api-token-file`.** A literal in a unit file or
+plist is a secret in a config file *and* in the process list — the worst of
+both — while `systemd`'s `EnvironmentFile=` and launchd's `EnvironmentVariables`
+are the environment form if you would rather keep it there.
+
+This is also why the *engine's* key can never be given literally (see below):
+that key is set remotely by a client and persists on the node, where this token
+is configured locally by whoever starts the daemon.
+
+### Gating the engine
+
+An engine can require its own API key, separately from the token above — one
+authorises driving the node, the other authorises using its engine. **The
+caller supplies it**, in the start request, and a node sources no key of its
+own. The daemon writes it to a private file and points the engine at that path,
+so the key never appears in the node's process list; an engine with no
+key-file option is refused rather than gated with a literal argument.
+
+Because the client sets the key, it knows the key — which is what it gives the
+agent it launches. `/v1/status` reports only *that* a key is required, never
+what it is, and no endpoint returns it. A supervised engine gets its own `/metrics` endpoint switched on
 (llama.cpp `--metrics`), which is where the token counters come from; GPU
 readings need `nvidia-smi` (no Apple GPU source yet).
 
