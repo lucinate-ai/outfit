@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/lucinate-ai/outfit/internal/daemon"
 )
 
 // complete runs the hidden completion helper and returns its candidate lines
@@ -409,5 +411,27 @@ func TestCompletionScriptsAreValid(t *testing.T) {
 				t.Errorf("%s rejected the completion script: %v\n%s", c.bin, err, out)
 			}
 		})
+	}
+}
+
+// TestComplete_LogLevelValues checks that --log-level completes to the levels
+// the parser accepts, on both commands that take it. The flag and its value
+// are separate table entries, so this covers being offered the flag at all as
+// well as what follows it — a value listed without the flag would complete
+// only for someone who already knew it existed.
+func TestComplete_LogLevelValues(t *testing.T) {
+	isolateConfig(t)
+
+	for _, cmd := range []string{"daemon", "serve"} {
+		got, directive := complete(t, cmd, "--log-level", "")
+		if !hasAll(got, daemon.LevelNames()...) {
+			t.Errorf("%s --log-level: %v does not offer %v", cmd, got, daemon.LevelNames())
+		}
+		if directive != directiveNoFile {
+			t.Errorf("%s --log-level: directive = %q, want %q", cmd, directive, directiveNoFile)
+		}
+		if flags, _ := complete(t, cmd, "-"); !hasAll(flags, "--log-level") {
+			t.Errorf("%s: --log-level is not offered among its flags: %v", cmd, flags)
+		}
 	}
 }

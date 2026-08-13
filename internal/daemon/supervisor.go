@@ -7,9 +7,11 @@ package daemon
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,6 +41,10 @@ type Supervisor struct {
 	// LogPath receives the engine's stdout+stderr. Empty forwards both to
 	// this process's own stdio — the foreground `serve --api` case.
 	LogPath string
+	// Logger receives the lifecycle records: started, stopped, exited. Nil
+	// discards. Note what this is not: the engine's own output, which goes to
+	// LogPath and is served over /v1/logs.
+	Logger *slog.Logger
 
 	mu       sync.Mutex
 	state    State
@@ -53,6 +59,11 @@ type Supervisor struct {
 // NewSupervisor returns an idle supervisor logging to logPath.
 func NewSupervisor(logPath string) *Supervisor {
 	return &Supervisor{LogPath: logPath, state: StateIdle}
+}
+
+// log reads the supervisor's logger, defaulting to discarding.
+func (s *Supervisor) log() *slog.Logger {
+	return loggerOr(s.Logger)
 }
 
 // Start launches argv as the supervised engine. It fails when an engine is
@@ -100,6 +111,16 @@ func (s *Supervisor) Start(argv []string) error {
 	done := make(chan struct{})
 	s.done = done
 
+	// The binary and the argument count at info; the whole command only at
+	// debug. A command assembled from a pushed deploy config can carry a
+	// literal --api-key, and info is where a service manager's journal picks
+	// records up — the full argv is available to whoever asks for it.
+	s.log().Info("engine started",
+		slog.String("engine", argv[0]),
+		slog.Int("args", len(argv)-1),
+		slog.Int("pid", cmd.Process.Pid))
+	s.log().Debug("engine command", slog.String("command", strings.Join(argv, " ")))
+
 	go func() {
 		err := cmd.Wait()
 		if logFile != nil {
@@ -114,7 +135,17 @@ func (s *Supervisor) Start(argv []string) error {
 			// An unprompted failure exit: report it, never restart it.
 			s.state = StateCrashed
 		}
+		state := s.state
 		s.mu.Unlock()
+		// Recorded here, in the goroutine that already classifies the exit, so
+		// a crash is logged the moment it happens rather than whenever someone
+		// next polls /v1/status. A node that dies at 03:00 leaves a timestamp.
+		if state == StateCrashed {
+			s.log().Error("engine crashed",
+				slog.String("engine", argv[0]), slog.String("error", err.Error()))
+		} else {
+			s.log().Info("engine exited", slog.String("engine", argv[0]))
+		}
 		close(done)
 	}()
 	return nil
@@ -133,15 +164,22 @@ func (s *Supervisor) Stop() error {
 	proc := s.cmd.Process
 	done := s.done
 	grace := s.Grace
+	engine := s.argv[0]
 	s.mu.Unlock()
 	if grace == 0 {
 		grace = DefaultGrace
 	}
 
+	s.log().Info("stopping engine", slog.String("engine", engine))
 	terminate(proc)
 	select {
 	case <-done:
 	case <-time.After(grace):
+		// Worth a record of its own: an engine that ignores SIGTERM is a
+		// property of that engine, and the grace window is where a slow
+		// shutdown turns into a kill.
+		s.log().Warn("engine did not exit within the grace period; killing",
+			slog.String("engine", engine), slog.Duration("grace", grace))
 		kill(proc)
 		<-done
 	}

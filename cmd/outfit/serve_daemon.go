@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -29,6 +30,27 @@ import (
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
+// logLevelUsage is the --log-level flag's help, shared by `outfit daemon` and
+// `outfit serve` so the two describe the same control the same way.
+var logLevelUsage = "log level (" + strings.Join(daemon.LevelNames(), "|") +
+	"); overrides " + daemon.LevelEnvVar
+
+// commandLogger builds the logger an API-hosting command writes to, resolving
+// the level from the flag, else the environment, else info.
+//
+// os.Stderr is read here rather than captured in a package variable, for two
+// reasons: outfit's records belong on stderr so a foreground serve keeps
+// forwarding the engine's own stdout untouched, and the daemon tests redirect
+// the variable before invoking the command — a logger built at init would hold
+// the real file and the redirect would capture nothing.
+func commandLogger(logLevel string) (*slog.Logger, error) {
+	level, err := daemon.ResolveLevel(logLevel)
+	if err != nil {
+		return nil, err
+	}
+	return daemon.NewLogger(os.Stderr, level), nil
+}
+
 // cmdDaemon is `outfit daemon`: a long-lived foreground process that
 // supervises one engine and serves the control API — the API is the command's
 // whole purpose, so it is always on.
@@ -41,10 +63,11 @@ import (
 // from a previous ask.
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
-	var apiAddr, apiToken, apiTokenFile string
+	var apiAddr, apiToken, apiTokenFile, logLevel string
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
 	fs.StringVar(&apiTokenFile, "api-token-file", "", "read the control API's bearer token from this file")
 	fs.StringVar(&apiToken, "api-token", "", "the control API's bearer token")
+	fs.StringVar(&logLevel, "log-level", "", logLevelUsage)
 	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
@@ -60,6 +83,15 @@ func cmdDaemon(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The daemon reads no Outfit, so there is no adjacent .env to consult: the
+	// level comes from the flag or the process environment, which is what a
+	// service manager sets anyway. A level that does not parse fails here —
+	// before the listener opens, so nothing is served by a daemon whose logging
+	// was misconfigured.
+	logger, err := commandLogger(logLevel)
+	if err != nil {
+		return err
+	}
 
 	// The handler goes in before anything starts, so a signal at any point
 	// from here on shuts down cleanly rather than killing the process.
@@ -72,11 +104,13 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 	sup := daemon.NewSupervisor(filepath.Join(stateDir, "engine.log"))
+	sup.Logger = logger
 	d := &daemon.Daemon{
 		Sup:            sup,
 		Dir:            stateDir,
 		Collector:      &metrics.Collector{},
 		ValidateConfig: validateDeployConfig,
+		Logger:         logger,
 	}
 	d.BuildArgv = func(dc *remote.DeployConfig) ([]string, error) {
 		if dc == nil {
@@ -106,9 +140,12 @@ func cmdDaemon(args []string) error {
 		return err
 	}
 	srv := &http.Server{Handler: d.Handler(token)}
-	fmt.Printf("daemon ready: nothing runs until a start request arrives\n")
-	fmt.Printf("engine log: %s\n", sup.LogPath)
-	fmt.Printf("control API on %s\n", ln.Addr())
+	// The daemon is a service, so its startup goes to the log rather than to a
+	// terminal nobody is watching. (`outfit serve`'s narration of the command
+	// it is about to run stays on stdout — that is read by a person.)
+	logger.Info("daemon ready: nothing runs until a start request arrives",
+		slog.String("api", ln.Addr().String()),
+		slog.String("engineLog", sup.LogPath))
 	go srv.Serve(ln)
 
 	// Activity sampling runs for as long as the daemon does, independently of
@@ -133,11 +170,19 @@ func cmdDaemon(args []string) error {
 // foreground with stdio forwarded as ever, with the control API alongside it. Start over the API always fails — the engine is
 // foreground-managed and already running — and stop terminates it, after
 // which serve exits exactly as it does when the engine exits on its own.
-func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serveEngine, argv []string, apiAddr string) error {
+func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serveEngine, argv []string, apiAddr string, logLevel string) error {
 	if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
 		return err
 	}
 	token := os.Getenv(daemon.TokenEnvVar)
+	// Resolved after the Outfit's environment is in place, so unlike the
+	// daemon — which reads no Outfit — OUTFIT_LOG_LEVEL can be set in the .env
+	// beside it, exactly as the API token is. A level that does not parse fails
+	// before anything listens.
+	logger, err := commandLogger(logLevel)
+	if err != nil {
+		return err
+	}
 	ln, err := daemon.Listen(apiAddr, token)
 	if err != nil {
 		return err
@@ -149,6 +194,7 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 		return err
 	}
 	sup := daemon.NewSupervisor("") // empty LogPath: stdio stays forwarded
+	sup.Logger = logger
 	d := &daemon.Daemon{
 		Sup: sup,
 		Dir: stateDir,
@@ -157,6 +203,7 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 		},
 		ValidateConfig: validateDeployConfig,
 		Collector:      &metrics.Collector{},
+		Logger:         logger,
 	}
 	model := sel.Model
 	if model == "" {
@@ -188,7 +235,7 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 	// StartEngine, so the activity record is stamped here instead.
 	d.MarkActive()
 	srv := &http.Server{Handler: d.Handler(token)}
-	fmt.Printf("control API on %s\n\n", ln.Addr())
+	logger.Info("control API listening", slog.String("api", ln.Addr().String()))
 	go srv.Serve(ln)
 	sampleCtx, stopSampling := context.WithCancel(context.Background())
 	go d.SampleActivity(sampleCtx)
@@ -269,7 +316,9 @@ func argvFromDeployConfig(engine serveEngine, dc remote.DeployConfig) ([]string,
 	}
 	argv = append(argv, engine.dialect.Flags(params)...)
 	argv = append(argv, dc.ServeArgs...)
-	fmt.Printf("Serving %s from the pushed deploy config\n\n", model)
+	// No printf here: this runs inside a start request, and the daemon records
+	// the same fact — source, runner and model — as a log record with a
+	// timestamp and a level, rather than a bare line on the daemon's stdout.
 	return argv, nil
 }
 

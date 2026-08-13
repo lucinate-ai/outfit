@@ -20,6 +20,7 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
 	"github.com/lucinate-ai/outfit/internal/config"
+	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/discovery"
 	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/opencode"
@@ -65,6 +66,7 @@ const (
 	kindProvider
 	kindModel
 	kindShell
+	kindLogLevel
 )
 
 // command describes one subcommand's completable surface.
@@ -141,13 +143,13 @@ var commands = map[string]command{
 	},
 	"unalias": {positional: kindAliasOnly, positionals: 1},
 	"serve": {
-		flags:      []string{"--dry-run", "-n", "--api", "-a", "--api-addr"},
-		values:     map[string]candidateKind{"--api-addr": kindNone},
+		flags:      []string{"--dry-run", "-n", "--api", "-a", "--api-addr", "--log-level"},
+		values:     map[string]candidateKind{"--api-addr": kindNone, "--log-level": kindLogLevel},
 		positional: kindAlias, positionals: 1,
 	},
 	"daemon": {
-		flags:      []string{"--api-addr"},
-		values:     map[string]candidateKind{"--api-addr": kindNone},
+		flags:      []string{"--api-addr", "--log-level"},
+		values:     map[string]candidateKind{"--api-addr": kindNone, "--log-level": kindLogLevel},
 		positional: kindAlias, positionals: 1,
 	},
 	"fleet": {
@@ -353,6 +355,8 @@ func candidatesFor(kind candidateKind, words []string) ([]string, string) {
 		return models, directiveNoFile
 	case kindShell:
 		return completionShells, directiveNoFile
+	case kindLogLevel:
+		return daemon.LevelNames(), directiveNoFile
 	default:
 		return nil, directiveNoFile
 	}

@@ -156,16 +156,28 @@ func engineFor(provider string) (serveEngine, error) {
 func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	var (
-		dryRun  bool
-		apiOn   bool
-		apiAddr string
+		dryRun   bool
+		apiOn    bool
+		apiAddr  string
+		logLevel string
 	)
 	fs.BoolVar(&dryRun, "dry-run", false, "print the server command without running it")
 	fs.BoolVar(&dryRun, "n", false, "print the command without running it (shorthand)")
 	fs.BoolVar(&apiOn, "api", false, "expose the control API beside the foreground engine")
 	fs.BoolVar(&apiOn, "a", false, "expose the control API (shorthand)")
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
+	// Accepted with or without --api, so the same command line works both
+	// ways. Without --api there is no API to summarise and nothing supervised,
+	// so it governs nothing — which is better than rejecting it.
+	fs.StringVar(&logLevel, "log-level", "", logLevelUsage)
 	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
+		return err
+	}
+	// A mistyped level is refused up front, whether or not this serve will host
+	// the API — a flag outfit accepted and then ignored would be worse than a
+	// flag it rejected. The API path resolves it again once the Outfit's .env
+	// is loaded, which is where an OUTFIT_LOG_LEVEL set there gets its say.
+	if _, err := daemon.ResolveLevel(logLevel); err != nil {
 		return err
 	}
 
@@ -197,7 +209,7 @@ func cmdServe(args []string) error {
 	}
 
 	if apiOn {
-		return runServeForegroundAPI(sel, outfitPath, engine, argv, apiAddr)
+		return runServeForegroundAPI(sel, outfitPath, engine, argv, apiAddr, logLevel)
 	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -215,8 +227,8 @@ func cmdServe(args []string) error {
 
 // buildServeArgv turns an Outfit into the engine command, from its PRESET
 // section when it names one and from the Outfit's own instructions otherwise,
-// narrating which source it used. It is the single construction both a
-// foreground serve and the daemon's Outfit-sourced starts run through.
+// narrating which source it used. It is `outfit serve`'s alone: the daemon
+// reads no Outfit, so nothing else builds a command this way.
 func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string) ([]string, error) {
 	// Anything the Outfit states overrides the preset's own values.
 	params, err := engine.params(sel)

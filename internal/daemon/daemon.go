@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -52,6 +53,11 @@ type Daemon struct {
 	// time.Now. Injected the same way Collector.Run and BuildArgv are, so a
 	// test can age an engine without waiting.
 	Now func() time.Time
+	// Logger receives the API request summaries and the engine lifecycle
+	// records. Nil discards, so a daemon constructed in a test is silent
+	// unless it asks not to be; the CLI sets it, and sets Sup.Logger to the
+	// same logger alongside.
+	Logger *slog.Logger
 
 	act    activity
 	sample engineSample
@@ -61,6 +67,11 @@ type Daemon struct {
 	model    string
 	scrape   metrics.ScrapeTarget
 	endpoint *EngineEndpoint
+}
+
+// log reads the daemon's logger, defaulting to discarding.
+func (d *Daemon) log() *slog.Logger {
+	return loggerOr(d.Logger)
 }
 
 // now reads the daemon's clock, defaulting to the wall clock.
@@ -202,10 +213,19 @@ func (d *Daemon) storedEngineKeyPath() string {
 func (d *Daemon) StartEngine() error {
 	dc, err := d.StoredConfig()
 	if err != nil {
+		d.log().Error("engine start failed", slog.String("error", err.Error()))
 		return err
+	}
+	source := "outfit"
+	if dc != nil {
+		source = "deploy-config"
 	}
 	argv, err := d.BuildArgv(dc)
 	if err != nil {
+		// The reason a start never happened is the thing worth having: before
+		// this, "nothing to serve" reached the caller and vanished.
+		d.log().Error("engine start failed",
+			slog.String("source", source), slog.String("error", err.Error()))
 		return err
 	}
 	// The key reaches the engine as a path, never a value: a command line is
@@ -223,7 +243,14 @@ func (d *Daemon) StartEngine() error {
 	if dc != nil {
 		d.SetServed(dc.Runner, dc.ModelID)
 	}
+	runner, model := d.served()
+	d.log().Info("starting engine",
+		slog.String("source", source),
+		slog.String("runner", runner),
+		slog.String("model", model))
 	if err := d.Sup.Start(argv); err != nil {
+		d.log().Error("engine start failed",
+			slog.String("source", source), slog.String("error", err.Error()))
 		return err
 	}
 	// A start is activity in its own right. It is what stops a freshly woken
