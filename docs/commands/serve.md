@@ -229,6 +229,34 @@ cannot disagree, and both keep answering after the engine stops: the point of
 holding the record across a stop is that it still says when work last
 happened.
 
+## What gets logged
+
+Both commands log what the API and the engine do: one line per API request
+(method, path, status, how long it took, how many bytes came back, who asked),
+and the engine's lifecycle — the start, what it resolved to serve, the stop,
+and the exit.
+
+Records are graded, which is what makes the level worth setting:
+
+| Level | What you see |
+| ----- | ------------ |
+| `debug` | The above, plus the full engine command line |
+| `info` (default) | Every request, plus starts, stops and clean exits |
+| `warn` | Only rejected requests (401, a bad cursor), a slow shutdown escalating to a kill, and crashes |
+| `error` | Only crashes, failed starts, and requests that failed inside outfit |
+
+`--log-level warn` is the setting for a node a fleet polls: a `fleet status`
+refresh every few seconds is a request each, and at `info` that is all you will
+see. At `warn` the polling disappears and a wrong token still shows up.
+
+Records go to **stderr**, so a foreground `serve` keeps forwarding the engine's
+own output untouched. Nothing rotates them — where they end up is your service
+manager's business (`journalctl` under systemd, the log files launchd is
+pointed at, `docker logs`). The bearer token never appears in a record, and
+neither does any request or response body: a pushed deploy config can carry
+credentials in its serve args, and the logs endpoint's replies are engine
+output.
+
 ## Flags
 
 | Flag | Meaning |
@@ -236,6 +264,7 @@ happened.
 | `-n`, `--dry-run` | Print the server command without running it |
 | `-a`, `--api` | Expose the control API beside the foreground engine |
 | `--api-addr` | Control API listen address (default `:4242`) |
+| `--log-level` | `debug`, `info` (default), `warn` or `error`; overrides [`OUTFIT_LOG_LEVEL`](../env-vars.md) |
 
 ## Notes
 

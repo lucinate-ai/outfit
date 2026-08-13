@@ -33,22 +33,27 @@ func stubEngineDaemon(t *testing.T, argsFile string) {
 	t.Cleanup(func() { llamaServerBinary = orig })
 }
 
-// apiAddrFromStdout redirects os.Stdout to a file and returns a poller that
-// waits for the control API's printed listen address.
-func apiAddrFromStdout(t *testing.T) func() string {
+// apiAddrFromStderr redirects os.Stderr to a file and returns a poller that
+// waits for the control API's listen address to appear in outfit's log.
+//
+// It reads stderr, not stdout: the address is a log record now, because the
+// daemon is a service and its startup belongs in the log. The logger is built
+// from os.Stderr inside the command, which is what lets this redirect capture
+// it — see commandLogger.
+func apiAddrFromStderr(t *testing.T) func() string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "stdout")
+	path := filepath.Join(t.TempDir(), "stderr")
 	f, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := os.Stdout
-	os.Stdout = f
+	old := os.Stderr
+	os.Stderr = f
 	t.Cleanup(func() {
-		os.Stdout = old
+		os.Stderr = old
 		f.Close()
 	})
-	re := regexp.MustCompile(`control API on ([^\s]+)`)
+	re := regexp.MustCompile(`api=([^\s]+)`)
 	return func() string {
 		deadline := time.Now().Add(10 * time.Second)
 		for time.Now().Before(deadline) {
@@ -59,7 +64,7 @@ func apiAddrFromStdout(t *testing.T) func() string {
 			time.Sleep(20 * time.Millisecond)
 		}
 		data, _ := os.ReadFile(path)
-		t.Fatalf("control API address never printed; stdout so far:\n%s", data)
+		t.Fatalf("control API address never logged; stderr so far:\n%s", data)
 		return ""
 	}
 }
@@ -170,7 +175,7 @@ func TestCmdDaemon_LifecycleFromItsAPI(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	mustWrite(t, tokenFile, "sekrit\n") // trailing newline must not be part of it
 
-	waitAddr := apiAddrFromStdout(t)
+	waitAddr := apiAddrFromStderr(t)
 	done := make(chan error, 1)
 	go func() {
 		done <- cmdDaemon([]string{"--api-addr", "127.0.0.1:0", "--api-token-file", tokenFile})
@@ -244,7 +249,7 @@ func TestCmdDaemon_StartCarriesDeployConfig(t *testing.T) {
 	stubEngineDaemon(t, argsFile)
 	t.Chdir(t.TempDir()) // no Outfit anywhere
 
-	waitAddr := apiAddrFromStdout(t)
+	waitAddr := apiAddrFromStderr(t)
 	done := make(chan error, 1)
 	go func() { done <- cmdDaemon([]string{"--api-addr", "127.0.0.1:0"}) }()
 	base := "http://" + waitAddr()
@@ -316,7 +321,7 @@ func TestCmdServe_ForegroundAPIStopExitsServe(t *testing.T) {
 	outfitPath := filepath.Join(dir, "Outfit")
 	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL org/model:Q4_K_M\n")
 
-	waitAddr := apiAddrFromStdout(t)
+	waitAddr := apiAddrFromStderr(t)
 	done := make(chan error, 1)
 	go func() { done <- cmdServe([]string{"-a", "--api-addr", "127.0.0.1:0", outfitPath}) }()
 	base := "http://" + waitAddr()

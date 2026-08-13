@@ -24,6 +24,10 @@ import (
 // from tests that set XDG_CONFIG_HOME themselves and never call it.
 func TestMain(m *testing.M) {
 	os.Unsetenv("OUTFIT_ALIAS")
+	// A developer's exported log level must not decide what the suite records
+	// — the logging tests set it themselves, for the same reason OUTFIT_ALIAS
+	// is cleared here.
+	os.Unsetenv("OUTFIT_LOG_LEVEL")
 	os.Exit(m.Run())
 }
 

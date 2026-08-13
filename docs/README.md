@@ -76,6 +76,7 @@ including the `OUTFIT_REMOTE_*` overrides:
 | `OUTFIT_PROVIDERS` | Path to a custom provider catalogue (`--providers` beats it) |
 | `OUTFIT_BASE_URL` | Overrides any provider's API base URL (`--base-url`/`-u` beats it) |
 | `OUTFIT_API_TOKEN` | Bearer token for the daemon [control API](http-api.md) |
+| `OUTFIT_LOG_LEVEL` | How much `outfit daemon`/`outfit serve` record — `debug`, `info` (default), `warn`, `error` (`--log-level` beats it) |
 | *(named by `tokenEnv`)* | A [fleet](commands/fleet.md) node's bearer token — `fleet.yaml` names the variable, never the value |
 | `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, … | Provider API keys — `outfit list` shows which each provider reads |
 | `OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`, `OMLX_BASE_URL`, `VLLM_BASE_URL`, `OPENAI_BASE_URL` | Per-provider endpoint overrides |

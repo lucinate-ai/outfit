@@ -109,3 +109,36 @@ Updates the configuration for the *next* engine start.
 - Request body: `remote.DeployConfig` JSON
 - Returns `200 OK` with a message indicating if the change is active now or will take effect on the next start.
 - Returns `400 Bad Request` if the configuration is invalid or fails to push.
+
+## What the host logs about your requests
+
+Every request is summarised in one line on the host's **stderr**, whether it was
+served, rejected or failed:
+
+```
+time=2026-08-12T10:04:11.412+01:00 level=INFO msg="api request" method=GET \
+  path=/v1/logs?offset=4096&limit=8192 status=200 duration=412µs bytes=1180 \
+  remote=10.0.0.7:52104
+```
+
+The path includes the query string, which only ever carries a cursor or a
+bound. **No header and no body is logged**, ever: that keeps the bearer token
+out of the log — including the wrong one an unauthorised caller offered — and
+keeps a pushed deploy config's serve args and the engine output returned by
+`/v1/logs` out of it too. Engine output can contain prompts and model text, and
+stderr on a service-managed host usually means a shared journal.
+
+Severity follows the status, so the level control silences routine traffic
+before it silences problems:
+
+| Status | Level |
+| ------ | ----- |
+| 2xx, 3xx | `info` |
+| 4xx (bad token, bad cursor) | `warn` |
+| 5xx | `error` |
+
+A node that a fleet polls will log a line per poll per client at the default
+level. Run it with `--log-level warn` (or `OUTFIT_LOG_LEVEL=warn`) and the
+polling goes quiet while rejections and failures still show up. Nothing rotates
+this output — it goes to stderr, and where that lands is your service manager's
+business. See [what gets logged](commands/serve.md#what-gets-logged).

@@ -89,7 +89,10 @@ func Routes() []Route {
 }
 
 // Handler builds the control API: status, start, stop, metrics, logs, and
-// deploy config, all JSON, all behind the bearer token (when one is set).
+// deploy config, all JSON, all behind the bearer token (when one is set), and
+// all summarised to the daemon's logger. This is the one place both API hosts
+// — `outfit daemon` and `outfit serve --api` — build their handler, so what is
+// wrapped here covers both with no per-command wiring.
 func (d *Daemon) Handler(token string) http.Handler {
 	handlers := map[string]http.HandlerFunc{
 		"GET /v1/status":        d.handleStatus,
@@ -109,7 +112,9 @@ func (d *Daemon) Handler(token string) http.Handler {
 		}
 		mux.HandleFunc(route.Pattern, handler)
 	}
-	return authenticated(token, mux)
+	// The summariser is outermost, so a 401 from the auth layer and a 404 from
+	// the mux are both recorded.
+	return summarize(d.Logger, authenticated(token, mux))
 }
 
 func (d *Daemon) handleStatus(w http.ResponseWriter, r *http.Request) {
