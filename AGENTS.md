@@ -116,3 +116,7 @@ These are mistakes already made here; each was silent rather than loud, which is
 - opencode config schema: https://opencode.ai/docs/config/. The catalogue follows it: `amazon-bedrock` is the Bedrock provider id, custom providers (`ollama`, `llamacpp`, `openai-compatible`) carry an `npm` package plus `options.baseURL`. The key is written as opencode's `{env:VAR}` substitution rather than the resolved secret, so no secret lands on disk; `outfit harness` passes the keys it can resolve to the agent it launches, which is what makes a config outfit wrote usable without exporting anything by hand.
 - Pi custom-models schema: https://github.com/earendil-works/pi (`packages/coding-agent/docs/models.md`). `api` is one of `openai-completions`/`openai-responses`/`anthropic-messages`/`google-generative-ai`; `apiKey` supports `$ENV_VAR` interpolation. Not every provider maps to Pi — those without a `pi:` block (e.g. `amazon-bedrock`) error under the pi harness.
 - lucinate connections store: https://github.com/lucinate-ai/lucinate. An OpenAI-compatible connection is `{id, name, type: "openai", url, defaultModel}`; the key comes from lucinate's secrets store or, when unset, the `LUCINATE_OPENAI_API_KEY` env var (which is how outfit configures it — no secret on disk). Only providers with a `lucinate:` marker map; the rest (e.g. `amazon-bedrock`, the Vertex providers) error under the lucinate harness.
+
+## Workflow
+
+Warn the user if they are going to merge a branch with un-archived openspec changes.
