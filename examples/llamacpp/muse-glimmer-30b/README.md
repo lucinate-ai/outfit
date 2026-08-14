@@ -51,33 +51,46 @@ names, and Meta's filenames aren't (`kquant-dynamic` is rejected). Bare
 **17GB** build, not the dynamic one. Name the repo and file separately instead —
 which is what the preset does, via `hf` (`--hf-repo`) and `hff` (`--hf-file`).
 
-**The DFlash drafter needs `--spec-type draft-dflash`, and Meta's model card
-doesn't mention it.** The card shows only `-md dflash-kquant.gguf -ngld 99`,
-which leaves llama.cpp on its default `draft-simple` path — ordinary
-autoregressive drafting. DFlash is a block-diffusion drafter that emits 16
-tokens per forward pass, so it needs its own speculative type selected
-explicitly. The preset sets it.
+**The DFlash drafter does not work with this repo's GGUF, and the preset leaves
+it off.** Enabling it does not merely forfeit the speedup — `llama-server`
+crashes at load:
 
-The drafter also can't be fetched with `--hf-repo`/`-hfd`. Those resolve a repo
-to a single default file, which here is the 17GB text build. Download it once
-and point `--spec-draft-model` at the local file:
-
-```sh
-hf download meta-models/Muse-Glimmer-30B-GGUF \
-  --include "dflash-kquant.gguf" --local-dir ./Muse-Glimmer-30B-GGUF
+```
+vector::_M_range_check: __n (which is 1) >= this->size() (which is 1)
 ```
 
-An earlier revision of this file claimed the published drafter was unusable on
-upstream llama.cpp, on the strength of a line in the merge commit: *"this breaks
+Meta's official GGUF encodes `muse-glimmer.attention.sliding_window_pattern` as
+an **array**; the DFlash bind path only handles the scalar form. Tracked
+upstream as [ggml-org/llama.cpp#26894](https://github.com/ggml-org/llama.cpp/issues/26894),
+still open. It is a metadata path, so it is not specific to CUDA or Metal, and
+it affects the exact pair published in the same repo: the model creator's own
+GGUF cannot bind the model creator's own drafter. PR #26900 is **not** the fix —
+its author struck out "Nixes #26894".
+
+Three things follow, none of them obvious:
+
+- **`--spec-type draft-dflash` is required** whenever you do re-enable it.
+  Meta's card shows only `-md dflash-kquant.gguf -ngld 99`, which leaves
+  llama.cpp on its default `draft-simple` path — ordinary autoregressive
+  drafting, the wrong shape for a block-diffusion drafter that emits 16 tokens
+  per forward pass.
+- **The drafter can't be fetched with `--hf-repo`/`-hfd`.** Those resolve a repo
+  to one default file, which here is the 17GB text build. Download it
+  explicitly: `hf download meta-models/Muse-Glimmer-30B-GGUF --include
+  "dflash-kquant.gguf" --local-dir ./Muse-Glimmer-30B-GGUF`
+- **Unsloth's conversion binds the drafter fine**, per the issue — its
+  `sliding_window_pattern` is a scalar. Switching to it means different
+  filenames throughout (`Muse-Glimmer-30B-UD-Q4_K_XL.gguf`, no
+  `kquant-dynamic`), so the Outfit, preset, `MODEL` tag and companion wiring all
+  change — and #26900 may since have disallowed the scalar form it relies on.
+
+The rope format, incidentally, is *not* the problem. An earlier revision of this
+file claimed the drafter was unusable because the merge commit said it "breaks
 compatibility with Meta's distributed DFlash GGUFs, as the Q/K are stored in
-NEOX (rotated half) format"*. That line is one bullet of a squashed PR and does
-not describe where the branch landed. In current master
-(`src/llama-model.cpp`), a non-DSV4 DFlash backbone resolves to
-`LLAMA_ROPE_TYPE_NEOX`, and llama.cpp's own drafter converter
-(`conversion/muse_glimmer.py`, `MuseGlimmerAssistantModel.modify_tensors`)
-deliberately does **no** permutation — "DFlash defaults to NEOX (rotate_half)
-rope, matching transformers HF layout for Q/K". NEOX weights, NEOX rope: Meta's
-file matches what master expects, and no self-conversion is needed.
+NEOX (rotated half) format". That was one bullet of a squashed PR and does not
+describe where the branch landed: master resolves a non-DSV4 DFlash backbone to
+`LLAMA_ROPE_TYPE_NEOX`, and the drafter converter deliberately does no
+permutation to match. Rope lines up; the bind path is what fails.
 
 ## Running it
 
@@ -85,10 +98,7 @@ file matches what master expects, and no self-conversion is needed.
 llama-server \
   --hf-repo meta-models/Muse-Glimmer-30B-GGUF \
   --hf-file muse-glimmer-30B-kquant-dynamic.gguf \
-  --no-mmproj \
-  --spec-type draft-dflash \
-  --spec-draft-model ./Muse-Glimmer-30B-GGUF/dflash-kquant.gguf \
-  --spec-draft-ngl 999 --spec-draft-n-max 16 --flash-attn on \
+  --no-mmproj --flash-attn on \
   --jinja --ctx-size 524288 --parallel 4 -ngl 99 \
   --chat-template-kwargs '{"reasoning_strength":"high"}' \
   --temp 1.0 --top-p 0.95 --top-k 64 \
@@ -104,8 +114,10 @@ GGUF and nothing else supplies it — there is no separate template file and
 `--chat-template-file` is not needed — but without the flag the multimodal CLI
 aborts with `this custom template is not supported, try using --jinja`.
 
-A `[spec] failed to measure draft model memory` warning at startup is expected
-and harmless per Meta's card — the drafter loads and serves normally after it.
+No speculative-decoding flags, per the DFlash note above. If you re-enable them
+once #26894 is fixed, a `[spec] failed to measure draft model memory` warning at
+startup is expected and harmless per Meta's card — the drafter loads and serves
+normally after it.
 
 ### `--ctx-size` is a total, and overflow fails silently
 
@@ -149,8 +161,8 @@ from the same repo, fetches it alongside the weights and logs `loaded
 multimodal model`, and `/v1/models` advertises the `multimodal` capability —
 budget **21.05 GB** of cache for the pair rather than 19.65 GB.
 
-Cache footprint as configured here: 19.65 GB for the weights plus 1.63 GB for
-the drafter.
+Cache footprint as configured here: **19.65 GB**, the weights alone — the
+drafter is not downloaded, since speculative decoding is off.
 
 ### Reasoning comes back on a separate field
 
@@ -242,36 +254,46 @@ taking a release.
 
 The [`remote/`](../../../remote/) stack can serve this too, but **not without a
 re-bake first**: its llama.cpp AMI installs a prebuilt binary from
-`ai-dock/llama.cpp-cuda`, pinned to `b10107` in
-[`remote/lib/config.ts`](../../../remote/lib/config.ts) — long before the Muse
-Glimmer merge.
+`ai-dock/llama.cpp-cuda`, and the pin in
+[`remote/lib/config.ts`](../../../remote/lib/config.ts) has to be new enough for
+the Muse Glimmer merge. `b10355` (2026-08-11) was ai-dock's first such build;
+they have published newer ones since, and each carries a
+`llama.cpp-<tag>-cuda-12.8-amd64.tar.gz` asset, which is what the bake
+downloads.
 
-ai-dock published **`b10355`** on 2026-08-11, and it is the first of their
-builds that carries the merge (their previous was `b10333`; upstream tag
-`b10355` is 6 commits ahead of `62bf73d2` and 0 behind). The CUDA 12.8 amd64
-asset the bake downloads exists for it. So:
+Bumping needs **both** halves, or nothing changes:
 
 ```sh
-# bump llamacppRelease to b10355 in remote/lib/config.ts and remote/cdk.json
+# 1. llamacppRelease -> <tag>, in remote/lib/config.ts AND remote/cdk.json
+# 2. bump the llamacpp entry in RUNNER_VERSION in remote/lib/image-stack.ts —
+#    Image Builder treats a recipe version as immutable, so without this the
+#    pin change produces no new AMI
+pnpm deploy:image
 pnpm bake llamacpp     # ~15-25 min
 ```
 
-The drafter is carried across. `outfit remote deploy` reads
-`spec-draft-model` from the preset, takes its **basename**, and asks the seed
-for that file from the model's own repo — so the local path you downloaded to
-is never sent, and the instance loads its own synced copy. Deploy prints what
-it picked up:
+Muse Glimmer itself runs fine on CUDA. Two CUDA-side reports exist but neither
+applies to a single-GPU `g6e.xlarge`: a multi-GPU tensor-split assert
+([#26902](https://github.com/ggml-org/llama.cpp/issues/26902)) and an mmproj
+memory/prefill regression ([#26873](https://github.com/ggml-org/llama.cpp/issues/26873)),
+which this text-only example avoids anyway.
+
+**The drafter would be carried across, but is off** — see the DFlash note
+above. `outfit remote deploy` reads `spec-draft-model` from the preset, takes
+its **basename** and asks the seed for that file from the model's own repo, so
+the local path is never sent and the instance loads its own synced copy. Deploy
+prints what it picked up:
 
 ```
   draft:   dflash-kquant.gguf
 ```
 
-Two things follow from that. The basename must match the filename in the
-Hugging Face repo, so if you renamed the file locally the seed will fail with a
-"not found" naming it — better than a slower endpoint and no explanation. And
-`--spec-type draft-dflash` is still yours to set: the deployment owns *where*
-the drafter is, not how the engine is told to use it, exactly as for a local
-run.
+With the flags commented out there is no such line, and the seed fetches the
+weights alone. When #26894 is fixed, uncommenting is all that is needed —
+noting that the basename must match the filename in the Hugging Face repo, or
+the seed fails with a "not found" naming it, and that `--spec-type
+draft-dflash` stays yours to set: the deployment owns *where* the drafter is,
+not how the engine is told to use it.
 
 Deploy also needs a `MODEL` line, which the [`Outfit`](Outfit) deliberately
 leaves out — the cloud seed globs filenames rather than resolving a tag, so it
