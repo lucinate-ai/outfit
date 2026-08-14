@@ -50,6 +50,8 @@ llama-server \
   --jinja \
   -ngl 99 \
   --ctx-size 32768 \
+  --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0.0 \
+  --repeat-penalty 1.0 --presence-penalty 0.0 \
   --host 127.0.0.1 --port 8080
 ```
 
@@ -63,6 +65,10 @@ What the flags do:
 - `--ctx-size 32768` — context window in tokens. The model natively supports
   up to 262144 (and 1M with extension), so raise this on a box with the memory
   for it — see [Running it on AWS](#running-it-on-aws) below.
+- `--temp`/`--top-p`/`--top-k`/`--min-p`/`--repeat-penalty`/`--presence-penalty`
+  — Qwen's recommended sampling parameters for *thinking* mode, the model's
+  default (llama.cpp's own defaults are different — see
+  [Recommended settings](#recommended-settings)).
 - `--host`/`--port` — the OpenAI-compatible API is served at
   `http://127.0.0.1:8080/v1`.
 
@@ -133,6 +139,53 @@ BASEURL http://127.0.0.1:9090/v1
 ```
 
 Now start `opencode` and select `llamacpp/qwen3.8-27b`.
+
+## Recommended settings
+
+From [Qwen's model card](https://huggingface.co/Qwen/Qwen3.8-27B) — what carries
+over to a local/`llama.cpp` deployment, and what doesn't:
+
+- **Thinking mode is on by default.** The model emits `<think>…</think>`
+  reasoning before its answer. `--jinja` (already set) is what makes
+  `llama-server` apply the chat template that produces this correctly.
+- **Sampling parameters differ by mode.** [`preset.ini`](preset.ini) bakes in
+  Qwen's recommended values for thinking mode (the default here):
+  `temp=1.0 top_p=0.95 top_k=20 min_p=0.0 presence_penalty=0.0
+  repeat_penalty=1.0`. Non-thinking mode wants a different set —
+  `temp=0.7 top_p=0.80 top_k=20 min_p=0.0 presence_penalty=1.5
+  repeat_penalty=1.0` — edit the preset if you disable thinking (below).
+  llama.cpp's own defaults (`temp=0.8 top_k=40 min_p=0.05
+  repeat_penalty=1.1`) are close enough to matter, which is why they're set
+  explicitly rather than left alone. `presence_penalty` can be tuned 0–2 to
+  cut down on repetition, at some risk of language-mixing on the higher end.
+- **Give it room to think.** Qwen's own guidance allocates up to 262144
+  tokens for reasoning content and 131072 for the final response within a 1M
+  context. This Outfit's 32768-token default is a laptop-friendly floor, not
+  that — thinking mode can burn through it on a hard problem and get cut off
+  mid-answer. Raise `CONTEXT`/`ctx-size` (both, together) once you have the
+  memory for it, e.g. after [deploying to a bigger box](#running-it-on-aws).
+- **`reasoning_effort` and `preserve_thinking` aren't available here.** Qwen's
+  API-level controls for reasoning depth (`xhigh`/`medium`/`low`) and
+  carrying thinking blocks across turns are `chat_template_kwargs` that
+  Qwen's own stack, vLLM and SGLang understand — `llama-server` has no
+  equivalent, so the model just runs at its default (full, `xhigh`-like)
+  depth every turn.
+- **Disabling thinking** is a client-side chat-template toggle
+  (`enable_thinking: false` in `chat_template_kwargs`), not a server flag —
+  set it per-request from whatever's calling the `/v1` endpoint. If you do,
+  switch the preset to the non-thinking sampling values above.
+- **Past 262144 tokens of context**, Qwen's guidance is to enable YaRN RoPE
+  scaling, which it documents for vLLM, SGLang and TokenSpeed — not
+  llama.cpp. This model's context is already enormous before you'd need that;
+  if you do, it's a good sign to reach for one of those engines instead (see
+  below).
+- **`llama.cpp` is a community path, not the vendor's pick.** Qwen's own
+  Quickstart recommends SGLang, vLLM or TokenSpeed "for production workloads
+  or high-throughput scenarios" and doesn't mention llama.cpp at all — the
+  GGUF quants here come from the community (Unsloth, bartowski, ggml-org).
+  It's a good fit for a single-GPU box with opencode, which is what this
+  Outfit is for; for serious throughput, `outfit`'s `vllm` provider and
+  `outfit remote`'s vLLM runner are the closer match to Qwen's guidance.
 
 ## Running it on AWS
 
