@@ -1,0 +1,8 @@
+# Qwen3.8-27B served locally by llama.cpp, or on a cloud GPU via outfit remote.
+# ALIAS names the model in opencode and selects the preset section below.
+PROVIDER llamacpp
+ALIAS    qwen3.8-27b
+CONTEXT  32768            # match the server's --ctx-size; raise it on a bigger box
+PRESET   ./preset.ini     # `outfit serve` launches llama-server from this
+# BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default host/port
+# REMOTE  qwen3.8-27b     # uncomment to deploy this Outfit with `outfit remote`

@@ -130,3 +130,5 @@ Now start `opencode` and select `llamacpp/qwen3.6-27b`.
 
 - The bigger mixture-of-experts sibling:
   [`examples/llamacpp/qwen3.6-35b-a3b`](../qwen3.6-35b-a3b/README.md)
+- The next generation of this dense size, with `outfit remote` deployment to
+  AWS: [`examples/llamacpp/qwen3.8-27b`](../qwen3.8-27b/README.md)

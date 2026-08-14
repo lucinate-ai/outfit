@@ -513,6 +513,7 @@ and the per-provider variables (`OLLAMA_BASE_URL`, `LLAMACPP_BASE_URL`,
 Provider- and model-specific walkthroughs live in [`examples/`](examples/), each
 with a ready-to-apply `Outfit`:
 
+- [Qwen3.8-27B on llama.cpp — local or deployed to AWS](examples/llamacpp/qwen3.8-27b/README.md)
 - [Qwen3.6-27B on llama.cpp](examples/llamacpp/qwen3.6-27b/README.md)
 - [Qwen3.6-35B-A3B on llama.cpp](examples/llamacpp/qwen3.6-35b-a3b/README.md)
 - [Gemma-4-12B-IT on llama.cpp](examples/llamacpp/gemma4/README.md)
