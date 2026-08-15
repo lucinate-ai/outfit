@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.22.0] - 2026-08-15
+### Added
+- feat(examples): add Qwen3.8-27B on llama.cpp, deployable to AWS (#96)
+- feat: add version field to daemon status response
+
+### Changed
+- build(deps): bump the go-dependencies group across 1 directory with 2 updates
+
 ## [1.21.0] - 2026-08-13
 ### Added
 - feat(daemon): summarise every control-API request on a levelled logger
