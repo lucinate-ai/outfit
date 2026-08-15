@@ -899,6 +899,24 @@ func isCloudOwned(key string) bool {
 	return cloudOwnedFlags[preset.CanonicalKey(key)]
 }
 
+// parallelPresetKey names the preset key holding a runner's slot count, in
+// that engine's own vocabulary — the same split the *ServeParams functions
+// make when they render it. It is what a deploy reads back out of a preset,
+// so the value survives cloudOwnedFlags dropping it from the passthrough args.
+// A runner with no parallelism key yields "", which reads as "not set".
+func parallelPresetKey(runner string) string {
+	switch runner {
+	case "llamacpp":
+		return "parallel" // also matches the np alias, via CanonicalKey
+	case "vllm":
+		return "max-num-seqs"
+	case "omlx":
+		return "max-concurrent-requests"
+	default:
+		return ""
+	}
+}
+
 // isNodeOwned reports whether a fleet node's daemon sets this preset key
 // itself. It is the cloud's set minus the bind and the companion paths: a node
 // is a machine the operator owns, so where its engine listens is their choice
@@ -1031,14 +1049,16 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 		dc.ContextSize = n
 	}
 
-	// Parallel falls back to a preset's own np/parallel/max-num-seqs/
-	// max-concurrent-requests the same way context falls back to ctx-size,
-	// since that value is about to be dropped from serveArgs below (it is
-	// cloud-owned) — capturing it here is what keeps it from being silently
-	// lost rather than re-emitted as the deployment's own computed flag.
+	// Parallel falls back to the preset's own parallelism key the same way
+	// context falls back to ctx-size, since that value is about to be dropped
+	// from serveArgs below (it is cloud-owned) — capturing it here is what
+	// keeps it from being silently lost rather than re-emitted as the
+	// deployment's own computed flag. The key is the runner's own spelling:
+	// reading only llama.cpp's would drop a vLLM preset's max-num-seqs on the
+	// floor, since dropOwned removes it either way.
 	parallel := sel.Parallel
-	if parallel == "" {
-		parallel = presetValue("parallel", global, params)
+	if key := parallelPresetKey(dc.Runner); parallel == "" && key != "" {
+		parallel = presetValue(key, global, params)
 	}
 	if parallel != "" {
 		n, err := parseParallel(parallel)

@@ -552,6 +552,33 @@ func TestArgvFromDeployConfigLlamacppScalesContext(t *testing.T) {
 	}
 }
 
+// TestArgvFromDeployConfigParallelWithoutContext covers a state only the fleet
+// path can reach: waking a node does not require a context size (the engine's
+// own default stands), so a config may carry a slot count and no context at
+// all. The slot count must still be applied, and nothing may invent a
+// ctx-size out of the zero — a scaled `0 * n` would cap the engine at nothing.
+func TestArgvFromDeployConfigParallelWithoutContext(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:   "llamacpp",
+		ModelID:  "/opt/llm/model.gguf",
+		Parallel: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	if !strings.Contains(got, "--parallel 2") {
+		t.Errorf("argv missing --parallel 2: %s", got)
+	}
+	if strings.Contains(got, "--ctx-size") {
+		t.Errorf("no stored context size should mean no ctx-size flag at all: %s", got)
+	}
+}
+
 // TestArgvFromDeployConfigVllmParallel checks vLLM's PARALLEL maps to
 // --max-num-seqs with no effect on --max-model-len, from a pushed deploy
 // config just as from a local Outfit.

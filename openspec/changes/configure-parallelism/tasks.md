@@ -70,6 +70,13 @@
       embeds `remote.DeployConfig`) and `DeployConfig` itself now serialising
       a `parallel` field absent from `docs/openapi.yaml` — added it to the
       `DeployConfig` schema there
+- [x] 3.7 (found while tracing callers for test coverage) Fixed a regression
+      3.3 introduced: adding all three spellings to `cloudOwnedFlags` made
+      `dropOwned` strip a vLLM preset's `max-num-seqs`, while the 3.2 fallback
+      read only llama.cpp's `parallel` — so the value was dropped from
+      `serveArgs` and captured by nothing, silently losing a setting that
+      passed straight through before this change. The fallback now reads the
+      runner's own spelling via a new `parallelPresetKey`
 
 ## 4. Cloud wire mirror (TypeScript, `remote/lambda`)
 
@@ -124,3 +131,17 @@
       omlx `PARALLEL 8` → `--max-concurrent-requests 8`)
 - [x] 6.4 `openspec validate configure-parallelism --strict` passes (also
       re-ran `validate --all --strict` and `check-spec-purposes.sh` clean)
+- [x] 6.5 Coverage pass over the callers rather than the changed functions
+      alone, which is what surfaced 3.7. Added: the per-runner preset-key
+      tests (both halves — the right spelling is read, another engine's is
+      not); the daemon's store→reload round trip, so a slot count survives a
+      restart between the push and the start; the `omitempty` wire contract,
+      since the deploy Lambda rejects a `parallel` that is present and zero;
+      the two fleet-wake outcomes, where deriving a start config is fatal to
+      a wake but deliberately not to routing at a node already serving; a
+      slot count with no context size, which only the fleet path can reach;
+      and vLLM's unparseable-CONTEXT guard. The `bindAddressParams` error
+      branches in the three params functions stay uncovered on purpose:
+      reaching them needs a BASEURL that `url.Parse` rejects, and it accepts
+      almost anything, so a test would pin a string's parseability rather
+      than any behaviour of this change

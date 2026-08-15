@@ -239,6 +239,23 @@ func TestCmdServe_DerivesBadContext(t *testing.T) {
 	}
 }
 
+// TestCmdServe_VllmDerivesBadContext is llama.cpp's bad-CONTEXT guard for the
+// other engine that has a context flag: an unparseable CONTEXT fails rather
+// than quietly launching vLLM with its own default window, which would serve
+// happily at a size the harness was never told about.
+func TestCmdServe_VllmDerivesBadContext(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER vllm\nMODEL org/model\nCONTEXT not-a-number\n")
+	err := cmdServe([]string{"--dry-run", outfitPath})
+	if err == nil {
+		t.Fatal("expected an error for an unparseable CONTEXT")
+	}
+	if !strings.Contains(err.Error(), "not-a-number") {
+		t.Errorf("error should name the offending value, got: %v", err)
+	}
+}
+
 // TestCmdServe_ParallelScalesContext checks the practical case this capability
 // exists for: CONTEXT is the context a single request should get, so with
 // PARALLEL slots llama.cpp's --ctx-size (a total budget it divides across
