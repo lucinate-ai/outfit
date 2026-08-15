@@ -666,22 +666,33 @@ func runRemoteStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("state: %s\n", resp.State)
+	// The shared facts — state, since-last-work, version — come from the same
+	// source `fleet status` reads, so the two status views cannot word them
+	// differently. This view keeps its own extra facts (health, base URL) and
+	// its key-value layout. The version is only in the stats reply, which
+	// reads the daemon over SSM: attempt it only when the instance is running,
+	// since the daemon will not answer when it is stopped.
+	fact := statusFact{
+		State:        resp.State,
+		LastActiveAt: resp.LastActiveAt,
+		IdleSeconds:  resp.IdleSeconds,
+	}
+	if resp.State == "running" || resp.State == "ready" {
+		if stats, err := remote.Stats(context.Background(), cfg); err == nil {
+			fact.Version = stats.Version
+		}
+	}
+	fmt.Printf("state: %s\n", fact.State)
 	if resp.Healthy != nil {
 		fmt.Printf("healthy: %t\n", *resp.Healthy)
 	}
-	// Version comes from the stats Lambda, which reads the daemon over SSM.
-	// Only attempt it when the instance is running — the daemon won't answer
-	// when the instance is stopped, so the version is naturally unavailable.
-	if resp.State == "running" || resp.State == "ready" {
-		if stats, err := remote.Stats(context.Background(), cfg); err == nil && stats.Version != "" {
-			fmt.Printf("version: %s\n", stats.Version)
-		}
+	if fact.Version != "" {
+		fmt.Printf("version: %s\n", fact.Version)
 	}
 	if resp.BaseURL != "" {
 		fmt.Printf("base_url: %s\n", resp.BaseURL)
 	}
-	if text := lastActiveText(resp.LastActiveAt, resp.IdleSeconds); text != "" {
+	if text := lastActiveText(fact.LastActiveAt, fact.IdleSeconds); text != "" {
 		fmt.Printf("last active: %s\n", text)
 	}
 	if resp.RetainUntil != "" {

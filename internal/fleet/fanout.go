@@ -43,34 +43,57 @@ func LogsCall(offsets map[string]int64, limit int) Call {
 	}
 }
 
-// FanOut runs call against every node concurrently and returns one result per
-// node, in fleet-file order so the rendering is stable between refreshes.
-//
-// It never returns an error: a node that cannot be built (an unresolved token)
-// or cannot be reached is a typed NodeResult, so one bad node is a row rather
-// than a blanked view. Only a problem with the fleet file itself — which is
-// resolved before this — fails a command.
-func (c *Config) FanOut(ctx context.Context, call Call) []NodeResult {
-	results := make([]NodeResult, len(c.Nodes))
+// fanOutEach runs one result producer per position concurrently and returns one
+// result per position, in the order given, so the rendering is stable between
+// refreshes. It never returns an error: a producer that fails is a typed
+// NodeResult, so one bad position is a row rather than a blanked view.
+func fanOutEach(producers []func() NodeResult) []NodeResult {
+	results := make([]NodeResult, len(producers))
 	var wg sync.WaitGroup
-	for i, entry := range c.Nodes {
+	for i, produce := range producers {
 		wg.Add(1)
-		go func(i int, entry NodeConfig) {
+		go func(i int) {
 			defer wg.Done()
+			results[i] = produce()
+		}(i)
+	}
+	wg.Wait()
+	return results
+}
+
+// FanOut runs call against every node in the fleet file concurrently and returns
+// one result per node, in fleet-file order. A node that cannot be built (an
+// unresolved token) or cannot be reached is a typed NodeResult rather than an
+// error: one bad node is a row, not a blanked view. Only a problem with the fleet
+// file itself — resolved before this — fails a command.
+func (c *Config) FanOut(ctx context.Context, call Call) []NodeResult {
+	producers := make([]func() NodeResult, len(c.Nodes))
+	for i, entry := range c.Nodes {
+		producers[i] = func() NodeResult {
 			node, err := c.NewNode(entry)
 			if err != nil {
 				// The node could not even be built — an unresolved token
 				// reference. Say so against this node, not as an auth failure.
-				results[i] = NodeResult{
-					Name:    entry.Name,
-					Outcome: OutcomeConfigError,
-					Err:     err,
-				}
-				return
+				return NodeResult{Name: entry.Name, Outcome: OutcomeConfigError, Err: err}
 			}
-			results[i] = call(ctx, node)
-		}(i, entry)
+			return call(ctx, node)
+		}
 	}
-	wg.Wait()
-	return results
+	return fanOutEach(producers)
+}
+
+// FanOutNodes runs call over an explicit set of nodes concurrently and returns
+// one result per node, in the order the set is given. It is the seam that lets an
+// observable be driven regardless of where its nodes come from — a fleet file's
+// daemon nodes, a remote environment, or a mix — through the one fan-out the rest
+// of the client already shares.
+//
+// As with Config.FanOut it never returns an error: a node that cannot be reached
+// is a typed NodeResult, so one bad node is a row rather than a blanked view.
+func FanOutNodes(ctx context.Context, call Call, nodes []Node) []NodeResult {
+	producers := make([]func() NodeResult, len(nodes))
+	for i, node := range nodes {
+		producers[i] = func() NodeResult { return call(ctx, node) }
+	}
+	return fanOutEach(producers)
 }
