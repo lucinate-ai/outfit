@@ -20,13 +20,18 @@ Meta publishes GGUFs at
 Both main builds are **text-only on their own**; `mmproj-kquant.gguf` is what
 adds image input.
 
-## You need llama.cpp b10355 or newer
+## You need llama.cpp b10355 or newer — b10423 for tool calling
 
 Support landed in
 [PR #26841](https://github.com/ggml-org/llama.cpp/pull/26841), commit
 `62bf73d2`, merged 2026-08-10. The first tagged release carrying it is
 **`b10355`** (2026-08-10); `b10344` and earlier sit before the merge, and
-Homebrew's formula lagged further behind. Check before you build:
+Homebrew's formula lagged further behind.
+
+That is enough to *run* the model. For **parallel tool calling** you want
+**`b10423`** or newer, which is where the EOM fix (`0b1bad14`, see below) first
+reached a release — the gap between the two is worth knowing about if you are
+pointing a coding agent at this. Check before you build:
 
 ```sh
 llama-server --version    # compare the commit against 62bf73d2
@@ -244,11 +249,11 @@ custom stop strings.
 
 llama.cpp's own handling of this was fixed in
 [`0b1bad14`](https://github.com/ggml-org/llama.cpp/commit/0b1bad14) ("chat: fix
-muse-glimmer detection of tool calls after EOM", #26879, 2026-08-11), which at
-the time of writing is **master-only** — `b10362` is 18 commits behind it, and
-`b10355` further back. Basic tool calling works without it (see Verified
-below); if you lean on *parallel* tool calls, build from master rather than
-taking a release.
+muse-glimmer detection of tool calls after EOM", #26879, 2026-08-11). It took a
+few days to reach a tagged release, so a build from early August will not have
+it — check with `llama-server --version` and compare against that commit. Basic
+tool calling works without it (see Verified below); *parallel* tool calls need
+it.
 
 ## Deploying to the cloud
 
@@ -256,8 +261,9 @@ The [`remote/`](../../../remote/) stack can serve this too, but **not without a
 re-bake first**: its llama.cpp AMI installs a prebuilt binary from
 `ai-dock/llama.cpp-cuda`, and the pin in
 [`remote/lib/config.ts`](../../../remote/lib/config.ts) has to be new enough for
-the Muse Glimmer merge. `b10355` (2026-08-11) was ai-dock's first such build;
-they have published newer ones since, and each carries a
+both the Muse Glimmer merge and the EOM tool-call fix above. `b10423`
+(2026-08-14) was ai-dock's first build carrying both; the pin now sits at
+`b10435`. Each of their builds ships a
 `llama.cpp-<tag>-cuda-12.8-amd64.tar.gz` asset, which is what the bake
 downloads.
 
