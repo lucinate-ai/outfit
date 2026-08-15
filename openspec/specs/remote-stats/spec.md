@@ -6,22 +6,17 @@ Define the `outfit remote metrics` command: reading token usage, resource consum
 ## Requirements
 ### Requirement: Stats subcommand
 
-The system SHALL provide a `metrics` subcommand (`outfit remote metrics`) that reports the current state of a remote inference instance. It SHALL accept the same Outfit resolution as `start`, `stop`, and `deploy` — an optional positional Outfit path, defaulting to `./Outfit` when present — and SHALL require the Outfit to name a `REMOTE` environment.
-
-A stopped instance SHALL still report when its engine last did work, when that
-is known — the question "how long has this been doing nothing?" is most worth
-answering about something that is not running.
+The system SHALL provide a `metrics` subcommand (`outfit remote metrics`) that reports the current state of a remote inference instance. It SHALL accept the same Outfit resolution as `start`, `stop`, and `deploy` — an optional positional Outfit path, defaulting to `./Outfit` when present — and SHALL require the Outfit to name a `REMOTE` environment. When the instance is running, the report SHALL include the outfit version from the daemon, carried by the stats Lambda reply.
 
 #### Scenario: Stats with a running instance
 
 - **WHEN** the user runs `outfit remote metrics` with a running instance
-- **THEN** the command reports the instance state, runner, model, GPU info, CPU/RAM usage, token counts, request counts, and when the engine was last active
+- **THEN** the command reports the instance state, runner, model, outfit version, GPU info, CPU/RAM usage, token counts, and request counts
 
 #### Scenario: Stats with a stopped instance
 
 - **WHEN** the user runs `outfit remote metrics` and the instance is stopped
-- **THEN** the command reports `state: stopped` and no resource or token
-  metrics, showing the last-active figure when one is known
+- **THEN** the command reports `state: stopped` and no metrics
 
 #### Scenario: Stats resolves the Outfit
 
@@ -32,6 +27,11 @@ answering about something that is not running.
 
 - **WHEN** the user runs `outfit remote metrics ./some/Outfit`
 - **THEN** the command uses that Outfit's `REMOTE` environment
+
+#### Scenario: Version is shown in stats output
+
+- **WHEN** the user runs `outfit remote metrics` with a running instance
+- **THEN** the output includes the outfit version
 
 ### Requirement: Optional cost estimation
 

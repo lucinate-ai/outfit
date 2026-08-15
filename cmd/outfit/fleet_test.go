@@ -17,12 +17,21 @@ import (
 
 // stubNode serves a daemon control API for one fleet node.
 func stubNode(t *testing.T, state string) *httptest.Server {
+	return stubNodeWithVersion(t, state, "")
+}
+
+// stubNodeWithVersion is like stubNode but also returns a version field.
+func stubNodeWithVersion(t *testing.T, state string, ver string) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
+	status := map[string]any{
+		"state": state, "runner": "llamacpp", "model": "org/qwen", "uptimeSeconds": 65,
+	}
+	if ver != "" {
+		status["version"] = ver
+	}
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]any{
-			"state": state, "runner": "llamacpp", "model": "org/qwen", "uptimeSeconds": 65,
-		})
+		json.NewEncoder(w).Encode(status)
 	})
 	mux.HandleFunc("GET /v1/metrics", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
@@ -98,6 +107,24 @@ func TestCmdFleetStatusRendersEveryNode(t *testing.T) {
 	// The unreachable node is a row with its reason, not an omission.
 	if !strings.Contains(out, "down") || !strings.Contains(out, "unreachable") {
 		t.Errorf("unreachable node not rendered:\n%s", out)
+	}
+}
+
+// Fleet status includes the daemon version so the operator can spot a
+// partially-upgraded fleet without SSH access.
+func TestCmdFleetStatusShowsVersion(t *testing.T) {
+	srv := stubNodeWithVersion(t, "running", "1.18.0")
+	host, port := hostPort(t, srv)
+	writeFleetFile(t, fmt.Sprintf(
+		"nodes:\n  - name: node\n    host: %s\n    port: %d\n",
+		host, port))
+	out := captureStdout(t, func() {
+		if err := cmdFleet([]string{"status"}); err != nil {
+			t.Error(err)
+		}
+	})
+	if !strings.Contains(out, "1.18.0") {
+		t.Errorf("version not rendered:\n%s", out)
 	}
 }
 

@@ -114,6 +114,9 @@ func fleetRow(r fleet.NodeResult) (state, serving string) {
 	if r.Status.LastActiveAt != "" {
 		serving += fmt.Sprintf("  (last active %s ago)", formatDuration(r.Status.IdleSeconds))
 	}
+	if r.Status.Version != "" {
+		serving += fmt.Sprintf("  (%s)", r.Status.Version)
+	}
 	return r.Status.State, serving
 }
 

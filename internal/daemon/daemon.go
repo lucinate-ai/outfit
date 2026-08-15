@@ -58,6 +58,9 @@ type Daemon struct {
 	// unless it asks not to be; the CLI sets it, and sets Sup.Logger to the
 	// same logger alongside.
 	Logger *slog.Logger
+	// Version is the outfit binary's build-time version string. Passed by the
+	// CLI at construction time.
+	Version string
 
 	act    activity
 	sample engineSample
@@ -283,6 +286,9 @@ type StatusResponse struct {
 	// an engine is running: an address for a process that does not exist is
 	// worse than no address.
 	Engine *EngineEndpoint `json:"engine,omitempty"`
+	// Version is the outfit binary's build-time version string. Set from the
+	// daemon's Version field, which the CLI passes at construction time.
+	Version string `json:"version"`
 }
 
 // EngineEndpoint is where the supervised engine answers inference requests.
@@ -320,6 +326,7 @@ func (d *Daemon) Status() StatusResponse {
 		Model:         model,
 		UptimeSeconds: uptime,
 		LogPath:       d.Sup.LogPath,
+		Version:       d.Version,
 	}
 	resp.LastActiveAt, resp.IdleSeconds = d.activity()
 	// Only a running engine has an address worth reporting.

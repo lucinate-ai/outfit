@@ -539,6 +539,10 @@ type StatsResponse struct {
 	// this — in every case the formatters simply omit the line.
 	LastActiveAt string `json:"lastActiveAt"`
 	IdleSeconds  int    `json:"idleSeconds"`
+	// Version is the outfit binary's build-time version string, relayed from
+	// the daemon's /v1/status by the stats Lambda. Empty when the daemon was
+	// unreachable or the control plane predates this.
+	Version string `json:"version"`
 }
 
 // The stat sub-types are aliases into internal/metrics, their canonical home
