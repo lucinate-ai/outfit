@@ -878,6 +878,11 @@ var cloudOwnedFlags = map[string]bool{
 	// location is cloud-owned — how the engine is asked to use a drafter
 	// (--spec-type) stays the user's, exactly as it is for a local run.
 	"spec-draft-model": true, "mmproj": true,
+	// Parallelism: outfit computes each runner's own flag from
+	// DeployConfig.Parallel, exactly as it computes ctx-size — a preset's
+	// raw value would otherwise survive in serveArgs and double-define the
+	// flag alongside the computed one.
+	"parallel": true, "max-num-seqs": true, "max-concurrent-requests": true,
 }
 
 // companionRoleForFlag maps a preset flag naming a companion weight to the
@@ -1026,6 +1031,23 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 		dc.ContextSize = n
 	}
 
+	// Parallel falls back to a preset's own np/parallel/max-num-seqs/
+	// max-concurrent-requests the same way context falls back to ctx-size,
+	// since that value is about to be dropped from serveArgs below (it is
+	// cloud-owned) — capturing it here is what keeps it from being silently
+	// lost rather than re-emitted as the deployment's own computed flag.
+	parallel := sel.Parallel
+	if parallel == "" {
+		parallel = presetValue("parallel", global, params)
+	}
+	if parallel != "" {
+		n, err := parseParallel(parallel)
+		if err != nil {
+			return dc, err
+		}
+		dc.Parallel = n
+	}
+
 	// The served name is what a coding agent asks for. ALIAS is the friendly
 	// name; without one the repo id is served under its own name.
 	dc.ServedModelName = sel.Alias
@@ -1156,6 +1178,9 @@ func cmdRemoteDeploy(args []string) error {
 	}
 	fmt.Println()
 	fmt.Printf("  context: %d\n", dc.ContextSize)
+	if dc.Parallel > 0 {
+		fmt.Printf("  parallel: %d\n", dc.Parallel)
+	}
 	fmt.Printf("  served:  %s\n", dc.ServedModelName)
 	// Companions are easy to get wrong quietly — a renamed file yields no
 	// drafter and a slower endpoint with no error — so show what was picked up.

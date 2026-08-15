@@ -121,6 +121,16 @@ describe('buildInferenceUserData', () => {
     expect(data).toContain('"modelId": "/opt/llm/model"');
   });
 
+  it('omits parallel from the rendered deploy config when unset', () => {
+    const data = buildInferenceUserData('prod', LLAMACPP);
+    expect(data).not.toContain('"parallel"');
+  });
+
+  it('carries parallel through to the rendered deploy config when set', () => {
+    const data = buildInferenceUserData('prod', { ...LLAMACPP, parallel: 2 });
+    expect(data).toContain('"parallel": 2');
+  });
+
   it('renders the vllm deploy config with the model dir and env-file key delivery', () => {
     const data = buildInferenceUserData('prod', VLLM);
     expect(data).toContain('"modelId": "/opt/llm/model"');

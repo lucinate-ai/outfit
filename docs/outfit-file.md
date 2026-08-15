@@ -10,8 +10,9 @@ apply it with a single command instead of remembering flags. Think of it like a
 PROVIDER openrouter
 MODEL    deepseek/deepseek-v4-pro   # the provider-native model ref
 ALIAS    deepseek                   # optional; friendly name for the model
-CONTEXT  128k                       # optional; context window
+CONTEXT  128k                       # optional; context window (per request)
 OUTPUT   32k                        # optional; max output tokens
+PARALLEL 2                          # optional; concurrent request slots for `serve`
 BASEURL  https://gateway/v1         # optional; API base URL override
 PRESET   ./preset.ini               # optional; engine preset for `outfit serve`
 ```
@@ -160,6 +161,7 @@ One instruction per line: a keyword followed by a single value.
 | `ALIAS`    | one of `MODEL`/`ALIAS`           | `--alias`      | `ALIAS deepseek`               |
 | `CONTEXT`  | no                               | `--context`    | `CONTEXT 128k`                 |
 | `OUTPUT`   | no                               | `--output`     | `OUTPUT 32k`                   |
+| `PARALLEL` | no                               | `outfit serve`, `outfit remote deploy` | `PARALLEL 2` |
 | `BASEURL`  | no                               | `--base-url`   | `BASEURL https://gateway/v1`   |
 | `PRESET`   | no                               | `outfit serve` | `PRESET ./preset.ini`          |
 | `REMOTE`   | no                               | `outfit remote` | `REMOTE ./remote.json`        |
@@ -179,11 +181,25 @@ Rules:
   `serve`, the name `llama-server` reports and the preset section to run). It
   defaults to `MODEL`. For a llama.cpp server the model key is only a label, so
   an `ALIAS` keeps it readable; an `ALIAS` on its own is enough to select one.
-- `CONTEXT` sets the context window for the model(s). It accepts human suffixes
-  (`128k`, `1m`) or an absolute count (`200000`).
+- `CONTEXT` sets the context window for the model(s) — always the context a
+  single request gets, whatever serves it. It accepts human suffixes (`128k`,
+  `1m`) or an absolute count (`200000`).
 - `OUTPUT` caps the max output tokens, in the same format as `CONTEXT`. Left
   out, `outfit` records a quarter of the context. It cannot exceed the context
   window.
+- `PARALLEL` sets the number of concurrent request slots for `outfit serve`
+  and `outfit remote deploy` — a plain integer, not a size. It has no meaning
+  for a hosted provider selection, only for a served engine, so unlike
+  `CONTEXT`/`OUTPUT` it has no `add`/`remove` CLI flag. Since `CONTEXT` always
+  means "context per request", and llama.cpp's own `--ctx-size` is a total
+  budget it divides across its `--parallel` slots, a `llamacpp` Outfit with
+  both `CONTEXT` and `PARALLEL` set gets a `--ctx-size` scaled by the slot
+  count so each slot still gets what `CONTEXT` promised (`CONTEXT 128k` +
+  `PARALLEL 2` → `--ctx-size 256000 --parallel 2`). `vllm` and `omlx` have no
+  such coupling — `PARALLEL` becomes `--max-num-seqs`/`--max-concurrent-requests`
+  respectively, and `CONTEXT` is never scaled by it. See
+  [`outfit serve`](commands/serve.md#parallelism) for the full per-engine
+  mapping.
 - `BASEURL` overrides the provider's API base URL — handy for a gateway or a
   llama.cpp server on a non-default port. `URL`, `BASE-URL`, and `BASE_URL` are
   accepted as aliases.

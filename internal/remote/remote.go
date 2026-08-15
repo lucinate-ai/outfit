@@ -212,10 +212,16 @@ type Response struct {
 // weights prefix — the Lambda derives the S3 layout itself, and seeds the
 // weights when they are not there yet, so this stays a statement of intent.
 type DeployConfig struct {
-	Runner          string   `json:"runner"`
-	ModelID         string   `json:"modelId"`
-	Quant           string   `json:"quant"`
-	ContextSize     int      `json:"contextSize"`
+	Runner      string `json:"runner"`
+	ModelID     string `json:"modelId"`
+	Quant       string `json:"quant"`
+	ContextSize int    `json:"contextSize"`
+	// Parallel is the number of concurrent request slots the engine should
+	// run with, translated into the runner's own flag the same way a local
+	// `outfit serve` would — including scaling ContextSize for a llamacpp
+	// runner, since llama.cpp divides its ctx-size budget across slots. Zero
+	// means unset: no parallelism flag, ContextSize unscaled.
+	Parallel        int      `json:"parallel,omitempty"`
 	ServedModelName string   `json:"servedModelName"`
 	ServeArgs       []string `json:"serveArgs"`
 	// Companions names extra files from the model's own Hugging Face repo that

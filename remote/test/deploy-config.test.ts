@@ -93,6 +93,21 @@ describe('parseDeployConfig', () => {
     expect(() => parseDeployConfig(JSON.stringify({ ...VLLM, contextSize: 0 }))).toThrow(/contextSize/);
   });
 
+  it('leaves parallel unset when absent, unlike contextSize which is required', () => {
+    const cfg = parseDeployConfig(JSON.stringify(VLLM));
+    expect(cfg.parallel).toBeUndefined();
+  });
+
+  it('round-trips a config that sets parallel', () => {
+    const withParallel = { ...LLAMACPP, parallel: 2 };
+    expect(parseDeployConfig(JSON.stringify(withParallel))).toEqual(withParallel);
+  });
+
+  it('rejects a non-positive parallel', () => {
+    expect(() => parseDeployConfig(JSON.stringify({ ...VLLM, parallel: 0 }))).toThrow(/parallel/);
+    expect(() => parseDeployConfig(JSON.stringify({ ...VLLM, parallel: -1 }))).toThrow(/parallel/);
+  });
+
   it('rejects a missing modelId', () => {
     expect(() => parseDeployConfig(JSON.stringify({ ...VLLM, modelId: '' }))).toThrow(/modelId/);
   });

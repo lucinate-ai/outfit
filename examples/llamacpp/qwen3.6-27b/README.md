@@ -114,8 +114,24 @@ PRESET   ./preset.ini
 from the preset). For a single-model server it's just a label — `llama-server`
 serves whichever model it loaded regardless of what's requested — so call it
 whatever you find readable. `CONTEXT` matches opencode's context window to the
-`--ctx-size` you launched the server with, so it doesn't overshoot what
-`llama-server` will accept.
+context each *request* gets, so it doesn't overshoot what `llama-server` will
+accept.
+
+Serving more than one request at a time? Add a `PARALLEL` line (the file ships
+one commented out):
+
+```dockerfile
+PARALLEL 2
+```
+
+llama.cpp's `--ctx-size` is a total KV-cache budget it divides across
+`--parallel` slots, so `outfit` scales it to compensate: with `CONTEXT 32768`
+and `PARALLEL 2`, `outfit serve` launches `llama-server` with `--ctx-size
+65536 --parallel 2` — each of the two slots still gets the 32768 tokens
+`CONTEXT` asked for, rather than half of it. `CONTEXT` itself, and what
+opencode sees as the context window, stay at 32768 either way. See
+[Parallelism](../../../docs/commands/serve.md#parallelism) for how vLLM and
+oMLX differ.
 
 Running on a non-default host or port? Add a `BASEURL` line to the Outfit (the
 file ships one commented out):
