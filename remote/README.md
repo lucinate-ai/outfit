@@ -161,7 +161,7 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `instanceType` | `g6e.xlarge` | Runtime GPU type, 1× L40S 48 GB, ~$1.86/hr |
 | `builderInstanceType` | `m5.xlarge` | Cheap non-GPU type used to bake the AMI and to seed |
 | `imageVolumeGb` | `80` | AMI root — fits the OS + engine + the model synced at boot |
-| `llamacppRelease` | `b10355` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
+| `llamacppRelease` | `b10435` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
 | `vllmVersion` | `0.26.0` | vLLM version installed into that AMI's venv (`uv pip install`) |
 | `nvidiaDriverPackage` | `nvidia-driver-570-server-open` | Driver installed in both AMIs |
 | `idleThresholdMinutes` | `15` | Terminate after this long without requests |
