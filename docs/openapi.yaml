@@ -18,9 +18,10 @@ info:
     The control API drives one supervised inference engine: start it, stop it,
     ask what it is doing, and set what it serves next.
 
-    It listens on `:4242` by default (`--api-addr` overrides). A non-loopback
-    listen with no bearer token configured refuses to start, since the API can
-    start and stop processes; a loopback listen may go tokenless.
+     It listens on `:4242` by default (`--api-addr` overrides; on the daemon,
+     `--loopback` binds `127.0.0.1:4242`). A non-loopback
+     listen with no bearer token configured refuses to start, since the API can
+     start and stop processes; a loopback listen may go tokenless.
 
     Under `outfit daemon` nothing runs until a start request asks, and stopping
     the engine never ends the daemon — the API keeps answering. Under

@@ -64,7 +64,10 @@ func commandLogger(logLevel string) (*slog.Logger, error) {
 func cmdDaemon(args []string) error {
 	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
 	var apiAddr, apiToken, apiTokenFile, logLevel string
+	var loopback bool
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
+	fs.BoolVar(&loopback, "loopback", false, "bind the control API to loopback on the default port ("+daemon.LoopbackAPIAddr+"); needs no token")
+	fs.BoolVar(&loopback, "l", false, "like --loopback")
 	fs.StringVar(&apiTokenFile, "api-token-file", "", "read the control API's bearer token from this file")
 	fs.StringVar(&apiToken, "api-token", "", "the control API's bearer token")
 	fs.StringVar(&logLevel, "log-level", "", logLevelUsage)
@@ -77,6 +80,19 @@ func cmdDaemon(args []string) error {
 				"Push a config with `outfit fleet start <node>` from a machine holding the Outfit, "+
 				"or launch through it with `outfit harness`",
 			rest[0])
+	}
+	// Whether --api-addr was typed at all, not whether it differs from the
+	// default: --api-addr :4242 --loopback is still a conflict, and a
+	// compare-against-default check would let it pass.
+	addrExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "api-addr" {
+			addrExplicit = true
+		}
+	})
+	apiAddr, err := daemonAPIAddr(apiAddr, addrExplicit, loopback)
+	if err != nil {
+		return err
 	}
 
 	token, err := daemonToken(apiToken, apiTokenFile)
@@ -256,6 +272,22 @@ func runServeForegroundAPI(sel outfit.Selection, outfitPath string, engine serve
 		return nil
 	}
 	return waitErr
+}
+
+// daemonAPIAddr resolves the daemon's listen address from its two flags.
+// --loopback is the shorthand for the loopback bind on the default port —
+// the one Listen's exposure rule admits without a token — and giving it
+// together with a typed --api-addr is a conflict, the same rule the token
+// sources follow: a silent winner between two bind addresses is one you find
+// out about from ps, not before the daemon starts.
+func daemonAPIAddr(apiAddr string, addrExplicit, loopback bool) (string, error) {
+	if loopback && addrExplicit {
+		return "", fmt.Errorf("--loopback and --api-addr both given: pass one")
+	}
+	if loopback {
+		return daemon.LoopbackAPIAddr, nil
+	}
+	return apiAddr, nil
 }
 
 // daemonToken resolves the control API's bearer token. Three sources, because

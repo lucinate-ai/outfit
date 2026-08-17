@@ -30,6 +30,12 @@ const DefaultAPIPort = 4242
 // can reach it (which is why a non-loopback listen demands a token).
 const DefaultAPIAddr = ":4242"
 
+// LoopbackAPIAddr is where `--loopback` binds the control API: DefaultAPIPort
+// on loopback, the safe bind a local-only daemon wants — one that Listen's
+// exposure rule admits without a token. It is the shorthand's whole address,
+// not a host rewrite of a --api-addr the caller also gave.
+const LoopbackAPIAddr = "127.0.0.1:4242"
+
 // Listen opens the control API's listener, enforcing the exposure rule: a
 // non-loopback address with no token configured is refused — the API can
 // start and stop processes, so exposing it unauthenticated beyond the machine

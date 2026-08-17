@@ -184,7 +184,7 @@ outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
 outfit unalias <name>                    # drop a registered name
 outfit serve  [path] [--dry-run] [-a]    # run the PROVIDER's inference server, from the PRESET
                                          #   (-a/--api serves the control API beside it)
-outfit daemon [path] [--api-addr <addr>] # supervise an engine via the control API
+outfit daemon [--api-addr <addr>] [--loopback] # supervise an engine via the control API
                                          #   (starts nothing until asked over the API)
 outfit fleet <status|metrics|start|stop> # observe and drive the engines in fleet.yaml
                                          #   (one outfit watching every machine you run)
@@ -358,7 +358,7 @@ from raw counters yourself.
 
 ```sh
 OUTFIT_API_TOKEN=…  outfit daemon           # control API on :4242
-outfit daemon --api-addr 127.0.0.1:4242     # loopback-only needs no token
+outfit daemon --loopback                    # loopback-only (127.0.0.1:4242), needs no token
 outfit daemon --log-level warn              # quiet on a node a fleet polls
 ```
 

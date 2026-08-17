@@ -1,6 +1,6 @@
 # HTTP Control API
 
-When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a control API is exposed on `:4242` (or the address specified by `--api-addr`) that allows management of the engine via JSON requests.
+When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a control API is exposed on `:4242` (or the address specified by `--api-addr`; on the daemon, `--loopback` binds `127.0.0.1:4242` instead) that allows management of the engine via JSON requests.
 
 > **The machine-readable contract is [`openapi.yaml`](openapi.yaml)** — every route, its
 > auth, its request body and the schemas of its replies. Point a client generator
