@@ -133,6 +133,23 @@ func TestCmdServe_DaemonFlagRemoved(t *testing.T) {
 	})
 }
 
+// TestCmdServe_HasNoLoopbackFlag pins the shorthand's scope: the spec gives
+// --loopback to the daemon alone, so serve's API must still keep --api-addr
+// rather than growing a second bind source.
+func TestCmdServe_HasNoLoopbackFlag(t *testing.T) {
+	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
+	captureStderr(t, func() {
+		if err := cmdServe([]string{"-a", "--loopback", outfitPath}); err == nil ||
+			!strings.Contains(err.Error(), "not defined") {
+			t.Errorf("serve --loopback = %v, want unknown-flag error", err)
+		}
+		if err := cmdServe([]string{"-a", "-l", outfitPath}); err == nil ||
+			!strings.Contains(err.Error(), "not defined") {
+			t.Errorf("serve -l = %v, want unknown-flag error", err)
+		}
+	})
+}
+
 func TestCmdServe_APIDryRunAddsMetricsFlag(t *testing.T) {
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
 	out := captureStdout(t, func() {
