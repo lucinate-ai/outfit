@@ -1,21 +1,18 @@
 package main
 
-// Tab completion. `outfit completion <shell>` prints one of the embedded
-// scripts below; each calls the hidden `outfit __complete` with every word up
-// to the cursor, and this file works out what could come next. The scripts are
-// deliberately thin — bash, zsh, and PowerShell differ only in how they hand
-// over the words and insert a result, never in the candidates — so this file
-// stays the one source of truth for what completes to what.
-//
-// The command and flag tables here mirror run()'s switch and each cmdX's
-// FlagSet. That duplication is deliberate — the flag package offers no way to
-// enumerate a FlagSet before it is parsed — and TestCompletionCoversDispatch
-// guards the half of it that matters.
+// Tab completion. `outfit completion <shell>` prints the script the CLI
+// framework generates for that shell; the script hands every word typed so
+// far to the hidden `outfit __complete` (the framework's engine) and inserts
+// whatever comes back, so the candidates never differ between shells. This
+// file supplies the half the engine cannot see: what a flag's value and each
+// positional slot completes to. Command names, subcommands, and flag names in
+// both forms complete automatically from the tree — there is no second table
+// of the surface that could drift, and TestCompletionCoversTree walks the
+// tree to enforce that.
 
 import (
-	_ "embed"
 	"fmt"
-	"sort"
+	"os"
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
@@ -24,343 +21,95 @@ import (
 	"github.com/lucinate-ai/outfit/internal/discovery"
 	"github.com/lucinate-ai/outfit/internal/harness"
 	"github.com/lucinate-ai/outfit/internal/opencode"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
-
-//go:embed completion.bash
-var bashCompletion string
-
-//go:embed completion.zsh
-var zshCompletion string
-
-//go:embed completion.ps1
-var powershellCompletion string
-
-// completionScripts maps a shell name to its embedded completion script.
-var completionScripts = map[string]string{
-	"bash":       bashCompletion,
-	"zsh":        zshCompletion,
-	"powershell": powershellCompletion,
-}
 
 // completionShells lists the supported shells in a stable order, for the
 // `completion` argument's own completion and for error messages.
 var completionShells = []string{"bash", "powershell", "zsh"}
 
-// Directives tell the shell script whether to offer paths alongside whatever
-// candidates were printed.
+// The engine's directive spelling: :0 lets the shell offer paths alongside
+// the candidates, :4 says no.
 const (
-	directiveNoFile = ":nofile"
-	directiveFile   = ":file"
+	directiveFile   = ":0"
+	directiveNoFile = ":4"
 )
 
-// candidateKind says what belongs in a given slot — a flag's value, or a
-// command's positional argument.
-type candidateKind int
+// completionCmd prints the completion script the framework generates for the
+// current command tree. Because a command named `completion` exists, Cobra
+// leaves its own default (which would also support fish) alone.
+func completionCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "completion <shell>",
+		Short: "print a tab completion script for bash, zsh, or powershell",
+		Long: `Prints the tab completion script for the given shell. Once it is in place,
+TAB completes commands, flags, providers, harnesses, and your registered
+aliases.
 
-const (
-	kindNone      candidateKind = iota // no candidates, no paths (also: bool flags)
-	kindFile                           // paths only
-	kindAlias                          // registered aliases, or a path
-	kindAliasOnly                      // registered aliases; a path would be meaningless
-	kindHarness
-	kindProvider
-	kindModel
-	kindShell
-	kindLogLevel
-)
+The script must be sourced by a running shell, or saved where a shell reads
+it at start-up:
 
-// command describes one subcommand's completable surface.
-type command struct {
-	// flags is every flag the command accepts, as typed.
-	flags []string
-	// values maps a value-taking flag to what its value is. A flag absent from
-	// this map is a boolean and consumes no following word.
-	values map[string]candidateKind
-	// positional is what the command's first positional argument accepts, and
-	// positionals how many arguments that applies to.
-	positional  candidateKind
-	positionals int
-	// subcommands is the fixed set a nested command dispatches on. When set,
-	// the first positional completes to one of these and any later one falls
-	// through to positional.
-	subcommands []string
-}
+  bash:
+    For the current session:
+      $ source <(outfit completion bash)
+    Or for every new session, save the script once where bash reads
+    completions (on macOS, ~/.bashrc can source it instead):
+      $ outfit completion bash > /etc/bash_completion.d/outfit
 
-// selectionFlags are the flags add and remove share (see parseSelection).
-var selectionFlags = []string{
-	"--provider", "-p", "--model", "-m",
-	"--alias", "-a", "--context", "-c", "--output", "-o",
-	"--providers", "--base-url", "-u", "--harness", "-H",
-}
+  zsh:
+    Save the script once as a completion function:
+      $ mkdir -p ~/.zfunc && outfit completion zsh > ~/.zfunc/_outfit
+    And have ~/.zshrc load it:
+      fpath=(~/.zfunc $fpath)
+      autoload -Uz compinit && compinit
 
-// selectionValues maps those of them that take a value. The model id has no
-// static source in the catalogue; --model/-m completes from live per-provider
-// discovery, scoped to the --provider already on the line.
-var selectionValues = map[string]candidateKind{
-	"--provider": kindProvider, "-p": kindProvider,
-	"--model": kindModel, "-m": kindModel,
-	"--alias": kindNone, "-a": kindNone,
-	"--context": kindNone, "-c": kindNone,
-	"--output": kindNone, "-o": kindNone,
-	"--providers": kindFile,
-	"--base-url":  kindNone, "-u": kindNone,
-	"--harness": kindHarness, "-H": kindHarness,
-}
-
-// commands is the completable command surface. Keep it in step with run()'s
-// switch; TestCompletionCoversDispatch fails when a command is added there and
-// forgotten here.
-var commands = map[string]command{
-	"add":    {flags: selectionFlags, values: selectionValues},
-	"remove": {flags: selectionFlags, values: selectionValues},
-	"list": {
-		flags:  []string{"--providers"},
-		values: map[string]candidateKind{"--providers": kindFile},
-	},
-	"show": {
-		flags:  []string{"--harness", "-H"},
-		values: map[string]candidateKind{"--harness": kindHarness, "-H": kindHarness},
-	},
-	"apply": {
-		flags: []string{"--providers", "--output", "-o", "--harness", "-H"},
-		values: map[string]candidateKind{
-			"--providers": kindFile, "--output": kindNone, "-o": kindNone,
-			"--harness": kindHarness, "-H": kindHarness,
-		},
-		positional: kindAlias, positionals: 1,
-	},
-	"unapply": {
-		flags: []string{"--providers", "--harness", "-H"},
-		values: map[string]candidateKind{
-			"--providers": kindFile, "--harness": kindHarness, "-H": kindHarness,
-		},
-		positional: kindAlias, positionals: 1,
-	},
-	"alias": {
-		flags:      []string{"--name", "-n", "--force", "-F", "--list", "-l"},
-		values:     map[string]candidateKind{"--name": kindNone, "-n": kindNone},
-		positional: kindAlias, positionals: 1,
-	},
-	"unalias": {positional: kindAliasOnly, positionals: 1},
-	"serve": {
-		flags:      []string{"--dry-run", "-n", "--api", "-a", "--api-addr", "--log-level"},
-		values:     map[string]candidateKind{"--api-addr": kindNone, "--log-level": kindLogLevel},
-		positional: kindAlias, positionals: 1,
-	},
-	"daemon": {
-		flags:      []string{"--api-addr", "--log-level"},
-		values:     map[string]candidateKind{"--api-addr": kindNone, "--log-level": kindLogLevel},
-		positional: kindAlias, positionals: 1,
-	},
-	"fleet": {
-		subcommands: []string{"status", "metrics", "logs", "route", "start", "stop"},
-		flags: []string{"--fleet", "--format", "--watch", "-w", "--follow", "-f", "--limit",
-			"--node", "--prefer"},
-		values: map[string]candidateKind{
-			"--fleet": kindFile, "--format": kindNone,
-			"--node": kindNone, "--prefer": kindNone,
-		},
-	},
-	"export": {
-		flags: []string{"--provider", "-p", "--providers", "--harness", "-H"},
-		values: map[string]candidateKind{
-			"--provider": kindProvider, "-p": kindProvider,
-			"--providers": kindFile, "--harness": kindHarness, "-H": kindHarness,
-		},
-	},
-	"init-providers": {
-		flags:      []string{"--force", "-F"},
-		positional: kindFile, positionals: 1,
-	},
-	"harness": {
-		flags: []string{"--set", "--get", "--harness", "-H", "--outfit", "-O", "--providers",
-			"--fleet", "--node", "--prefer", "--no-wake", "--wake-timeout"},
-		values: map[string]candidateKind{
-			"--set": kindHarness, "--harness": kindHarness, "-H": kindHarness,
-			"--fleet": kindFile, "--node": kindNone, "--prefer": kindNone,
-			"--wake-timeout": kindNone,
-			// --outfit's value is optional, so it is not consumed as a separate
-			// word; naming it here is what completes `--outfit=<TAB>`.
-			"--outfit": kindAlias, "-O": kindAlias,
-			"--providers": kindFile,
-		},
-		// Only the first argument can name an Outfit; the rest are the
-		// harness's own, and outfit has nothing to say about them.
-		positional: kindAlias, positionals: 1,
-	},
-	"remote": {
-		flags: []string{
-			"--timeout", "--dry-run", "-n", "--yes", "-y", "--wait", "--force-bake",
-			"--runners", "--hf-token", "--ref", "--dir", "--region",
-			"--overwrite", "--allowed-cidr", "--cost", "--env", "-e", "--format", "--watch", "-w",
-		},
-		values: map[string]candidateKind{
-			"--timeout": kindNone, "--runners": kindNone, "--hf-token": kindNone,
-			"--ref": kindNone, "--region": kindNone, "--dir": kindFile,
-			"--allowed-cidr": kindNone, "--cost": kindNone,
-			"--env": kindNone, "-e": kindNone,
-			"--format": kindNone, "--watch": kindNone, "-w": kindNone,
-		},
-		// `outfit remote <sub> [outfit]`: the subcommand, then optionally the
-		// Outfit naming the endpoint.
-		subcommands: []string{"bootstrap", "start", "stop", "status", "metrics", "logs", "deploy", "env", "ls"},
-		positional:  kindAlias, positionals: 2,
-	},
-	"completion": {positional: kindShell, positionals: 1},
-	"version":    {},
-	"help":       {},
-}
-
-// cmdCompletion prints the shell completion script for the named shell.
-func cmdCompletion(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("completion needs a shell (supported: %s)", strings.Join(completionShells, ", "))
-	}
-	script, ok := completionScripts[args[0]]
-	if !ok {
-		return fmt.Errorf("unsupported shell %q (supported: %s)", args[0], strings.Join(completionShells, ", "))
-	}
-	fmt.Print(script)
-	return nil
-}
-
-// cmdComplete prints the completion candidates for a partially-typed command
-// line, one per line, followed by a directive telling the shell whether paths
-// belong in the list too. args is every word after `outfit` up to and including
-// the one under the cursor, which may be empty.
-//
-// It never returns an error and never writes to stderr: a completion helper
-// that failed would spew over the user's prompt. A config it cannot read, a
-// catalogue it cannot load, and nonsense input all mean "no candidates".
-func cmdComplete(args []string) error {
-	candidates, directive := completions(args)
-	for _, c := range candidates {
-		fmt.Println(c)
-	}
-	fmt.Println(directive)
-	return nil
-}
-
-// completions works out what could follow the words typed so far.
-func completions(args []string) ([]string, string) {
-	if len(args) == 0 {
-		return commandNames(), directiveNoFile
-	}
-	cur, words := args[len(args)-1], args[:len(args)-1]
-	if len(words) == 0 {
-		return commandNames(), directiveNoFile
-	}
-	cmd, ok := commands[words[0]]
-	if !ok {
-		return nil, directiveNoFile
-	}
-
-	// A flag and its value can arrive attached as one word (`--outfit=<partial>`,
-	// how zsh and PowerShell pass it) or split into three (`--outfit`, `=`, ``,
-	// how bash tokenizes because "=" is a word-break). Handle the attached form
-	// here; the split form falls through to the prev-word check below. Either
-	// way this is the only route to completing --outfit/-O, whose value has to
-	// be attached.
-	if flag, _, ok := strings.Cut(cur, "="); ok && strings.HasPrefix(flag, "-") {
-		if kind, found := cmd.values[flag]; found {
-			return candidatesFor(kind, words)
-		}
-	}
-	prev := words[len(words)-1]
-	if prev == "=" && len(words) > 1 {
-		prev = words[len(words)-2]
-	}
-	if kind, ok := cmd.values[prev]; ok {
-		return candidatesFor(kind, words)
-	}
-
-	if strings.HasPrefix(cur, "-") {
-		return cmd.flags, directiveNoFile
-	}
-	used := positionalsUsed(cmd, words[1:])
-	if len(cmd.subcommands) > 0 && used == 0 {
-		return cmd.subcommands, directiveNoFile
-	}
-	if used >= cmd.positionals {
-		return nil, directiveNoFile
-	}
-	return candidatesFor(cmd.positional, words)
-}
-
-// positionalsUsed counts the arguments already given to a command, skipping
-// flags and the words they consume as values.
-func positionalsUsed(cmd command, words []string) int {
-	n, skip := 0, false
-	for _, w := range words {
-		switch {
-		case skip:
-			skip = false
-		case w == "=":
-			// Part of a --flag=value triple; the value follows and is not a
-			// positional either.
-			skip = true
-		case strings.HasPrefix(w, "-"):
-			// A flag with an attached value consumes nothing further.
-			if _, takesValue := cmd.values[w]; takesValue && !strings.Contains(w, "=") {
-				skip = true
+  powershell:
+    For the current session:
+      > outfit completion powershell | Out-String | Invoke-Expression
+    Or put that line in the PowerShell profile to load it every session:
+      > Add-Content $PROFILE "outfit completion powershell | Out-String | Invoke-Expression"
+`,
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+			if len(args) > 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
-		default:
-			n++
-		}
+			return completionShells, cobra.ShellCompDirectiveNoFileComp
+		},
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			if len(args) != 1 {
+				return fmt.Errorf("completion needs a shell (supported: %s)", strings.Join(completionShells, ", "))
+			}
+			switch args[0] {
+			case "bash":
+				return c.Root().GenBashCompletionV2(os.Stdout, true)
+			case "zsh":
+				return c.Root().GenZshCompletion(os.Stdout)
+			case "powershell":
+				return c.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+			default:
+				return fmt.Errorf("unsupported shell %q (supported: %s)", args[0], strings.Join(completionShells, ", "))
+			}
+		},
 	}
-	return n
+	return c
 }
 
-// commandNames returns the commands worth completing, in stable order. The
-// hidden __complete is not among them.
-func commandNames() []string {
-	names := make([]string, 0, len(commands))
-	for name := range commands {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+// cmdCompletion is the seam the suite calls the `completion` command through.
+// It dispatches through a full root: the printed script is generated for the
+// whole tree, which only the root can see.
+func cmdCompletion(args []string) error {
+	return execCmd(newRootCmd(), append([]string{"completion"}, args...))
 }
 
-// candidatesFor returns the candidates for one slot. words is everything typed
-// before the cursor, which a few kinds consult for context.
-func candidatesFor(kind candidateKind, words []string) ([]string, string) {
-	switch kind {
-	case kindFile:
-		return nil, directiveFile
-	case kindAlias:
-		return aliasNames(), directiveFile
-	case kindAliasOnly:
-		return aliasNames(), directiveNoFile
-	case kindHarness:
-		return harness.Names(), directiveNoFile
-	case kindProvider:
-		cat, err := loadCatalogFor(words)
-		if err != nil {
-			return nil, directiveNoFile
-		}
-		return cat.SortedProviderNames(), directiveNoFile
-	case kindModel:
-		p := providerOn(words)
-		if p == nil {
-			return nil, directiveNoFile
-		}
-		// Best-effort: source models live from the provider's endpoint. Any
-		// failure (offline, timeout, no key) yields no candidates, keeping
-		// completion quiet.
-		models, err := discovery.Models(p, "", opencode.EnvResolver(""))
-		if err != nil {
-			return nil, directiveNoFile
-		}
-		return models, directiveNoFile
-	case kindShell:
-		return completionShells, directiveNoFile
-	case kindLogLevel:
-		return daemon.LevelNames(), directiveNoFile
-	default:
-		return nil, directiveNoFile
-	}
-}
+// The completion functions below are the value half of the surface. Each
+// swallows its own failure and returns (nil, NoFileComp): a broken config or
+// catalogue means "no candidates", never an error, so a completion attempt
+// can never spew over the user's prompt.
 
 // aliasNames returns the registered alias names, or none when the config
 // cannot be read.
@@ -372,52 +121,228 @@ func aliasNames() []string {
 	return f.AliasNames()
 }
 
-// loadCatalogFor loads the provider catalogue, honouring a --providers override
-// already on the command line.
-func loadCatalogFor(words []string) (*catalog.Catalog, error) {
-	return catalog.LoadFrom(catalog.ResolveCatalogPath(flagValue(words, "--providers")))
-}
-
-// providerOn returns the provider named by --provider/-p on the command line so
-// far, or nil when there is none (or the catalogue will not load).
-func providerOn(words []string) *catalog.Provider {
-	name := flagValue(words, "--provider", "-p")
-	if name == "" {
-		return nil
-	}
-	cat, err := loadCatalogFor(words)
-	if err != nil {
-		return nil
-	}
-	return cat.Providers[name]
-}
-
-// flagValue finds the value already given to one of names, in either the
-// attached (--flag=value, which bash splits into three words) or detached
-// (--flag value) form. It returns "" when the flag is not on the line.
-func flagValue(words []string, names ...string) string {
-	matches := func(w string) bool {
-		for _, name := range names {
-			if w == name {
-				return true
-			}
-		}
-		return false
-	}
-	for i, w := range words {
-		if prefix, value, ok := strings.Cut(w, "="); ok && matches(prefix) {
-			return value
-		}
-		if !matches(w) {
-			continue
-		}
-		// --flag = value (bash's split), or --flag value.
-		if i+2 < len(words) && words[i+1] == "=" {
-			return words[i+2]
-		}
-		if i+1 < len(words) {
-			return words[i+1]
-		}
+// flagStr reads a value the user already typed for a flag off the command's
+// parsed flags. By the time the engine calls a completion function it has
+// parsed the words before the cursor, so a --providers override on the line
+// is already in here.
+func flagStr(c *cobra.Command, name string) string {
+	if f := c.Flags().Lookup(name); f != nil {
+		return f.Value.String()
 	}
 	return ""
+}
+
+// compProviders offers the catalogue's provider names, honouring a
+// --providers override already on the command line.
+func compProviders(c *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(flagStr(c, "providers")))
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return cat.SortedProviderNames(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// compModels offers the models the --provider on the line currently serves,
+// sourced live from its endpoint. Any failure (offline, timeout, no key)
+// yields no candidates.
+func compModels(c *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	name := flagStr(c, "provider")
+	if name == "" {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(flagStr(c, "providers")))
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	p, ok := cat.Providers[name]
+	if !ok {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	models, err := discovery.Models(p, "", opencode.EnvResolver(""))
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return models, cobra.ShellCompDirectiveNoFileComp
+}
+
+// compHarnessNames offers the harness names.
+func compHarnessNames(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return harness.Names(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// compLogLevel offers the levels the log-level parser accepts.
+func compLogLevel(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return daemon.LevelNames(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// compFiles offers no static candidates and lets the shell fall back to
+// filesystem paths.
+func compFiles(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return nil, cobra.ShellCompDirectiveDefault
+}
+
+// compNoValues is the completion for a value flag with nothing to enumerate:
+// no candidates, no paths.
+func compNoValues(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+// Positional slots. The engine hands a command's ValidArgsFunction the
+// positional arguments already on the line, which is how a fixed-arity slot
+// knows it has been filled.
+
+// noPositionals is a command with no positional arguments at all.
+func noPositionals(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+// aliasSlot is the Outfit slot: registered names plus a path, for the first
+// positional only.
+func aliasSlot(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return aliasNames(), cobra.ShellCompDirectiveDefault
+}
+
+// aliasOnlySlot is the unalias slot: registered names; a path is meaningless.
+func aliasOnlySlot(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return aliasNames(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// fileSlot is a single path argument.
+func fileSlot(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	if len(args) > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return nil, cobra.ShellCompDirectiveDefault
+}
+
+// keepSlot is `remote keep <duration> [outfit]`: a duration first, then the
+// optional Outfit.
+func keepSlot(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
+	switch len(args) {
+	case 0:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	case 1:
+		return aliasNames(), cobra.ShellCompDirectiveDefault
+	default:
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+}
+
+// harnessValueFlags are the harness flags that take a detached value;
+// --outfit/-O takes an optional attached value and consumes no word, and
+// --get/--no-wake take none.
+var harnessValueFlags = map[string]bool{
+	"--set":          true,
+	"--harness":      true,
+	"-H":             true,
+	"--providers":    true,
+	"--fleet":        true,
+	"--node":         true,
+	"--prefer":       true,
+	"--wake-timeout": true,
+}
+
+// harnessSlot completes one word of a harness command line. The command runs
+// with Cobra's flag parsing off, so the engine calls this for everything and
+// hands over the words before the cursor unparsed: the Outfit may be a
+// leading positional or an attached --outfit/-O value; a detached flag right
+// before the cursor is asking for its own value; beyond the Outfit every word
+// belongs to the launched harness and outfit offers nothing.
+func harnessSlot(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	// --flag=<partial>, the form zsh and PowerShell pass as one word.
+	if eq := strings.IndexByte(toComplete, '='); eq > 0 && toComplete[0] == '-' {
+		switch toComplete[:eq] {
+		case "--outfit", "-O":
+			return aliasNames(), cobra.ShellCompDirectiveDefault
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	// Completing a flag name: the names the engine collected from the
+	// command's flag set stand as the offering.
+	if strings.HasPrefix(toComplete, "-") {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	if len(args) > 0 {
+		last := args[len(args)-1]
+		if strings.HasPrefix(last, "-") && !strings.Contains(last, "=") {
+			// A detached flag right before the cursor is asking for its value.
+			switch last {
+			case "--set", "--harness", "-H":
+				return harness.Names(), cobra.ShellCompDirectiveNoFileComp
+			case "--providers", "--fleet":
+				return nil, cobra.ShellCompDirectiveDefault
+			case "--node", "--prefer", "--wake-timeout":
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+		}
+	}
+	// Count the positionals already on the line, skipping flags and the
+	// words they consume (-- the bash-split --outfit = "" triple included).
+	n, skip, terminated := 0, false, false
+	for _, w := range args {
+		switch {
+		case skip:
+			skip = false
+		case w == "=":
+			skip = true
+		case w == "--":
+			terminated = true
+		case strings.HasPrefix(w, "-"):
+			if eq := strings.IndexByte(w, '='); eq > 0 {
+				// An attached value is consumed within the word.
+			} else if harnessValueFlags[w] {
+				skip = true
+			}
+		default:
+			n++
+		}
+	}
+	if terminated || n > 0 {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return aliasNames(), cobra.ShellCompDirectiveDefault
+}
+
+// compStatic marks a flag whose value completion is named by hand, so
+// defaultFlagCompletions leaves it alone.
+const compStatic = "outfit.completion"
+
+// compRegister names a flag's value completion. Registering under the long
+// name covers the shorthand too: both spellings resolve to the same flag.
+func compRegister(c *cobra.Command, name string, f cobra.CompletionFunc) {
+	if fl := c.Flags().Lookup(name); fl != nil {
+		if fl.Annotations == nil {
+			fl.Annotations = map[string][]string{}
+		}
+		fl.Annotations[compStatic] = []string{}
+	}
+	c.RegisterFlagCompletionFunc(name, f)
+}
+
+// defaultFlagCompletions sweeps the tree and gives every value-taking flag
+// no command has named the completion it would have had under the old table
+// anyway: no candidates, no paths. Under the old hand table an unknown value
+// flag was mistaken for a boolean and its value completed like a positional
+// argument; a command tree cannot make that mistake.
+func defaultFlagCompletions(root *cobra.Command) {
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.NoOptDefVal == "" {
+				if _, ok := f.Annotations[compStatic]; !ok {
+					c.RegisterFlagCompletionFunc(f.Name, compNoValues)
+				}
+			}
+		})
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
 }

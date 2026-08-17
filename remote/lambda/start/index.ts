@@ -1,5 +1,6 @@
 import type { Context, LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import {
+  RETAIN_UNTIL_TAG,
   associateEip,
   errorName,
   findLatestAmi,
@@ -12,6 +13,10 @@ import {
   runInstance,
   runShellCommand,
   sleep,
+  STARTED_AT_TAG,
+  startEngineDaemon,
+  startInstance,
+  tagInstance,
 } from '../shared/aws';
 import { type DeployConfig, logGroupEnvVar, type Runner, RUNNERS } from '../shared/deploy-config';
 import {
@@ -50,7 +55,10 @@ const ENGINE_LOG_FILE = `${DAEMON_CONFIG_DIR}/daemon/engine.log`;
 const DEADLINE_MARGIN_MS = 20_000;
 const POLL_MS = 5_000;
 const HEALTH_POLL_MS = 10_000;
-const TERMINAL_STATES = new Set(['shutting-down', 'terminated', 'stopping', 'stopped']);
+// stopping/stopped are re-wakable, not terminal: the sweep stops instances
+// now, so a wake must find the one it is trying to revive rather than fail on
+// it. Only states headed for the scrapyard end a wake.
+const TERMINAL_STATES = new Set(['shutting-down', 'terminated']);
 
 const HEALTH_COMMAND =
   `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${ENGINE_PORT}/health || true`;
@@ -58,6 +66,18 @@ const HEALTH_COMMAND =
 /** Narrow instance discovery to one environment's instance. */
 function envFilter(env: string) {
   return [{ Name: `tag:${ENV_TAG_KEY}`, Values: [env] }];
+}
+
+/** Parse and validate the optional retainUntil query parameter. */
+function parseRetainUntil(raw: string | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    return null;
+  }
+  return d.toISOString();
 }
 
 export async function handler(
@@ -74,7 +94,9 @@ export async function handler(
   if (method === 'GET') {
     return status(env);
   }
-  return wake(env, context);
+  const rawRetainUntil = event.queryStringParameters?.retainUntil;
+  const retainUntil = parseRetainUntil(rawRetainUntil);
+  return wake(env, context, retainUntil);
 }
 
 /** GET — report one environment's state without side effects. */
@@ -107,13 +129,17 @@ async function status(env: string): Promise<LambdaFunctionURLResult> {
     checkHealth(instance.instanceId),
     readDaemonActivity(instance.instanceId),
   ]);
-  return jsonResponse(200, {
+  const result: Record<string, unknown> = {
     state: 'running',
     environment: env,
     healthy,
     base_url: baseUrl,
     ...activity,
-  });
+  };
+  if (instance.retainUntil) {
+    result.retainUntil = instance.retainUntil.toISOString();
+  }
+  return jsonResponse(200, result);
 }
 
 /**
@@ -146,7 +172,11 @@ async function readDaemonActivity(
 }
 
 /** POST — launch the environment's instance if needed and block until serving. */
-async function wake(env: string, context: Context): Promise<LambdaFunctionURLResult> {
+async function wake(
+  env: string,
+  context: Context,
+  retainUntil: string | null,
+): Promise<LambdaFunctionURLResult> {
   const deadline = Date.now() + context.getRemainingTimeInMillis() - DEADLINE_MARGIN_MS;
 
   // What to serve comes from the environment's deploy-config. No default
@@ -184,10 +214,28 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
 
   const existing = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   let instanceId: string;
+  let startIssued = false;
   if (existing) {
-    // Idempotent: this environment's instance is already up (or coming up).
+    // Idempotent: this environment's instance already exists (up, coming up,
+    // or stopped — the sweep stops idle ones now, so this is the normal
+    // re-wake path).
     instanceId = existing.instanceId;
     console.log(JSON.stringify({ phase: 'existing', environment: env, instanceId, state: existing.state }));
+    if (existing.state === 'stopped') {
+      try {
+        await rewake(instanceId);
+        startIssued = true;
+      } catch (err) {
+        if (errorName(err) === 'InsufficientInstanceCapacity') {
+          return jsonResponse(
+            503,
+            { state: 'no-capacity', environment: env, retry_after_seconds: 120 },
+            { 'retry-after': '120' },
+          );
+        }
+        throw err;
+      }
+    }
   } else {
     const launched = await launchAcrossAzs(env, deployConfig, securityGroupId);
     if ('error' in launched) {
@@ -214,7 +262,30 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
       break;
     }
     if (TERMINAL_STATES.has(state)) {
-      return jsonResponse(500, { state, message: `instance went ${state} while starting` });
+      // A dying instance is not this wake's machine to adopt; the deploy
+      // config is intact, so a retry launches a fresh one.
+      return jsonResponse(
+        503,
+        { state, message: `instance went ${state} while starting`, retry_after_seconds: 300 },
+        { 'retry-after': '300' },
+      );
+    }
+    if (state === 'stopped' && !startIssued) {
+      // A stop raced us between discovery and now; issue the re-wake here so
+      // one wake owns at most one start call.
+      try {
+        await rewake(instanceId);
+        startIssued = true;
+      } catch (err) {
+        if (errorName(err) === 'InsufficientInstanceCapacity') {
+          return jsonResponse(
+            503,
+            { state: 'no-capacity', environment: env, retry_after_seconds: 120 },
+            { 'retry-after': '120' },
+          );
+        }
+        throw err;
+      }
     }
     await sleep(POLL_MS);
   }
@@ -232,19 +303,62 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
     await sleep(POLL_MS);
   }
 
+  // Make sure the engine is actually asked to start. A fresh launch's boot
+  // script requests a start, but a re-wake must not bet on user data
+  // re-running — if it does not, the daemon is up and idle and nothing else
+  // ever starts the engine. The daemon's /v1/start is idempotent (it refuses
+  // with 409 when one already runs), so this is harmless on every path; an
+  // unreachable daemon only matters when user data still covers the start.
+  if (!(await startEngineDaemon(instanceId))) {
+    console.log(
+      JSON.stringify({ phase: 'engine-start', environment: env, instanceId, warning: 'daemon did not answer a start request' }),
+    );
+  }
+
   // Phase 3: server health. vLLM binds its port only once the engine has
   // loaded the weights, but llama.cpp binds immediately and serves 503 while
   // loading — so only a 200 (or a 401 from the api-key middleware) means
   // ready; a 503 or connection refused means still loading.
   while (Date.now() < deadline) {
     if (await checkHealth(instanceId)) {
-      return ready(env, baseUrl);
+      // Best-effort retain tag: the wake must not fail because of it.
+      if (retainUntil) {
+        try {
+          await tagInstance(instanceId, RETAIN_UNTIL_TAG, retainUntil);
+        } catch (err) {
+          console.log(
+            JSON.stringify({ phase: 'retain', environment: env, instanceId, error: `tag ${errorName(err)}` }),
+          );
+        }
+      }
+      return ready(env, baseUrl, retainUntil);
     }
     await sleep(HEALTH_POLL_MS);
   }
 
   console.log(JSON.stringify({ phase: 'deadline', environment: env, instanceId }));
   return jsonResponse(503, { state: 'starting', retry_after_seconds: 60 }, { 'retry-after': '60' });
+}
+
+/**
+ * Re-wake a stopped instance and record when this session began. This issues
+ * only the EC2 start: a fresh boot's user data does not re-run on a
+ * stop/start cycle, and the baked crash-nudge covers only a mid-session crash,
+ * so the engine start itself is the control plane's job (the explicit
+ * /v1/start after the SSM agent is online), with the phase polling (SSM
+ * agent, health) then applying unchanged. The weights the root volume already
+ * holds make the re-wake fast. The Started-At tag is best-effort: losing it
+ * only makes the max-runtime judgement conservative (measuring from first
+ * launch), never unsafe.
+ */
+async function rewake(instanceId: string): Promise<void> {
+  console.log(JSON.stringify({ phase: 'rewake', instanceId }));
+  await startInstance(instanceId);
+  try {
+    await tagInstance(instanceId, STARTED_AT_TAG, new Date().toISOString());
+  } catch (err) {
+    console.log(JSON.stringify({ phase: 'rewake', instanceId, error: `tag ${errorName(err)}` }));
+  }
 }
 
 /** Try each AZ's subnet in turn, skipping ones without capacity. */
@@ -427,15 +541,23 @@ async function checkHealth(instanceId: string): Promise<boolean> {
   }
 }
 
-async function ready(env: string, baseUrl: string): Promise<LambdaFunctionURLResult> {
+async function ready(
+  env: string,
+  baseUrl: string,
+  retainUntil: string | null,
+): Promise<LambdaFunctionURLResult> {
   // No wake is recorded here: the daemon counts an engine start as activity,
   // so the instance itself reports a fresh idle time and the idle check gives
   // the first request time to land without the control plane tracking it.
   console.log(JSON.stringify({ phase: 'ready', environment: env }));
-  return jsonResponse(200, {
+  const result: Record<string, unknown> = {
     state: 'ready',
     environment: env,
     base_url: baseUrl,
     api_key: await readEnvApiKey(env),
-  });
+  };
+  if (retainUntil) {
+    result.retainUntil = retainUntil;
+  }
+  return jsonResponse(200, result);
 }

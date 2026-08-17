@@ -92,10 +92,11 @@ nodes:
 
 func TestLoadRejectsIncompleteNodes(t *testing.T) {
 	for name, body := range map[string]string{
-		"no nodes":   "nodes: []\n",
-		"no name":    "nodes:\n  - host: a.local\n",
-		"no host":    "nodes:\n  - name: studio\n",
-		"other kind": "nodes:\n  - name: prod\n    host: a.local\n    kind: remote\n",
+		"no nodes":              "nodes: []\n",
+		"no name":               "nodes:\n  - host: a.local\n",
+		"no host":               "nodes:\n  - name: studio\n",
+		"remote name is a path": "nodes:\n  - name: a/b\n    kind: remote\n",
+		"remote name has .json": "nodes:\n  - name: prod.json\n    kind: remote\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(writeFleet(t, body, "")); err == nil {
@@ -107,9 +108,30 @@ func TestLoadRejectsIncompleteNodes(t *testing.T) {
 
 // An unimplemented kind must say so rather than be silently skipped.
 func TestLoadUnknownKindNamesIt(t *testing.T) {
-	_, err := Load(writeFleet(t, "nodes:\n  - name: prod\n    host: a.local\n    kind: remote\n", ""))
-	if err == nil || !strings.Contains(err.Error(), "remote") {
+	_, err := Load(writeFleet(t, "nodes:\n  - name: prod\n    host: a.local\n    kind: satellite\n", ""))
+	if err == nil || !strings.Contains(err.Error(), "satellite") {
 		t.Fatalf("error = %v, want one naming the unsupported kind", err)
+	}
+}
+
+// A kind-remote node's name is the registered environment it drives; it needs
+// no host, and nothing else to name it with.
+func TestLoadRemoteKindNamedByEnvironment(t *testing.T) {
+	path := writeFleet(t, `
+nodes:
+  - name: prod
+    kind: remote
+`, "")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := cfg.Nodes[0]
+	if n.Kind != KindRemote || n.Name != "prod" {
+		t.Errorf("remote node = %+v, want kind remote named prod", n)
+	}
+	if n.Host != "" {
+		t.Errorf("remote node needs no host, got %q", n.Host)
 	}
 }
 

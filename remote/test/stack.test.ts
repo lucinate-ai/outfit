@@ -141,10 +141,10 @@ describe('LlmStack (control plane)', () => {
     expect(groups[0].Properties.SecurityGroupIngress).toBeUndefined();
   });
 
-  it('creates the start, stop, deploy, stats, env and seed Lambdas with IAM-authenticated function URLs', () => {
-    template.resourceCountIs('AWS::Lambda::Function', 6);
+  it('creates the start, stop, deploy, stats, env, seed and update Lambdas with IAM-authenticated function URLs', () => {
+    template.resourceCountIs('AWS::Lambda::Function', 7);
     const urls = template.findResources('AWS::Lambda::Url');
-    expect(Object.keys(urls)).toHaveLength(6);
+    expect(Object.keys(urls)).toHaveLength(7);
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).toBe('AWS_IAM');
     }
@@ -172,6 +172,12 @@ describe('LlmStack (control plane)', () => {
     ]) {
       expect(env).toHaveProperty(key);
     }
+    // The regression this guards: `s3assets.Asset` zips a directory path
+    // before publishing, but the instance fetches SEEDER_KEY straight into
+    // `node /opt/seed.mjs` — handed a zip, node fails immediately on the "PK"
+    // magic bytes as a syntax error. A `.mjs` key confirms the asset was
+    // published as the built file itself, not as a zipped directory.
+    expect(env.SEEDER_KEY).toMatch(/\.mjs$/);
 
     const actions = allPolicyActions(template);
     for (const action of [
@@ -183,6 +189,28 @@ describe('LlmStack (control plane)', () => {
     ]) {
       expect(actions).toContain(action);
     }
+
+    // The regression this guards: AllocateAddress and CreateSecurityGroup both
+    // tag inline via TagSpecifications, which needs ec2:CreateTags as its own
+    // grant — deploying a fresh environment failed with "not authorized to
+    // perform: ec2:CreateTags on resource: elastic-ip/*" because only the
+    // resource-creation actions were granted.
+    const policies = template.findResources('AWS::IAM::Policy');
+    const deployPolicy = Object.values(policies).find((p) =>
+      String(p.Properties.PolicyName).startsWith('DeployFnServiceRoleDefaultPolicy'),
+    );
+    expect(deployPolicy).toBeDefined();
+    const createTags = (
+      deployPolicy!.Properties.PolicyDocument.Statement as {
+        Action: string | string[];
+        Condition?: { StringEquals?: Record<string, unknown> };
+      }[]
+    ).find((s) => [s.Action].flat().includes('ec2:CreateTags'));
+    expect(createTags).toBeDefined();
+    expect(createTags!.Condition?.StringEquals?.['ec2:CreateAction']).toEqual([
+      'AllocateAddress',
+      'CreateSecurityGroup',
+    ]);
   });
 
   it('scopes PassRole to the stack roles, never a wildcard', () => {
@@ -264,7 +292,6 @@ describe('LlmStack (control plane)', () => {
   });
 
   it('pre-creates per-engine, boot and seed log groups with the configured retention', () => {
-    template.resourceCountIs('AWS::Logs::LogGroup', 4);
     for (const name of ['/cloud-vm-llm/llamacpp', '/cloud-vm-llm/vllm', '/cloud-vm-llm/boot']) {
       template.hasResourceProperties('AWS::Logs::LogGroup', {
         LogGroupName: name,
@@ -282,6 +309,26 @@ describe('LlmStack (control plane)', () => {
     for (const g of Object.values(template.findResources('AWS::Logs::LogGroup'))) {
       expect(g.DeletionPolicy).toBe('Delete');
     }
+  });
+
+  it('pre-creates every control Lambda its own log group, so none keeps logs forever', () => {
+    // The regression this guards: without an explicit log group, Lambda
+    // auto-creates one with no retention policy at all — every invocation of
+    // every control Lambda kept forever.
+    for (const name of ['start', 'stop', 'deploy', 'seed', 'stats', 'env', 'update']) {
+      template.hasResourceProperties('AWS::Logs::LogGroup', {
+        LogGroupName: `/cloud-vm-llm/lambda/${name}`,
+        RetentionInDays: 3,
+      });
+    }
+    // Every Lambda function is wired to its pre-created group, not left to
+    // fall back to an auto-created one.
+    const fns = template.findResources('AWS::Lambda::Function');
+    for (const fn of Object.values(fns)) {
+      expect(fn.Properties.LoggingConfig?.LogGroup).toBeDefined();
+    }
+    // 4 instance-facing groups (llamacpp, vllm, boot, seed) + 7 Lambda groups.
+    template.resourceCountIs('AWS::Logs::LogGroup', 11);
   });
 
   it('gives the seed Lambda its own function, cap and concurrency bound', () => {
@@ -303,7 +350,7 @@ describe('LlmStack (control plane)', () => {
     // cannot drift apart.
     const fns = template.findResources('AWS::Lambda::Function');
     const stop = Object.values(fns).find((f) =>
-      String(f.Properties.Description).includes('Terminates environment instances'),
+      String(f.Properties.Description).includes('stop retention'),
     );
     expect(stop!.Properties.Environment.Variables.MAX_SEED_MINUTES).toBe('60');
     expect(stop!.Properties.Environment.Variables.SEED_STALL_MINUTES).toBe('10');
@@ -339,6 +386,19 @@ describe('LlmStack (control plane)', () => {
     sharedTemplate({ logRetentionDays: 7 }).hasResourceProperties('AWS::Logs::LogGroup', {
       LogGroupName: '/cloud-vm-llm/boot',
       RetentionInDays: 7,
+    });
+  });
+
+  it('honours a lambdaLogRetentionDays override, independent of the instance logs', () => {
+    const overridden = sharedTemplate({ lambdaLogRetentionDays: 14 });
+    overridden.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/cloud-vm-llm/lambda/seed',
+      RetentionInDays: 14,
+    });
+    // Unaffected by the Lambda-specific override.
+    overridden.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/cloud-vm-llm/boot',
+      RetentionInDays: 1,
     });
   });
 

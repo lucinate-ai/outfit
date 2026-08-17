@@ -324,7 +324,7 @@ export class LlmStack extends cdk.Stack {
     };
 
     const startFn = new nodejs.NodejsFunction(this, 'StartFn', {
-      description: 'Launches an environment instance (per-AZ capacity fallback) and waits until it serves',
+      description: 'Launches an environment instance (or re-wakes a stopped one; per-AZ capacity fallback) and waits until it serves',
       entry: path.join(__dirname, '..', 'lambda', 'start', 'index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -363,11 +363,29 @@ export class LlmStack extends cdk.Stack {
         resources: ['*'],
       }),
     );
+    // Re-wake: start a stopped instance of this environment. Tag-scoped, like
+    // the stop Lambda's actions.
+    startFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:StartInstances'],
+        resources: ['*'],
+        conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
+      }),
+    );
     startFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ec2:CreateTags'],
         resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
         conditions: { StringEquals: { 'ec2:CreateAction': 'RunInstances' } },
+      }),
+    );
+    // Started-At: the session start written when a stopped instance is
+    // re-woken — the max-runtime cap must measure the session, not first boot.
+    startFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:CreateTags'],
+        resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
+        conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
       }),
     );
     startFn.addToRolePolicy(
@@ -396,7 +414,8 @@ export class LlmStack extends cdk.Stack {
     );
 
     const stopFn = new nodejs.NodejsFunction(this, 'StopFn', {
-      description: 'Terminates environment instances - immediately (manual) or after idle (scheduled sweep)',
+      description:
+        'Stops idle environment instances (scheduled sweep) and terminates them after stop retention - or stops/terminates one immediately on request',
       entry: path.join(__dirname, '..', 'lambda', 'stop', 'index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -406,6 +425,7 @@ export class LlmStack extends cdk.Stack {
       environment: {
         ...commonEnv,
         IDLE_THRESHOLD_MINUTES: String(cfg.idleThresholdMinutes),
+        STOP_RETENTION_MINUTES: String(cfg.stopRetentionMinutes),
         GRACE_PERIOD_MINUTES: String(cfg.gracePeriodMinutes),
         MAX_RUNTIME_MINUTES: String(cfg.maxRuntimeMinutes),
         // The sweep's seed pass, layer three of the termination guarantee.
@@ -415,8 +435,16 @@ export class LlmStack extends cdk.Stack {
     });
     stopFn.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ['ec2:TerminateInstances'],
+        actions: ['ec2:TerminateInstances', 'ec2:StopInstances'],
         resources: ['*'],
+        conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
+      }),
+    );
+    // Stopped-At: the control plane's own stop time — EC2 has no equivalent.
+    stopFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:CreateTags'],
+        resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
         conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
       }),
     );
@@ -566,6 +594,32 @@ export class LlmStack extends cdk.Stack {
 
     const envUrl = envFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
+    // Update Lambda — handles arbitrary post-provision instance commands
+    // (currently: set-keep). The first command sets the Retain-Until tag.
+    const updateFn = new nodejs.NodejsFunction(this, 'UpdateFn', {
+      description: 'Arbitrary instance commands — currently: set-keep (retain instance)',
+      entry: path.join(__dirname, '..', 'lambda', 'update', 'index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 128,
+      environment: {
+        TAG_KEY,
+        TAG_VALUE,
+      },
+    });
+    // Describe to find the instance by tag; CreateTags to apply the Retain-Until tag.
+    // ec2:CreateTags does not support resource tag conditions, so it is broad.
+    updateFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:DescribeInstances', 'ec2:CreateTags'],
+        resources: ['*'],
+      }),
+    );
+
+    const updateUrl = updateFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
+
     new events.Rule(this, 'IdleCheckRule', {
       description: 'Periodic idle sweep across every environment instance',
       schedule: events.Schedule.rate(cdk.Duration.minutes(5)),
@@ -581,9 +635,12 @@ export class LlmStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'StatsUrl', { value: statsUrl.url });
     new cdk.CfnOutput(this, 'EnvUrl', { value: envUrl.url });
     new cdk.CfnOutput(this, 'SeedUrl', { value: seedUrl.url });
+    new cdk.CfnOutput(this, 'UpdateUrl', { value: updateUrl.url });
     new cdk.CfnOutput(this, 'Region', { value: this.region });
     new cdk.CfnOutput(this, 'WeightsBucket', { value: weightsBucket.bucketName });
     new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
+    // Consumed by the deploy Lambda (via SEED_* env vars) to launch the
+    // disposable seed instance.
     new cdk.CfnOutput(this, 'SeedInstanceProfileArn', { value: seedProfile.instanceProfileArn });
     new cdk.CfnOutput(this, 'SeedInstanceType', { value: cfg.seedInstanceType });
     new cdk.CfnOutput(this, 'SeedSubnetId', { value: vpc.publicSubnets[0].subnetId });
@@ -593,7 +650,7 @@ export class LlmStack extends cdk.Stack {
     // environment's address is its own EIP, allocated at `outfit remote
     // deploy` and returned by it.
     new cdk.CfnOutput(this, 'OutfitRemoteConfig', {
-      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","env_url":"${envUrl.url}","seed_url":"${seedUrl.url}","region":"${this.region}"}`,
+      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","env_url":"${envUrl.url}","seed_url":"${seedUrl.url}","update_url":"${updateUrl.url}","region":"${this.region}"}`,
     });
   }
 }

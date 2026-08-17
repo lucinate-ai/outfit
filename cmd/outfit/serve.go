@@ -8,19 +8,19 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/outfitsrc"
 	"github.com/lucinate-ai/outfit/internal/preset"
+	"github.com/spf13/cobra"
 )
 
 // llamaServerBinary is the llama.cpp server executable that `serve` launches.
@@ -153,26 +153,44 @@ func engineFor(provider string) (serveEngine, error) {
 // prints the command before running it. The Outfit path defaults to ./Outfit.
 // Serve is strictly foreground; with --api the control API is served alongside
 // the engine. Long-lived supervision is `outfit daemon`'s job.
-func cmdServe(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+func serveCmd() *cobra.Command {
 	var (
 		dryRun   bool
 		apiOn    bool
 		apiAddr  string
 		logLevel string
 	)
-	fs.BoolVar(&dryRun, "dry-run", false, "print the server command without running it")
-	fs.BoolVar(&dryRun, "n", false, "print the command without running it (shorthand)")
-	fs.BoolVar(&apiOn, "api", false, "expose the control API beside the foreground engine")
-	fs.BoolVar(&apiOn, "a", false, "expose the control API (shorthand)")
+	c := &cobra.Command{
+		Use:   "serve",
+		Short: "run the Outfit's inference server",
+		Long: `runs the inference server the Outfit's PROVIDER names — llamacpp
+(llama-server) or omlx (Apple Silicon). With a PRESET it turns the matching
+section into the command, reading it in that engine's flag vocabulary;
+otherwise it derives one from the Outfit's own instructions. Prints the
+command before running it; --dry-run/-n prints without launching the server.`,
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runServe(args, dryRun, apiOn, apiAddr, logLevel)
+		},
+	}
+	fs := c.Flags()
+	fs.BoolVarP(&dryRun, "dry-run", "n", false, "print the server command without running it")
+	fs.BoolVarP(&apiOn, "api", "a", false, "expose the control API beside the foreground engine")
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
 	// Accepted with or without --api, so the same command line works both
 	// ways. Without --api there is no API to summarise and nothing supervised,
 	// so it governs nothing — which is better than rejecting it.
 	fs.StringVar(&logLevel, "log-level", "", logLevelUsage)
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	c.ValidArgsFunction = aliasSlot
+	compRegister(c, "log-level", compLogLevel)
+	return c
+}
+
+// runServe is the body of `outfit serve`.
+func runServe(args []string, dryRun, apiOn bool, apiAddr, logLevel string) error {
 	// A mistyped level is refused up front, whether or not this serve will host
 	// the API — a flag outfit accepted and then ignored would be worse than a
 	// flag it rejected. The API path resolves it again once the Outfit's .env
@@ -182,8 +200,8 @@ func cmdServe(args []string) error {
 	}
 
 	var path string
-	if rest := fs.Args(); len(rest) > 0 {
-		path = rest[0]
+	if len(args) > 0 {
+		path = args[0]
 	}
 	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
 	if err != nil {
@@ -236,18 +254,12 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 		return nil, err
 	}
 
-	binary := engine.binary()
-	// A positional-model engine takes the model right after its subcommand,
-	// before any flags — riding along with the subcommand puts it there in
-	// both the preset and preset-less builds.
-	subcommand := engine.subcommand
-	if engine.positional != nil {
-		subcommand = append(append([]string{}, subcommand...), engine.positional(sel)...)
-	}
-	var argv []string
 	if sel.Preset != "" {
-		presetPath := resolvePresetPath(sel.Preset, outfitPath)
-		data, err := os.ReadFile(presetPath)
+		presetPath, err := resolvePresetPath(sel.Preset, outfitPath)
+		if err != nil {
+			return nil, err
+		}
+		data, err := outfitsrc.Fetch(presetPath)
 		if err != nil {
 			return nil, fmt.Errorf("reading preset %s: %w", presetPath, err)
 		}
@@ -261,39 +273,78 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", presetPath, err)
 		}
-		argv = pre.CommandIn(engine.dialect, binary, subcommand, sec, params)
+		argv := pre.CommandIn(engine.dialect, engine.binary(), subcommandFor(engine, sel), sec, params)
 		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
+		return argv, nil
+	}
+
+	if engine.needsModel && sel.Model == "" {
+		return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
+	}
+	argv := assembleEngineArgv(engine, subcommandFor(engine, sel), params, nil)
+	if sel.Model != "" {
+		fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
 	} else {
-		if engine.needsModel && sel.Model == "" {
-			return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
-		}
-		argv = append([]string{binary}, subcommand...)
-		argv = append(argv, engine.dialect.Flags(params)...)
-		if sel.Model != "" {
-			fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
-		} else {
-			// An engine that needs no model to start (oMLX serves a whole
-			// directory) has nothing to name but itself.
-			fmt.Printf("Starting %s from %s\n\n", sel.Provider, outfitPath)
-		}
+		// An engine that needs no model to start (oMLX serves a whole
+		// directory) has nothing to name but itself.
+		fmt.Printf("Starting %s from %s\n\n", sel.Provider, outfitPath)
 	}
 	return argv, nil
 }
 
-// resolvePresetPath resolves an Outfit's PRESET value: a relative one is taken
-// against the Outfit's own directory, so an Outfit and its preset travel
-// together (the same rule REMOTE uses).
-func resolvePresetPath(presetValue, outfitPath string) string {
-	if filepath.IsAbs(presetValue) {
-		return presetValue
+// subcommandFor returns the engine's subcommand with the positional model riding
+// along right after it (before any flags). It copies the engine's own subcommand
+// before appending, so a positional never aliases that slice.
+func subcommandFor(engine serveEngine, sel outfit.Selection) []string {
+	sub := append([]string{}, engine.subcommand...)
+	if engine.positional != nil {
+		sub = append(sub, engine.positional(sel)...)
 	}
-	return filepath.Join(filepath.Dir(outfitPath), presetValue)
+	return sub
+}
+
+// assembleEngineArgv is the one place that turns an engine and its params into a
+// command: the binary, its subcommand, the params rendered in the engine's
+// dialect, then any trailing args the caller appends (a deploy config's serveArgs).
+// The preset-less `serve` path and the daemon's deploy-config path both draw from
+// here, and the preset path uses subcommandFor for its subcommand.
+func assembleEngineArgv(engine serveEngine, subcommand []string, params []preset.Param, trailing []string) []string {
+	argv := append([]string{engine.binary()}, subcommand...)
+	argv = append(argv, engine.dialect.Flags(params)...)
+	argv = append(argv, trailing...)
+	return argv
+}
+
+// resolvePresetPath resolves an Outfit's PRESET value against the Outfit's
+// own source: a relative one resolves against the Outfit's local directory,
+// or against its URL when the Outfit was fetched from one, so an Outfit and
+// its preset travel together either way (the same rule REMOTE uses).
+func resolvePresetPath(presetValue, outfitPath string) (string, error) {
+	return outfitsrc.Resolve(outfitPath, presetValue)
+}
+
+// parseParallel validates an Outfit's PARALLEL value: a plain positive
+// integer count of concurrent request slots, with none of CONTEXT's k/m/g
+// suffix leniency — a slot count, not a size. Empty is not a valid input;
+// callers check sel.Parallel != "" first, exactly as they do for sel.Context.
+func parseParallel(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid PARALLEL %q: must be a positive integer", s)
+	}
+	return n, nil
 }
 
 // vllmServeParams turns the vLLM settings an Outfit states into preset
 // params. The model is deliberately absent — `vllm serve` takes it as its
 // positional argument (see the engine's positional func). ALIAS names what is
 // served, CONTEXT caps the model length, BASEURL binds the address.
+//
+// PARALLEL maps to --max-num-seqs, a concurrency cap independent of context:
+// vLLM shares one dynamically-allocated KV-cache pool across requests via
+// continuous batching, so --max-model-len (from CONTEXT) already bounds a
+// single request and is never scaled by how many run at once — unlike
+// llama.cpp, where --ctx-size is a total budget split across slots.
 func vllmServeParams(sel outfit.Selection) ([]preset.Param, error) {
 	var params []preset.Param
 	if sel.Alias != "" {
@@ -306,6 +357,13 @@ func vllmServeParams(sel outfit.Selection) ([]preset.Param, error) {
 		}
 		params = append(params, preset.Param{Key: "max-model-len", Value: strconv.Itoa(n)})
 	}
+	if sel.Parallel != "" {
+		n, err := parseParallel(sel.Parallel)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, preset.Param{Key: "max-num-seqs", Value: strconv.Itoa(n)})
+	}
 	bind, err := bindAddressParams(sel)
 	if err != nil {
 		return nil, err
@@ -314,24 +372,50 @@ func vllmServeParams(sel outfit.Selection) ([]preset.Param, error) {
 }
 
 // omlxServeParams turns the oMLX settings an Outfit states into preset params.
-// Only the bind address maps: oMLX serves a whole --model-dir and picks the
-// model per request, so MODEL and ALIAS keep their usual job of naming what the
-// harness asks for, and CONTEXT sizes the harness's window rather than the
+// The bind address and PARALLEL map: oMLX serves a whole --model-dir and picks
+// the model per request, so MODEL and ALIAS keep their usual job of naming what
+// the harness asks for, and CONTEXT sizes the harness's window rather than the
 // server (oMLX has no context flag). Everything else — the model directory,
 // memory guard, SSD cache — comes from the PRESET or from oMLX's own settings.
+//
+// PARALLEL maps to --max-concurrent-requests: like vLLM, oMLX serves
+// concurrent requests against its own paged/tiered KV cache rather than
+// dividing a fixed budget per slot, so there is no context flag to scale
+// either way.
 //
 // The API key is deliberately not passed: serve prints the command it runs, and
 // oMLX takes its key as a command-line flag, so passing one would put the secret
 // on screen and in the process table. Auth belongs in oMLX's own settings.
 func omlxServeParams(sel outfit.Selection) ([]preset.Param, error) {
-	return bindAddressParams(sel)
+	var params []preset.Param
+	if sel.Parallel != "" {
+		n, err := parseParallel(sel.Parallel)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, preset.Param{Key: "max-concurrent-requests", Value: strconv.Itoa(n)})
+	}
+	bind, err := bindAddressParams(sel)
+	if err != nil {
+		return nil, err
+	}
+	return append(params, bind...), nil
 }
 
 // llamacppServeParams turns the llama-server settings an Outfit states into
 // preset params: the provider-native MODEL supplies the model source (hf for a
-// Hugging Face repo, model for a .gguf path); ALIAS, CONTEXT, and BASEURL fill
-// in the rest. They seed a preset-less command and, with a preset, override its
-// values.
+// Hugging Face repo, model for a .gguf path); ALIAS, CONTEXT, PARALLEL, and
+// BASEURL fill in the rest. They seed a preset-less command and, with a
+// preset, override its values.
+//
+// PARALLEL maps to --parallel, the slot count. llama.cpp treats --ctx-size as
+// a total KV-cache budget divided across those slots, so when the Outfit
+// states CONTEXT too, the rendered ctx-size is scaled by the slot count —
+// context_tokens * n — rather than passed through unscaled, so CONTEXT keeps
+// meaning "context per request" the way it does for every other engine. A
+// CONTEXT supplied only by a PRESET's own ctx-size (the Outfit itself states
+// none) is left exactly as the preset wrote it: the multiply only applies to
+// an Outfit-stated CONTEXT.
 func llamacppServeParams(sel outfit.Selection) ([]preset.Param, error) {
 	var params []preset.Param
 	if sel.Model != "" {
@@ -344,10 +428,22 @@ func llamacppServeParams(sel outfit.Selection) ([]preset.Param, error) {
 	if sel.Alias != "" {
 		params = append(params, preset.Param{Key: "alias", Value: sel.Alias})
 	}
+	var parallel int
+	if sel.Parallel != "" {
+		n, err := parseParallel(sel.Parallel)
+		if err != nil {
+			return nil, err
+		}
+		parallel = n
+		params = append(params, preset.Param{Key: "parallel", Value: strconv.Itoa(n)})
+	}
 	if sel.Context != "" {
 		n, err := contextsize.Parse(sel.Context)
 		if err != nil {
 			return nil, err
+		}
+		if parallel > 0 {
+			n *= parallel
 		}
 		params = append(params, preset.Param{Key: "ctx-size", Value: strconv.Itoa(n)})
 	}
@@ -406,3 +502,6 @@ func hostPortFromURL(raw string) (host, port string, err error) {
 	}
 	return u.Hostname(), u.Port(), nil
 }
+
+// cmdServe runs the command through the tree — the seam the suite calls.
+func cmdServe(args []string) error { return execCmd(serveCmd(), args) }

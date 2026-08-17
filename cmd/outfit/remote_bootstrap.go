@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/lucinate-ai/outfit/internal/remote"
+	"github.com/spf13/cobra"
 )
 
 // controlPlaneStackName is the CloudFormation stack holding the account-level
@@ -123,7 +123,9 @@ func resolvePackageManagerName(flagVal string) (name string, pinned bool, err er
 		}
 		return flagVal, true, nil
 	}
-	if env := os.Getenv(packageManagerEnv); env != "" {
+	// The env leg of the precedence runs through the CLI's one Viper, like
+	// every other OUTFIT_ read the CLI owns; the flag keeps its say first.
+	if env := cliViper.GetString("remote_package_manager"); env != "" {
 		if err := validatePackageManagerName(env); err != nil {
 			return "", false, fmt.Errorf("%s: %w", packageManagerEnv, err)
 		}
@@ -136,51 +138,76 @@ func resolvePackageManagerName(flagVal string) (name string, pinned bool, err er
 // analogous to `cdk bootstrap` — by downloading the remote/ CDK project and
 // driving its control-plane deploy. It creates no EIP, instance, or environment;
 // those come from `outfit remote deploy`.
-func cmdRemoteBootstrap(args []string) error {
-	fs := flag.NewFlagSet("remote bootstrap", flag.ContinueOnError)
+func remoteBootstrapCmd() *cobra.Command {
 	var (
-		runnersFlag = fs.String("runners", "llamacpp,vllm", "comma-separated runner AMIs to bake")
-		hfToken     = fs.String("hf-token", "", "Hugging Face token for the shared secret (optional)")
-		ref         = fs.String("ref", "", "git ref of remote/ to download (default: matches this binary)")
-		dir         = fs.String("dir", "", "where to place the downloaded remote/ sources")
-		region      = fs.String("region", "", "AWS region (default: AWS_REGION or us-east-1)")
-		dryRun      = fs.Bool("dry-run", false, "print the plan and exit without doing anything")
-		assumeYes   = fs.Bool("yes", false, "skip the confirmation prompt")
-		wait        = fs.Bool("wait", false, "block until the AMI bake(s) finish")
-		forceBake   = fs.Bool("force-bake", false, "re-bake the AMIs even if already bootstrapped")
-		pkgMgr      = fs.String("package-manager", "", "package manager to use: pnpm or npm (default: auto-detect, preferring pnpm)")
+		runnersFlag string
+		hfToken     string
+		ref         string
+		dir         string
+		region      string
+		dryRun      bool
+		assumeYes   bool
+		wait        bool
+		forceBake   bool
+		pkgMgr      string
 	)
-	fs.BoolVar(dryRun, "n", false, "shorthand for --dry-run")
-	fs.BoolVar(assumeYes, "y", false, "shorthand for --yes")
-	if err := fs.Parse(args); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:   "bootstrap",
+		Short: "set up the once-per-account control plane",
+		Long: `does the once-per-account control-plane setup (Image Builder, the
+lifecycle Lambdas, shared bucket/roles/VPC) with a consent gate.`,
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: noPositionals,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			return runRemoteBootstrap(runnersFlag, hfToken, ref, dir, region, dryRun, assumeYes, wait, forceBake, pkgMgr)
+		},
 	}
+	fs := c.Flags()
+	fs.StringVar(&runnersFlag, "runners", "llamacpp,vllm", "comma-separated runner AMIs to bake")
+	fs.StringVar(&hfToken, "hf-token", "", "Hugging Face token for the shared secret (optional)")
+	fs.StringVar(&ref, "ref", "", "git ref of remote/ to download (default: matches this binary)")
+	fs.StringVar(&dir, "dir", "", "where to place the downloaded remote/ sources")
+	fs.StringVar(&region, "region", "", "AWS region (default: AWS_REGION or us-east-1)")
+	fs.BoolVarP(&dryRun, "dry-run", "n", false, "print the plan and exit without doing anything")
+	fs.BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt")
+	fs.BoolVar(&wait, "wait", false, "block until the AMI bake(s) finish")
+	fs.BoolVar(&forceBake, "force-bake", false, "re-bake the AMIs even if already bootstrapped")
+	fs.StringVar(&pkgMgr, "package-manager", "", "package manager to use: pnpm or npm (default: auto-detect, preferring pnpm)")
+	fs.SetInterspersed(false)
+	compRegister(c, "dir", compFiles)
+	return c
+}
 
-	runners, err := parseRunners(*runnersFlag)
+// runRemoteBootstrap is the body of `outfit remote bootstrap`.
+func runRemoteBootstrap(runnersFlag, hfToken, ref, dir, region string, dryRun, assumeYes, wait, forceBake bool, pkgMgr string) error {
+	runners, err := parseRunners(runnersFlag)
 	if err != nil {
 		return err
 	}
 
-	pmName, pmPinned, err := resolvePackageManagerName(*pkgMgr)
+	pmName, pmPinned, err := resolvePackageManagerName(pkgMgr)
 	if err != nil {
 		return err
 	}
 
-	resolvedRef := remote.ResolveRef(version, *ref)
+	resolvedRef := remote.ResolveRef(version, ref)
 	cdkDir, err := remote.SourceDir(resolvedRef)
 	if err != nil {
 		return err
 	}
 	pruneAfter := true
-	if *dir != "" {
-		cdkDir = *dir
+	if dir != "" {
+		cdkDir = dir
 		pruneAfter = false // an explicit --dir is the user's own; leave it alone
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	resolvedRegion := resolveRegion(*region)
+	resolvedRegion := resolveRegion(region)
 
 	// AWS is best-effort for the plan; it is hard-required for a real run.
 	account := "unknown"
@@ -198,7 +225,7 @@ func cmdRemoteBootstrap(args []string) error {
 	}
 
 	var pm packageManager
-	if !*dryRun {
+	if !dryRun {
 		selected, err := bootstrapPreflightFn(pmName, pmPinned)
 		if err != nil {
 			return err
@@ -214,10 +241,10 @@ func cmdRemoteBootstrap(args []string) error {
 
 	renderBootstrapPlan(account, resolvedRegion, runners, resolvedRef, cdkDir, alreadyBootstrapped, pm)
 
-	if *dryRun {
+	if dryRun {
 		return nil
 	}
-	if !*assumeYes && !confirmProceed() {
+	if !assumeYes && !confirmProceed() {
 		fmt.Fprintln(os.Stderr, "Aborted; nothing was created.")
 		return nil
 	}
@@ -225,24 +252,29 @@ func cmdRemoteBootstrap(args []string) error {
 	if err := bootstrapDownloadFn(ctx, resolvedRef, cdkDir); err != nil {
 		return err
 	}
-	if *hfToken != "" {
-		if err := upsertEnvVar(filepath.Join(cdkDir, ".env"), "HF_TOKEN", *hfToken); err != nil {
+	if hfToken != "" {
+		if err := upsertEnvVar(filepath.Join(cdkDir, ".env"), "HF_TOKEN", hfToken); err != nil {
 			return err
 		}
 	}
 	if err := setCdkContext(cdkDir, "runners", strings.Join(runners, ",")); err != nil {
 		return err
 	}
+	if outfitVersion := remote.ReleaseVersion(version); outfitVersion != "" {
+		if err := setCdkContext(cdkDir, "outfitVersion", outfitVersion); err != nil {
+			return err
+		}
+	}
 
 	fmt.Fprintf(os.Stderr, "\nUsing %s to run the CDK project.\n", pm.name)
-	if err := runBootstrapSequence(ctx, cdkDir, runners, alreadyBootstrapped, *forceBake, pm); err != nil {
+	if err := runBootstrapSequence(ctx, cdkDir, runners, alreadyBootstrapped, forceBake, pm); err != nil {
 		return err
 	}
 
 	fmt.Println("\nThe account is bootstrapped. Create an endpoint with:")
 	fmt.Println("  outfit remote deploy <env>   # names an environment; discovers this control plane")
 
-	if *wait {
+	if wait {
 		if credsErr != nil {
 			return fmt.Errorf("--wait needs AWS credentials to poll the bake")
 		}

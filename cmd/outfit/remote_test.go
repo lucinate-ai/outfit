@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -112,7 +111,7 @@ func TestRemoteDispatch(t *testing.T) {
 
 func TestRemote_Unconfigured(t *testing.T) {
 	isolateConfig(t)
-	for _, sub := range []string{"start", "stop", "status"} { // deploy needs an Outfit, covered separately
+	for _, sub := range []string{"start", "restart", "stop", "status"} { // deploy needs an Outfit, covered separately
 		if err := run([]string{"remote", sub}); err == nil || !strings.Contains(err.Error(), "not configured") {
 			t.Errorf("remote %s without config should explain setup, got %v", sub, err)
 		}
@@ -308,6 +307,233 @@ func TestRemoteStop_PrintsState(t *testing.T) {
 	})
 	if !strings.Contains(out, "state: stopping") {
 		t.Errorf("stop should print the state, got:\n%s", out)
+	}
+}
+
+func TestRemotePause_PrintsState(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var gotAction string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("pause should POST, got %s", r.Method)
+		}
+		gotAction = r.URL.Query().Get("action")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemotePause(nil); err != nil {
+			t.Errorf("cmdRemotePause: %v", err)
+		}
+	})
+	if gotAction != "pause" {
+		t.Errorf("pause must ask the stop Lambda for its pause mode, got action=%q", gotAction)
+	}
+	for _, want := range []string{"state: stopping", "outfit remote start", "outfit remote stop"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("pause output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// restartHandler routes a single shared server the way the control plane does:
+// GET is the status read, POST with action=pause is the pause-style stop, and a
+// bare POST is the wake. It records the stop's force parameter and call counts.
+func restartHandler(statusState string, gotForce *string, stopCalls, wakeCalls *int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			w.Write([]byte(fmt.Sprintf(`{"state":%q,"healthy":true,"base_url":"http://198.51.100.1:8000/v1"}`, statusState)))
+		case r.URL.Query().Get("action") == "pause":
+			*gotForce = r.URL.Query().Get("force")
+			*stopCalls++
+			w.Write([]byte(`{"state":"stopping"}`))
+		default:
+			*wakeCalls++
+			w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+		}
+	}
+}
+
+// A bare `remote restart` dispatches through the tree, stops then wakes, and
+// prints the base URL as confirmation the address is unchanged.
+func TestRemoteRestart_Flow(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var force string
+	var stops, wakes int
+	server := httptest.NewServer(restartHandler("running", &force, &stops, &wakes))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := run([]string{"remote", "restart"}); err != nil {
+			t.Errorf("remote restart: %v", err)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("restart should print the endpoint's base URL, got:\n%s", out)
+	}
+	if stops != 1 || wakes != 1 {
+		t.Errorf("expected one stop and one wake, got stops=%d wakes=%d", stops, wakes)
+	}
+	if force != "" {
+		t.Errorf("restart without --force must not send force, got %q", force)
+	}
+}
+
+// --force (long and short) marks the stop forced on the way over.
+func TestRemoteRestart_ForceFlag(t *testing.T) {
+	for _, flag := range []string{"--force", "-F"} {
+		t.Run(flag, func(t *testing.T) {
+			isolateConfig(t)
+			stubAWSEnv(t)
+			var force string
+			var stops, wakes int
+			server := httptest.NewServer(restartHandler("running", &force, &stops, &wakes))
+			defer server.Close()
+			writeRemoteConfig(t, server.URL)
+
+			out := captureStdout(t, func() {
+				if err := cmdRemoteRestart([]string{flag}); err != nil {
+					t.Errorf("remote restart %s: %v", flag, err)
+				}
+			})
+			if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+				t.Errorf("restart %s should print the base URL, got:\n%s", flag, out)
+			}
+			if force != "true" {
+				t.Errorf("restart %s must mark the stop forced, got force=%q", flag, force)
+			}
+			if stops != 1 || wakes != 1 {
+				t.Errorf("restart %s expected one stop and one wake, got stops=%d wakes=%d", flag, stops, wakes)
+			}
+		})
+	}
+}
+
+// --timeout parses as a duration like start's, and does not error.
+func TestRemoteRestart_TimeoutFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var force string
+	var stops, wakes int
+	server := httptest.NewServer(restartHandler("running", &force, &stops, &wakes))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteRestart([]string{"--timeout", "5m"}); err != nil {
+			t.Errorf("remote restart --timeout: %v", err)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("restart --timeout should print the base URL, got:\n%s", out)
+	}
+}
+
+// Restarting an environment that is already stopped behaves as a start: the
+// pause-style stop is a no-op, and the wake still brings the endpoint back.
+func TestRemoteRestart_AlreadyStoppedBehavesAsStart(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var force string
+	var stops, wakes int
+	server := httptest.NewServer(restartHandler("stopped", &force, &stops, &wakes))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteRestart(nil); err != nil {
+			t.Errorf("remote restart on a stopped environment: %v", err)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("restart of a stopped environment should print the base URL, got:\n%s", out)
+	}
+	if wakes != 1 {
+		t.Errorf("restart of a stopped environment should still wake, got wakes=%d", wakes)
+	}
+}
+
+// A failed status check does not gate the restart: the stop Lambda is correct
+// for every state, so the command skips the status line and goes ahead, and the
+// status line stays absent rather than claiming a state it never read.
+func TestRemoteRestart_StatusFailureDoesNotGate(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message":"cannot read status"}`))
+			return
+		}
+		if r.URL.Query().Get("action") == "pause" {
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		errOut := captureStderr(t, func() {
+			if err := cmdRemoteRestart(nil); err != nil {
+				t.Errorf("remote restart after a failed status check: %v", err)
+			}
+		})
+		if strings.Contains(errOut, "the instance is") {
+			t.Errorf("no status line should be printed when the status check fails:\n%s", errOut)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("a failed status check should not block the restart, got:\n%s", out)
+	}
+}
+
+// When the stop took effect and the wake then fails, the recovery hint reaches
+// the user as the command's error: the instance is stopped, and start brings
+// it back.
+func TestRemoteRestart_WakeFailureReportsRecovery(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("action") == "pause" {
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"terminated","message":"cannot start"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	err := cmdRemoteRestart(nil)
+	if err == nil {
+		t.Fatal("expected a wake failure error")
+	}
+	if !strings.Contains(err.Error(), "stopped") || !strings.Contains(err.Error(), "outfit remote start") {
+		t.Errorf("expected the recovery hint in the error, got %v", err)
+	}
+}
+
+// The parent fallback names restart in both its usage line and its
+// unknown-subcommand list, so a mistyped or bare `remote` points to it.
+func TestRemote_RestartInUsageAndUnknownList(t *testing.T) {
+	isolateConfig(t)
+	if err := run([]string{"remote"}); err == nil || !strings.Contains(err.Error(), "restart") {
+		t.Errorf("bare remote usage should name restart, got %v", err)
+	}
+	if err := run([]string{"remote", "bogus"}); err == nil || !strings.Contains(err.Error(), "restart") {
+		t.Errorf("unknown-subcommand list should name restart, got %v", err)
 	}
 }
 
@@ -755,74 +981,6 @@ func TestFormatBytes(t *testing.T) {
 	}
 }
 
-func TestSortFlagsBeforeArgs(t *testing.T) {
-	// A flag set with one boolean and one value-taking flag, so the helper's
-	// two cases are both covered.
-	newFS := func() *flag.FlagSet {
-		fs := flag.NewFlagSet("test", flag.ContinueOnError)
-		fs.Bool("env", false, "a boolean flag")
-		fs.Bool("e", false, "a boolean shorthand")
-		fs.String("fleet", "", "a flag that takes a value")
-		return fs
-	}
-	tests := []struct {
-		name string
-		in   []string
-		want []string
-	}{
-		{"empty", []string{}, []string{}},
-		{"bool only", []string{"-env"}, []string{"-env"}},
-		{"positional only", []string{"path"}, []string{"path"}},
-		{"bool after positional", []string{"path", "-env"}, []string{"-env", "path"}},
-		{"bool before positional", []string{"-env", "path"}, []string{"-env", "path"}},
-		{"bool shorthand after positional", []string{"path", "-e"}, []string{"-e", "path"}},
-		// A value-taking flag must keep its value when it is moved: without
-		// that, the positional gets bound to the flag instead.
-		{
-			"value flag after positional",
-			[]string{"node", "--fleet", "f.yaml"},
-			[]string{"--fleet", "f.yaml", "node"},
-		},
-		{
-			"inline value needs no companion",
-			[]string{"node", "--fleet=f.yaml"},
-			[]string{"--fleet=f.yaml", "node"},
-		},
-		{
-			"value flag keeps its value among positionals",
-			[]string{"a", "--fleet", "f.yaml", "b"},
-			[]string{"--fleet", "f.yaml", "a", "b"},
-		},
-		// Everything after -- is positional, even if it looks like a flag.
-		// Positional order is preserved, since callers index into it.
-		{
-			"double dash ends flags",
-			[]string{"a", "--", "-notaflag"},
-			[]string{"--", "a", "-notaflag"},
-		},
-		// An unknown flag must not swallow the positional; the flag package
-		// reports it.
-		{
-			"unknown flag does not consume",
-			[]string{"node", "--nope"},
-			[]string{"--nope", "node"},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := sortFlagsBeforeArgs(newFS(), tc.in)
-			if len(got) != len(tc.want) {
-				t.Fatalf("sortFlagsBeforeArgs(%v) = %v, want %v", tc.in, got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("sortFlagsBeforeArgs(%v) = %v, want %v", tc.in, got, tc.want)
-				}
-			}
-		})
-	}
-}
-
 func TestRemoteMetrics_WatchMode(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)
@@ -1160,5 +1318,84 @@ func TestRemoteMetrics_WatchBuffersBeforeClear(t *testing.T) {
 	if !strings.Contains(between, clearScreen) {
 		t.Errorf("expected clear-screen escape between first and second render.\n"+
 			"Output (%d bytes):\n%s", len(out), out)
+	}
+}
+
+// TestRemoteKeep sets the retention deadline.
+func TestRemoteKeep_PrintsDeadline(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("cmd") != "set-keep" {
+			t.Errorf("expected cmd=set-keep, got %q", r.URL.Query().Get("cmd"))
+		}
+		if r.URL.Query().Get("retainUntil") == "" {
+			t.Error("expected retainUntil query param")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment":"test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	// Also need to write the update URL.
+	path := must1(remote.ConfigPath())
+	data := must1(os.ReadFile(path))
+	var cfg remote.Config
+	json.Unmarshal(data, &cfg)
+	cfg.UpdateURL = server.URL
+	os.WriteFile(path, must1(json.Marshal(cfg)), 0o600)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteKeep([]string{"4h"}); err != nil {
+			t.Errorf("cmdRemoteKeep: %v", err)
+		}
+	})
+	if !strings.Contains(out, "retain until:") {
+		t.Errorf("keep should print the deadline, got:\n%s", out)
+	}
+}
+
+// TestRemoteKeep_MissingDuration fails.
+func TestRemoteKeep_MissingDuration(t *testing.T) {
+	err := cmdRemoteKeep(nil)
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("expected usage error, got %v", err)
+	}
+}
+
+// TestRemoteKeep_InvalidDuration fails.
+func TestRemoteKeep_InvalidDuration(t *testing.T) {
+	err := cmdRemoteKeep([]string{"4hours"})
+	if err == nil || !strings.Contains(err.Error(), "invalid duration") {
+		t.Errorf("expected duration parse error, got %v", err)
+	}
+}
+
+// TestRemoteStart_KeepFlag passes the retainUntil parameter.
+func TestRemoteStart_KeepFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var gotRetainUntil string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	// Probe reachability will fail, but that's stderr and doesn't affect the test.
+	out := captureStdout(t, func() {
+		cmdRemoteStart([]string{"--keep", "2h"})
+	})
+	// The keep deadline should be reported on stderr (via progress).
+	// We can check that the request included the retainUntil parameter.
+	if gotRetainUntil == "" {
+		t.Error("expected retainUntil query param on start with --keep")
+	}
+	// stdout should only have the export lines (no retain until on stdout).
+	if strings.Contains(out, "retain until") {
+		t.Errorf("retain until should not appear on stdout, got:\n%s", out)
 	}
 }

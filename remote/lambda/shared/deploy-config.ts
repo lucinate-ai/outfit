@@ -14,6 +14,39 @@ export const RUNNERS = ['vllm', 'llamacpp'] as const;
 export type Runner = (typeof RUNNERS)[number];
 
 /**
+ * The companion weights a deployment may name beside its main weights: further
+ * files from the *same* Hugging Face repo that the engine loads in addition to
+ * them. The role, not the filename, says what the engine does with the file —
+ * so the runtime never guesses from what the publisher happened to call it.
+ *
+ * A closed set, validated when the config is accepted: an unknown role is a
+ * deploy-time error rather than an instance that silently starts without the
+ * flag it was meant to carry.
+ */
+export const COMPANION_ROLES = ['draft', 'mmproj'] as const;
+export type CompanionRole = (typeof COMPANION_ROLES)[number];
+
+export function isCompanionRole(value: unknown): value is CompanionRole {
+  return typeof value === 'string' && (COMPANION_ROLES as readonly string[]).includes(value);
+}
+
+/**
+ * The fixed on-disk name a companion is normalised to, by role. The seed
+ * renames to this and the runner spec points its flag at it, so neither has to
+ * know the source filename and the two cannot disagree.
+ */
+export function companionFileName(role: CompanionRole): string {
+  return `${role}.gguf`;
+}
+
+/**
+ * What a companion filename may contain. Deliberately narrow: the value is
+ * interpolated into generated shell, so the charset is the guard rather than
+ * multi-layer quoting.
+ */
+export const COMPANION_FILENAME = /^[A-Za-z0-9._-]+$/;
+
+/**
  * The placeholder CDK creates the deploy-config parameter with. It is a
  * constant, so a later `cdk deploy` never reasserts (clobbers) a real config
  * that `outfit remote deploy` or a manual edit wrote — the parameter is
@@ -63,10 +96,28 @@ export interface DeployConfig {
   weightsPrefix: string;
   /** Context window in tokens — vLLM's --max-model-len / llama.cpp's --ctx-size. */
   contextSize: number;
+  /**
+   * Concurrent request slots. Optional; absent/undefined means unset — no
+   * parallelism flag, contextSize used unscaled. This value is only stored
+   * and relayed here (via runners/daemon-boot.ts, unchanged, into the JSON
+   * the instance's own outfit daemon reads back); the daemon's Go code —
+   * the same argvFromDeployConfig path a local `outfit serve` also runs
+   * through — is what scales contextSize by it for llama.cpp (--ctx-size is
+   * a total budget divided across --parallel slots) and leaves it unscaled
+   * for vLLM (--max-num-seqs is an independent concurrency cap).
+   */
+  parallel?: number;
   /** The model name the API reports and clients request. */
   servedModelName: string;
   /** Runner-specific extra flags appended to the serve command, pre-tokenised. */
   serveArgs: string[];
+  /**
+   * Optional companion weights, keyed by role. Each value is a *filename
+   * within the model's own repo* (never a path) — a companion ships beside the
+   * weights, so naming one adds no new source, credential or trust boundary.
+   * Absent or `{}` reproduces the pre-companion behaviour exactly.
+   */
+  companions: Partial<Record<CompanionRole, string>>;
 }
 
 /**
@@ -96,6 +147,13 @@ export function parseDeployConfig(raw: string | undefined): DeployConfig {
   if (!Number.isInteger(contextSize) || contextSize <= 0) {
     throw new Error(`deploy-config.contextSize must be a positive integer, got ${obj.contextSize}`);
   }
+  let parallel: number | undefined;
+  if (obj.parallel !== undefined) {
+    parallel = Number(obj.parallel);
+    if (!Number.isInteger(parallel) || parallel <= 0) {
+      throw new Error(`deploy-config.parallel must be a positive integer, got ${obj.parallel}`);
+    }
+  }
   const serveArgs = obj.serveArgs ?? [];
   if (!Array.isArray(serveArgs) || serveArgs.some((a) => typeof a !== 'string')) {
     throw new Error('deploy-config.serveArgs must be an array of strings');
@@ -108,9 +166,57 @@ export function parseDeployConfig(raw: string | undefined): DeployConfig {
     // Derived, so any weightsPrefix in the request body is ignored.
     weightsPrefix: weightsPrefixFor(obj.runner, modelId, quant),
     contextSize,
+    parallel,
     servedModelName,
     serveArgs: serveArgs as string[],
+    companions: parseCompanions(obj.companions),
   };
+}
+
+/**
+ * Validate the optional companions map. Absent is `{}` — the pre-companion
+ * shape — so configs stored before companions existed parse unchanged.
+ *
+ * A value is a filename *in the model's repo*, so a path separator is rejected
+ * rather than quietly accepted: it would either escape the download directory
+ * or name a file the repo does not have, and both fail 20 minutes later inside
+ * a seed instance where nobody is watching.
+ */
+function parseCompanions(raw: unknown): Partial<Record<CompanionRole, string>> {
+  if (raw === undefined || raw === null) {
+    return {};
+  }
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('deploy-config.companions must be an object keyed by companion role');
+  }
+  const companions: Partial<Record<CompanionRole, string>> = {};
+  for (const [role, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isCompanionRole(role)) {
+      throw new Error(
+        `deploy-config.companions has unknown role ${JSON.stringify(role)}; supported roles are ${COMPANION_ROLES.join('/')}`,
+      );
+    }
+    if (typeof value !== 'string' || value === '') {
+      throw new Error(`deploy-config.companions.${role} must be a non-empty filename`);
+    }
+    if (value.includes('/') || value.includes('\\')) {
+      throw new Error(
+        `deploy-config.companions.${role} must be a filename within the model repo, not a path (got ${JSON.stringify(value)})`,
+      );
+    }
+    // The name is interpolated into the seed's shell script and into a Python
+    // literal inside it. Rather than quote correctly through both layers, the
+    // charset is restricted to what real GGUF filenames use — so a name that
+    // could break out of either is rejected here, where the error is visible,
+    // instead of inside a seed instance nobody is watching.
+    if (!COMPANION_FILENAME.test(value)) {
+      throw new Error(
+        `deploy-config.companions.${role} must match ${COMPANION_FILENAME} (got ${JSON.stringify(value)})`,
+      );
+    }
+    companions[role] = value;
+  }
+  return companions;
 }
 
 function requireString(obj: Record<string, unknown>, key: string): string {

@@ -217,6 +217,75 @@ func TestNoWakeFailsWithTheNodeTable(t *testing.T) {
 	}
 }
 
+// routedOutfitWith writes a routed Outfit carrying extra instructions, for the
+// cases where what the Outfit says about the *engine* decides whether a wake
+// can happen at all.
+func routedOutfitWith(t *testing.T, model, fleetPath, extra string) string {
+	t.Helper()
+	dir := t.TempDir()
+	body := "PROVIDER llamacpp\nMODEL " + model + "\n" + extra
+	if fleetPath != "" {
+		body += "FLEET " + fleetPath + "\n"
+	}
+	mustWrite(t, filepath.Join(dir, "Outfit"), body)
+	return dir
+}
+
+// A wake turns the Outfit into something to start, so an unusable PARALLEL
+// stops it there — with the reason, rather than launching an engine with a
+// slot count nobody could parse.
+func TestWakeRefusesAnUnusableParallel(t *testing.T) {
+	node := newRoutableNode(t, "", false, 0)
+	dir := t.TempDir()
+	fleetPath := fleetFileIn(t, dir, "nodes:\n"+node.entry("idle-box"))
+	outfitDir := routedOutfitWith(t, "qwen3-27b", fleetPath, "PARALLEL 0\n")
+
+	sel, path, err := readOutfit("test", outfitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureStderr(t, func() {
+		_, err := routeThroughFleet(sel, path, routeOptions{})
+		if err == nil {
+			t.Fatal("a wake with an unusable PARALLEL should fail")
+		}
+		if !strings.Contains(err.Error(), "cannot be turned into something to start") {
+			t.Errorf("error should say the Outfit cannot start anything, got:\n%v", err)
+		}
+		if !strings.Contains(err.Error(), "PARALLEL") {
+			t.Errorf("error should name the offending instruction, got:\n%v", err)
+		}
+	})
+	if node.started {
+		t.Error("an engine was started from an Outfit that could not be turned into a command")
+	}
+}
+
+// The other side of the same seam: deriving the start config is deliberately
+// not fatal while merely *choosing* a node, so an Outfit that could not start
+// an engine still routes to one already serving the model. Failing here would
+// take a working launch away for the sake of a value it never needs.
+func TestRoutingToARunningNodeToleratesAnUnusableParallel(t *testing.T) {
+	node := newRoutableNode(t, "qwen3-27b", true, 300)
+	dir := t.TempDir()
+	fleetPath := fleetFileIn(t, dir, "nodes:\n"+node.entry("gpu-box"))
+	outfitDir := routedOutfitWith(t, "qwen3-27b", fleetPath, "PARALLEL 0\n")
+
+	sel, path, err := readOutfit("test", outfitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureStderr(t, func() {
+		c, err := routeThroughFleet(sel, path, routeOptions{})
+		if err != nil {
+			t.Fatalf("a node already serving the model should still be chosen: %v", err)
+		}
+		if c == nil || c.Node.Name != "gpu-box" {
+			t.Fatalf("expected to route to gpu-box, got %+v", c)
+		}
+	})
+}
+
 // A FLEET naming a URL is the gateway shape: it parses, and says plainly that
 // it is not implemented rather than being treated as a filename.
 func TestFleetURLIsRefusedAsUnimplemented(t *testing.T) {

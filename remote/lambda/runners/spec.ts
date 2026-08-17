@@ -28,6 +28,17 @@ export interface RunnerSpec {
    */
   seedSelection(cfg: DeployConfig): SeedSelection;
   /**
+   * The flags naming this runner's companion weights on disk, given where the
+   * weights were synced. Role -> flag is runner knowledge, so it lives here
+   * rather than in the shared layer, and a role a runner has no use for is
+   * simply ignored — inert, not fatal, so naming a companion for a runner that
+   * cannot use one seeds a spare file rather than failing the wake.
+   *
+   * Returns [] when the config names no companions, which is what keeps a
+   * pre-companion deployment's command byte-identical.
+   */
+  companionArgs(cfg: DeployConfig, modelDir: string): string[];
+  /**
    * Inference boot-script fragment: the runner's key delivery (env file or
    * key file), then the shared daemon boot that hands the engine to
    * `outfit daemon`.

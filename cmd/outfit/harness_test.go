@@ -147,6 +147,26 @@ func TestHarness_OutfitDefaultsToCurrentDirectory(t *testing.T) {
 	}
 }
 
+// TestHarness_BareOutfitFlagForwardsThePositional checks the NoOptDefVal case a
+// bool-flag flag package used to make free: a bare -O must apply the default
+// Outfit and hand the following positional to the harness, not swallow it.
+func TestHarness_BareOutfitFlagForwardsThePositional(t *testing.T) {
+	home := isolateConfig(t)
+
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "Outfit"), "PROVIDER llamacpp\nMODEL gemma\n")
+	t.Chdir(dir)
+
+	forwarded, _ := launchedArgs(t, []string{"-O", "run", "hello"})
+	if forwarded != "run\nhello" {
+		t.Errorf("forwarded args = %q, want \"run\\nhello\"", forwarded)
+	}
+	m := readConfigMap(t, filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if m["model"] != "llamacpp/gemma" {
+		t.Errorf("./Outfit was not applied: default model = %v", m["model"])
+	}
+}
+
 // TestHarness_OutfitErrors covers the ways --outfit can be given wrongly: no
 // Outfit to default to, an unreadable path, and a path left detached from the
 // flag (which would otherwise be forwarded to the harness).

@@ -9,8 +9,9 @@ VPC and the AMI bake pipelines — is deployed **once per account** by
 own Elastic IP, API key and allowed CIDR — are created on it by
 `outfit remote deploy`, as many as you need side by side. An environment's GPU
 instance exists only while you are actually using it: the start Lambda
-launches it on demand, and the stop Lambda's idle sweep terminates it after a
-period of idleness.
+launches it on demand (and re-wakes it when it is merely stopped), and the
+stop Lambda's idle sweep stops it after a period of idleness, then terminates
+it after a further retention period.
 
 The inference engine is **pluggable** — [llama.cpp](https://github.com/ggml-org/llama.cpp)
 or [vLLM](https://docs.vllm.ai). The deployed default is llama.cpp, serving
@@ -55,8 +56,9 @@ outfit remote deploy ─▶ deploy Lambda ─▶ creates env <name>: EIP, SG (yo
 outfit remote start ─SigV4▶ start Lambda ─ RunInstances (try each AZ) ─▶ EC2 g6e.xlarge
 outfit remote status ──?env▶ (Function URL,  + the env's EIP, SSM)      │ L40S 48GB
 outfit remote stop ───────▶ stop Lambda        AWS_IAM auth             │ s3 sync weights
-                                 ▲                                      │ engine on :8000
-EventBridge rate(5 min) ─────────┘ (idle sweep over EVERY environment)  ▼
+outfit remote pause ──────▶  (stop, not terminate)                      │ engine on :8000
+                                  ▲
+EventBridge rate(5 min) ─────────┘ (idle sweep: stop, then terminate)  ▼
 coding agent ── OPENAI_BASE_URL=http://<env EIP>:8000/v1 + api key ──▶ direct HTTP
 ```
 
@@ -171,13 +173,16 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `seedStallMinutes` | `10` | Silence after which a seed is treated as stalled and reaped early |
 | `maxConcurrentSeeds` | `3` | Bound on seeds in flight, so a caller in a loop cannot launch unbounded compute |
 | `seedLogRetentionDays` | `3` | Seed records — longer than engine logs, since they record what is in the bucket and why |
+| `logRetentionDays` | `1` | Per-engine and boot logs — short, since they exist to catch a short-lived instance's crash, not for audit |
+| `lambdaLogRetentionDays` | `3` | The control Lambdas' own execution logs — without this, Lambda auto-creates a log group with no retention and keeps every invocation forever |
 | `imageVolumeGb` | `80` | AMI root — fits the OS + engine + the model synced at boot |
-| `llamacppRelease` | `b10107` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
+| `llamacppRelease` | `b10435` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
 | `vllmVersion` | `0.26.0` | vLLM version installed into that AMI's venv (`uv pip install`) |
 | `nvidiaDriverPackage` | `nvidia-driver-570-server-open` | Driver installed in both AMIs |
-| `idleThresholdMinutes` | `15` | Terminate after this long without requests |
-| `gracePeriodMinutes` | `30` | Never terminate this soon after boot (covers the cold load) |
-| `maxRuntimeMinutes` | `240` | Hard terminate this long after boot, even if busy |
+| `idleThresholdMinutes` | `15` | Stop after this long without requests |
+| `stopRetentionMinutes` | `60` | Keep a stopped instance (re-wakeable) this long before terminating it |
+| `gracePeriodMinutes` | `30` | Never stop this soon after boot (covers the cold load) |
+| `maxRuntimeMinutes` | `240` | Hard stop this long after boot, even if busy |
 
 The **model, quant, context window and engine flags are not in this table** —
 they come from the `Outfit` and its preset via `outfit remote deploy`, so
@@ -215,6 +220,30 @@ its `MODEL` — both AMIs stay baked, so it is a deploy, not a rebuild. The star
 Lambda launches the AMI matching the engine the environment's deploy-config
 names, so nothing else has to agree.
 
+#### Companion weights
+
+A model published with extra files beside its weights — a speculative-decoding
+drafter, a perception encoder — can carry them too. The deploy-config names
+them by **role**, and `outfit remote deploy` fills that in from the preset keys
+that already drive a local serve:
+
+| Preset key | Role | Synced to | Engine flag |
+|---|---|---|---|
+| `spec-draft-model` (`md`) | `draft` | `draft.gguf` | `--spec-draft-model` |
+| `mmproj` (`mm`) | `mmproj` | `mmproj.gguf` | `--mmproj` |
+
+Only the **filename** travels: a companion ships in the model's own repo, so
+the preset's local path is dropped and the seed fetches that name from Hugging
+Face. The deployment then names the file at its own synced path, so nothing
+depends on where you keep it locally.
+
+How the engine *uses* a companion is still yours — `--spec-type draft-dflash`
+stays in the preset and passes through untouched.
+
+Adding a companion to a model already in S3 re-seeds it: presence is judged
+over the whole expected set, so the instance can never start pointing at a
+companion that was never synced.
+
 ### First boot
 
 A wake is an instance launch, an **S3 sync of the weights** (~2–4 min,
@@ -225,7 +254,7 @@ decode is around 28 tokens/s. Watch a wake:
 
 ```sh
 pnpm console                                 # SSM shell onto the running instance
-tail -f /root/.config/outfit/daemon/engine.log   # engine logs (both runners)
+tail -f /var/lib/outfit/daemon/engine.log    # engine logs (both runners)
 tail -f /var/log/cloud-init-output.log       # boot: s3 sync progress
 ```
 
@@ -237,11 +266,12 @@ its `REMOTE` names the environment `deploy` registered under
 reads `./Outfit`):
 
 ```sh
-outfit remote start    # boots the instance, blocks until it is serving,
-                       # prints OPENAI_BASE_URL + OPENAI_API_KEY exports
+outfit remote start    # boots (or re-wakes a stopped) the instance, blocks
+                        # until it is serving, prints OPENAI_BASE_URL + OPENAI_API_KEY exports
 outfit apply           # points your coding agent at the endpoint
 outfit remote status   # instance state + endpoint health
-outfit remote stop     # stop immediately instead of waiting for the idle timer
+outfit remote pause    # stop now (no terminate); a later start re-wakes it
+outfit remote stop     # terminate now instead of waiting for the idle timer
 ```
 
 `outfit apply` writes the endpoint's base URL and API key into your harness
@@ -268,11 +298,17 @@ curl "$OPENAI_BASE_URL/chat/completions" \
 The on-instance outfit daemon reads its engine's request/token counters every
 15 seconds and keeps track of when the engine was last doing work, which it
 reports as `lastActiveAt` and `idleSeconds` on `/v1/status`. Every 5 minutes
-the stop Lambda asks for that (via SSM) and **terminates** the instance once
+the stop Lambda asks for that (via SSM) and **stops** the instance once
 `idleSeconds` passes `idleThresholdMinutes`. With defaults, expect that
-**15–20 minutes** after the last request. Terminated means $0 compute and no
-volume left behind — the next `outfit remote start` launches a fresh one from
-the AMI.
+**15–20 minutes** after the last request.
+
+Stopping (rather than terminating) keeps the boot disk and the weights the
+boot synced onto it, so the next `outfit remote start` **re-wakes** the
+instance — a boot without a fresh launch and a no-op S3 sync — instead of
+launching one from the AMI. The stopped instance is billed for its volume only,
+not compute, and the sweep **terminates** it once it has been stopped longer
+than `stopRetentionMinutes` (default 1 h): after that, the next start is a
+fresh launch again. `outfit remote pause` does the same stop on purpose.
 
 Sampling on the box is what makes this reliable: a busy endpoint that happens
 to have nothing in flight at the moment a 5-minute sweep lands used to read as
@@ -280,18 +316,19 @@ idle, because that single sample was the entire signal. Sixty samples between
 sweeps cannot miss traffic the way one can.
 
 If the daemon cannot be reached, or answers without a last-active time, the
-instance is treated as showing no activity and is still terminated at the
+instance is treated as showing no activity and is still stopped at the
 threshold — deliberately, so a wedged box does not run up GPU-hours unnoticed.
 That second case is also why the **runtime AMIs must be re-baked before the
 control plane is deployed**: an outfit older than daemon-owned idle detection
 reports no last-active time, and there is no fallback to counter scraping.
 
-There is also a hard cap: `maxRuntimeMinutes` (default 4 hours) terminates the
-instance that long after it started **even if requests are still flowing**, as
-a backstop against a runaway session. Each launch resets the clock, so it caps
-a session, not anything cumulative — if you hit it mid-work, `outfit remote
-start` brings the endpoint back for another 4 hours. Like the idle stop, it
-lands on the next 5-minute tick.
+There is also a hard cap: `maxRuntimeMinutes` (default 4 hours) stops the
+instance that long after its session started **even if requests are still
+flowing**, as a backstop against a runaway session. A session begins at launch
+or re-wake (the control plane records both on the instance), so it caps one
+running session, not anything cumulative — if you hit it mid-work, `outfit
+remote start` brings the endpoint back for another 4 hours. Like the idle
+stop, it lands on the next 5-minute tick.
 
 **Pinning an instance up**: tag it `Retain-Until` with a UTC ISO-8601 time and
 neither the idle timer nor the hard cap will touch it until then — handy while
@@ -306,15 +343,18 @@ aws ec2 create-tags --resources <instance id> \
 
 At rest (nothing running) the endpoint costs only the **Elastic IP, the S3
 weights (~$0.60/mo for the 26 GB GGUF), the AMI snapshots, and Secrets
-Manager — roughly $6–7/month** — because the instance is terminated, not stopped, so there
-is no idle EBS volume. While running it is **$1.86/hour in us-east-1**; ~2 h of
+Manager — roughly $6–7/month**. Between the idle stop and the instance's
+termination after `stopRetentionMinutes`, its stopped root volume adds a small
+EBS charge; long-term idle costs the same as today,
+because the sweep does terminate eventually. While running it is
+**$1.86/hour in us-east-1**; ~2 h of
 coding a day lands around $90/month. Full breakdown in
 [docs/costs.md](docs/costs.md).
 
 ## Operations
 
 - **Logs**: `pnpm console` (an SSM shell onto the running instance) then
-  `tail -f /root/.config/outfit/daemon/engine.log` (the engine, both runners) or
+  `tail -f /var/lib/outfit/daemon/engine.log` (the engine, both runners) or
   `tail -f /var/log/cloud-init-output.log` (boot / S3 sync). The engine log and
   the boot log are also shipped to CloudWatch — groups `/cloud-vm-llm/<engine>`
   and `/cloud-vm-llm/boot`, stream `<env>/<instance-id>` — so they survive the
@@ -337,8 +377,10 @@ coding a day lands around $90/month. Full breakdown in
   starts a seed automatically when the weights are missing and prints the id to
   follow. Other subcommands: `outfit remote seed ls` (what is in flight, with
   progress) and `outfit remote seed stop <seed-id>`.
-- **Force a re-seed** of weights already in S3: `outfit remote seed start
-  --force`. An ordinary start does nothing when the weights are already there.
+- **Force a re-seed** of weights already in S3: either `outfit remote seed
+  start --force`, or `outfit remote deploy --reseed` to re-fetch and redeploy
+  in one step. An ordinary start/deploy does nothing when the weights are
+  already there.
 - **Pin the revision** a seed fetches: `outfit remote seed start --revision
   <commit>`. Without one, the repository's default branch is used and the commit
   it resolved to is recorded in the prefix's `_seed.json`.
@@ -374,10 +416,10 @@ prefix in place unused, or to re-seed it deliberately with
 |---|---|
 | Engine state (idle/running/stopped/crashed) | `curl -s 127.0.0.1:4242/v1/status` |
 | Engine + host metrics | `curl -s 127.0.0.1:4242/v1/metrics` |
-| Follow the engine's logs | `tail -f /root/.config/outfit/daemon/engine.log` |
-| Why it won't start | `tail -50 /root/.config/outfit/daemon/engine.log` (or the boot log below for a pre-engine failure) |
+| Follow the engine's logs | `tail -f /var/lib/outfit/daemon/engine.log` |
+| Why it won't start | `tail -50 /var/lib/outfit/daemon/engine.log` (or the boot log below for a pre-engine failure) |
 | Is it up? | `systemctl is-active outfit-daemon` · `ss -ltn \| grep :8000` |
-| Is MTP actually working | `grep 'draft acceptance' /root/.config/outfit/daemon/engine.log` |
+| Is MTP actually working | `grep 'draft acceptance' /var/lib/outfit/daemon/engine.log` |
 | Boot / S3-sync progress | `tail -f /var/log/cloud-init-output.log` |
 | Weights pulled so far | `du -sh /opt/llm/model` |
 | GPU + driver | `nvidia-smi` |
@@ -455,7 +497,7 @@ deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
   checksum mismatch.
 - **Quota errors on launch**: see the GPU quota warning above.
 - **`start` times out repeatedly**: `pnpm console` onto the instance and read
-  `tail -50 /root/.config/outfit/daemon/engine.log` (or `/cloud-vm-llm/llamacpp` in
+  `tail -50 /var/lib/outfit/daemon/engine.log` (or `/cloud-vm-llm/llamacpp` in
   CloudWatch if the instance is already gone). Known startup
   crashes, all handled for the defaults but reachable after a bump:
   - `libcudart.so.12: cannot open shared object` — the prebuilt llama.cpp

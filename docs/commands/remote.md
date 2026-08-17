@@ -10,12 +10,16 @@ outfit remote deploy     # create an endpoint (environment) and tell it what to 
 outfit remote start      # boot it; prints the exports your agent needs (progress on stderr)
 outfit remote status     # is it up? is it healthy?
 outfit remote logs       # what did it say? (readable after it's gone)
-outfit remote stop       # shut it down now, rather than waiting for the idle timer
+outfit remote pause      # stop it now; a later start re-wakes it
+outfit remote restart    # fresh engine, same address: stop it and wake it again
+outfit remote keep 4h    # prevent the idle sweep from stopping it for 4 hours
+outfit remote stop       # terminate it now, rather than waiting for the idle timer
 ```
 
 The endpoint is the one [`remote/`](../../remote/) in this repository deploys: a
-GPU instance that exists only while you're using it, and terminates itself once
-you stop.
+GPU instance that exists only while you're using it. When it goes idle it is
+stopped (so a re-wake is fast), and terminated once it has been stopped long
+enough that the pause is over.
 
 ## Bootstrapping the account
 
@@ -55,12 +59,14 @@ eval "$(outfit remote start)"           # boots it (~10 min from cold) and sets
                                        # OPENAI_BASE_URL and OPENAI_API_KEY
 outfit apply                           # point your agent at it
 outfit harness                         # work
-outfit remote stop                     # done
+outfit remote pause                    # done for now: stopped, re-wakeable with start
+outfit remote stop                     # done for good: terminate it
 ```
 
-Forgetting `stop` is not a disaster — the endpoint terminates itself after a
-spell with no requests — but it's the difference between minutes and hours of
-GPU time.
+Forgetting `stop` is not a disaster — after a spell with no requests the
+endpoint is **stopped** (no more GPU billing; a start re-wakes it) and then
+**terminated** once the retention passes — but it's the difference between
+minutes and hours of GPU time.
 
 ## Pointing at your endpoint
 
@@ -86,11 +92,15 @@ the deployment that owns it. A `BASEURL` in the Outfit wins if you set one.
 Either name it from the Outfit, so a project carries its own endpoint:
 
 ```dockerfile
-REMOTE ./remote.json         # a path: resolved next to the Outfit, like PRESET
-REMOTE qwen3.6-27b-prod      # a bare name: an environment in the registry
+REMOTE ./remote.json                       # a path: resolved next to the Outfit, like PRESET
+REMOTE https://example.com/team/remote.json  # a URL, fetched instead of read from disk
+REMOTE qwen3.6-27b-prod                    # a bare name: an environment in the registry
 ```
 
-A bare name (no slash, no `.json`) selects a **named environment** from the
+A relative path resolves against the Outfit's own URL too, when the Outfit
+itself was fetched from one — and is fetched only when a command here actually
+needs it, never merely because the Outfit was read. A bare name (no slash, no
+`.json`) selects a **named environment** from the
 per-user registry at `~/.config/outfit/remotes/<name>/remote.json`. This keeps
 deployment state per-user and per-instance: two projects name two environments
 without clobbering, and only the name — not the URLs — lives in the committed
@@ -145,6 +155,54 @@ It appears once the control plane has been redeployed with `pnpm run deploy`
 (the `run` matters — plain `pnpm deploy` is pnpm's own built-in command). An
 older control plane simply omits it, and the commands print what they always
 did.
+
+## Keeping an instance alive
+
+```sh
+outfit remote keep 4h                          # retain for 4 hours from now
+outfit remote start --keep 2h                  # start and retain for 2 hours
+```
+
+`keep` sets the `Retain-Until` tag on the environment's instance, preventing
+the idle sweep from stopping or terminating it before the deadline. It is a
+minimum runtime — once the deadline passes, normal idle checking resumes. A
+manual `pause` or `stop` still takes effect: the tag guards against accidental
+death, not deliberate shutdown.
+
+`start --keep DURATION` sets the same tag at wake time, so the instance is
+retained from the moment it boots. Useful when you know you need the instance
+for a fixed period (e.g. overnight debugging) and don't want to type `keep`
+afterwards.
+
+The deadline appears in `status` output when the tag is present, so you can
+see how long the instance is protected for.
+
+It requires a control plane with the update Lambda (bootstrap with a recent
+version, or re-bootstrap).
+
+## Restarting the engine
+
+```sh
+outfit remote restart             # fresh engine, same endpoint
+outfit remote restart --force     # skip the graceful engine stop
+```
+
+`restart` stops the instance the way `pause` does — without terminating it, so
+the boot disk and its weights survive — and then wakes it, blocking until the
+model serves again. Because the box is only stopped, the address does not
+change and the re-wake loads the weights already on disk: the fastest way back
+to a fresh engine. Nothing about what the endpoint serves changes; that is
+[deploy](#creating-an-endpoint-deploy)'s job.
+
+The stop asks the on-instance daemon to shut the engine down politely first.
+When the engine or its daemon is wedged and will not answer, `--force` skips
+that step and takes the box down directly — the EC2 stop does not go through
+the daemon, so it still lands. It also kills whatever the engine is doing,
+which is why the default stays polite.
+
+With the instance already stopped, `restart` just wakes it — the same as
+`start`. Like `start`, it takes a `--timeout` (default 15m) and prints the
+endpoint's base URL when it serves, so you can check the address is unchanged.
 
 ## Reading the logs
 
@@ -234,22 +292,32 @@ different `REMOTE` gets its own environment, side by side.
 outfit remote deploy --dry-run       # see what would be sent
 outfit remote deploy path/to/Outfit  # deploy a different one
 outfit remote deploy --overwrite     # redeploy over the existing environment
+outfit remote deploy --reseed        # re-fetch weights already in S3
 ```
+
+Deploy fetches the weights only when they are not in S3 already. `--reseed`
+fetches them regardless — for a repo whose files changed under the same name,
+or a seed you want to run again. It starts the same ~20-minute seed instance a
+first deploy does, and re-downloads the weights, so it is opt-in rather than
+something to reach for by habit.
 
 ## Flags
 
 | Flag | Meaning |
 | ---- | ------- |
-| `--timeout` | How long `start` waits for the endpoint (default 15m) |
+| `--timeout` | How long `start` or `restart` waits for the endpoint (default 15m) |
+| `-F`, `--force` | `restart` only: skip the graceful engine stop and take the instance down directly |
+| `--keep` | `start` only: retain the instance until `now + DURATION`, preventing the idle sweep from stopping it |
 | `-n`, `--dry-run` | `deploy` only: print what would be sent, without sending it |
+| `--reseed` | `deploy` only: re-fetch the weights even if they are already in S3 |
 
 `logs` has its own set — see [reading the logs](#reading-the-logs).
 
 ## Notes
 
-- Every subcommand takes an optional Outfit path, or a
-  [registered alias](alias.md). Given none, it uses the alias `OUTFIT_ALIAS`
-  names, and failing that `./Outfit`.
+- Every subcommand takes an optional Outfit path, a
+  [registered alias](alias.md), or a URL. Given none, it uses the alias
+  `OUTFIT_ALIAS` names, and failing that `./Outfit`.
 - `deploy` always needs an Outfit — it's the thing being deployed. The others
   fall back to your per-user config.
 - `deploy_url` is optional: a config written before `deploy` existed still

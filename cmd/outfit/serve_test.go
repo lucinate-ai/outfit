@@ -146,6 +146,37 @@ func TestCmdServe_PresetSelectsByAlias(t *testing.T) {
 	}
 }
 
+// TestCmdServe_VllmPresetThreadsPositionalModel checks that a vLLM Outfit that names
+// a PRESET still places the Outfit's MODEL positionally after `serve` (before any
+// flags), which the preset branch draws from the same subcommandFor the preset-less
+// path does. vLLM is the only engine with a positional hook, so this is the only
+// preset case that exercises the positional half of that shared helper.
+func TestCmdServe_VllmPresetThreadsPositionalModel(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "preset.ini"), "[friendly]\nmax-model-len = 4096\ngpu-memory-utilization = 0.9\n")
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER vllm\nMODEL org/model\nALIAS friendly\nPRESET preset.ini\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Using preset") {
+		t.Fatalf("not the preset branch:\n%s", out)
+	}
+	// The Outfit's MODEL rides positionally right after `serve`, before any flags.
+	if !strings.Contains(out, "vllm serve org/model ") {
+		t.Errorf("MODEL is not vllm serve's positional argument:\n%s", out)
+	}
+	for _, want := range []string{"--served-model-name friendly", "--max-model-len 4096",
+		"--gpu-memory-utilization 0.9"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("command missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestCmdServe_OutfitOverridesPreset checks that values stated in the Outfit win
 // over the preset's: CONTEXT replaces the section's ctx-size, BASEURL replaces
 // host/port, and ALIAS adds --alias.
@@ -236,6 +267,175 @@ func TestCmdServe_DerivesBadContext(t *testing.T) {
 	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL org/model\nCONTEXT not-a-number\n")
 	if err := cmdServe([]string{"--dry-run", outfitPath}); err == nil {
 		t.Error("expected error for an unparseable CONTEXT")
+	}
+}
+
+// TestCmdServe_VllmDerivesBadContext is llama.cpp's bad-CONTEXT guard for the
+// other engine that has a context flag: an unparseable CONTEXT fails rather
+// than quietly launching vLLM with its own default window, which would serve
+// happily at a size the harness was never told about.
+func TestCmdServe_VllmDerivesBadContext(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER vllm\nMODEL org/model\nCONTEXT not-a-number\n")
+	err := cmdServe([]string{"--dry-run", outfitPath})
+	if err == nil {
+		t.Fatal("expected an error for an unparseable CONTEXT")
+	}
+	if !strings.Contains(err.Error(), "not-a-number") {
+		t.Errorf("error should name the offending value, got: %v", err)
+	}
+}
+
+// TestCmdServe_ParallelScalesContext checks the practical case this capability
+// exists for: CONTEXT is the context a single request should get, so with
+// PARALLEL slots llama.cpp's --ctx-size (a total budget it divides across
+// slots) must be scaled up to compensate.
+func TestCmdServe_ParallelScalesContext(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL org/model\nCONTEXT 128k\nPARALLEL 2\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	for _, want := range []string{"--ctx-size 256000", "--parallel 2"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("command missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--ctx-size 128000") {
+		t.Errorf("ctx-size should have been scaled by PARALLEL, not left at CONTEXT's raw value:\n%s", out)
+	}
+}
+
+// TestCmdServe_ParallelWithNoContext checks PARALLEL alone: --parallel is
+// emitted, and with no CONTEXT stated there is nothing to scale.
+func TestCmdServe_ParallelWithNoContext(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL org/model\nPARALLEL 4\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "--parallel 4") {
+		t.Errorf("command missing --parallel 4:\n%s", out)
+	}
+	if strings.Contains(out, "--ctx-size") {
+		t.Errorf("no CONTEXT stated should mean no --ctx-size flag:\n%s", out)
+	}
+}
+
+// TestCmdServe_ContextWithNoParallelIsUnscaled checks that CONTEXT alone,
+// exactly as before PARALLEL existed, is passed straight through.
+func TestCmdServe_ContextWithNoParallelIsUnscaled(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nMODEL org/model\nCONTEXT 128k\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "--ctx-size 128000") {
+		t.Errorf("command missing unscaled --ctx-size 128000:\n%s", out)
+	}
+	if strings.Contains(out, "--parallel") {
+		t.Errorf("no PARALLEL stated should mean no --parallel flag:\n%s", out)
+	}
+}
+
+// TestCmdServe_ParallelDoesNotRescalePresetContext documents the non-goal in
+// design.md: when CONTEXT comes only from a PRESET's own ctx-size (the Outfit
+// states none), PARALLEL still emits --parallel but does not retroactively
+// scale the preset's value.
+func TestCmdServe_ParallelDoesNotRescalePresetContext(t *testing.T) {
+	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nALIAS qwen\nPARALLEL 2\nPRESET preset.ini\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "--parallel 2") {
+		t.Errorf("command missing --parallel 2:\n%s", out)
+	}
+	// The preset's section sets ctx-size = 32768; PARALLEL must not scale it
+	// since the Outfit itself states no CONTEXT.
+	if !strings.Contains(out, "--ctx-size 32768") {
+		t.Errorf("preset ctx-size should pass through unscaled:\n%s", out)
+	}
+	if strings.Contains(out, "--ctx-size 65536") {
+		t.Errorf("PARALLEL must not rescale a preset-only ctx-size:\n%s", out)
+	}
+}
+
+// TestCmdServe_ParallelOverridesPresetValue checks an Outfit's PARALLEL wins
+// over a preset's own np/parallel, the same override-by-canonical-name rule
+// CONTEXT already exercises against a preset's ctx-size.
+func TestCmdServe_ParallelOverridesPresetValue(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "preset.ini"), "[qwen]\nhf = org/model\nnp = 4\n")
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER llamacpp\nALIAS qwen\nPARALLEL 2\nPRESET preset.ini\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "--parallel 2") {
+		t.Errorf("Outfit PARALLEL should win, missing --parallel 2:\n%s", out)
+	}
+	if strings.Contains(out, "--parallel 4") {
+		t.Errorf("preset's np=4 should have been overridden:\n%s", out)
+	}
+}
+
+// TestCmdServe_InvalidParallel checks a non-positive or non-numeric PARALLEL
+// fails rather than being passed to the engine, for all three engines.
+func TestCmdServe_InvalidParallel(t *testing.T) {
+	for _, provider := range []string{"llamacpp", "vllm", "omlx"} {
+		for _, bad := range []string{"0", "-1", "abc"} {
+			t.Run(provider+"/"+bad, func(t *testing.T) {
+				dir := t.TempDir()
+				outfitPath := filepath.Join(dir, "Outfit")
+				body := "PROVIDER " + provider + "\nPARALLEL " + bad + "\n"
+				if provider != "omlx" {
+					body = "PROVIDER " + provider + "\nMODEL org/model\nPARALLEL " + bad + "\n"
+				}
+				mustWrite(t, outfitPath, body)
+				if err := cmdServe([]string{"--dry-run", outfitPath}); err == nil {
+					t.Errorf("expected error for PARALLEL %q", bad)
+				}
+			})
+		}
+	}
+}
+
+// TestCmdServe_OMLXParallel checks PARALLEL maps to oMLX's own concurrency
+// flag, with no context flag either way.
+func TestCmdServe_OMLXParallel(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER omlx\nPARALLEL 8\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "--max-concurrent-requests 8") {
+		t.Errorf("command missing --max-concurrent-requests 8:\n%s", out)
+	}
+	if strings.Contains(out, "--ctx-size") || strings.Contains(out, "--parallel ") {
+		t.Errorf("oMLX should use its own flag, not another engine's:\n%s", out)
 	}
 }
 

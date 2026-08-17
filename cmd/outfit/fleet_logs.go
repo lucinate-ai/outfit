@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/fleet"
+	"github.com/spf13/cobra"
 )
 
 // fleetLogsInterval is how often a follow asks each node for more. A variable
@@ -24,24 +25,40 @@ var fleetLogsInterval = 3 * time.Second
 // cap would impose anyway.
 const bytesPerLineGuess = 512
 
-// cmdFleetLogs prints the engine output of the fleet's nodes. Unlike start and
+// fleetLogsCmd prints the engine output of the fleet's nodes. Unlike start and
 // stop it fans out by default: reading is safe, and "what did my engines say?"
 // is a fleet-wide question. Naming a node narrows it to that one.
-func cmdFleetLogs(args []string) error {
-	fs, path := fleetFlags("logs")
+func fleetLogsCmd() *cobra.Command {
 	var (
+		path   string
 		follow bool
 		limit  int
 		format string
 	)
 	const followUsage = "keep printing new output as it arrives"
-	fs.BoolVar(&follow, "follow", false, followUsage)
-	fs.BoolVar(&follow, "f", false, followUsage+" (shorthand)")
+	c := &cobra.Command{
+		Use:           "logs",
+		Short:         "tail the engines' logs",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runFleetLogs(path, follow, limit, format, args)
+		},
+	}
+	fs := c.Flags()
+	fs.StringVar(&path, "fleet", "", fleetFileUsage)
+	fs.BoolVarP(&follow, "follow", "f", false, followUsage)
 	fs.IntVar(&limit, "limit", 200, "lines of backlog to print per node")
 	fs.StringVar(&format, "format", "text", "output format: text (default) or json")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	c.ValidArgsFunction = noPositionals
+	compRegister(c, "fleet", compFiles)
+	return c
+}
+
+// runFleetLogs is the body of `outfit fleet logs`.
+func runFleetLogs(path string, follow bool, limit int, format string, args []string) error {
 	if format != "text" && format != "json" {
 		return fmt.Errorf("--format must be \"text\" or \"json\", got %q", format)
 	}
@@ -49,14 +66,14 @@ func cmdFleetLogs(args []string) error {
 		return fmt.Errorf("--limit must be positive, got %d", limit)
 	}
 
-	cfg, err := fleet.Resolve(*path)
+	cfg, err := fleet.Resolve(path)
 	if err != nil {
 		return err
 	}
 	// A named node restricts the read; the fleet file still supplies its
 	// details, so an unknown name is caught here rather than at the socket.
-	if rest := fs.Args(); len(rest) > 0 {
-		if cfg, err = cfg.Only(rest[0]); err != nil {
+	if len(args) > 0 {
+		if cfg, err = cfg.Only(args[0]); err != nil {
 			return err
 		}
 	}

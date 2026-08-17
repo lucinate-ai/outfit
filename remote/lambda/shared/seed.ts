@@ -14,7 +14,7 @@
 
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { errorName } from './aws';
-import type { DeployConfig } from './deploy-config';
+import { companionFileName, type CompanionRole, type DeployConfig } from './deploy-config';
 import { manifestKey, type SeedManifest } from './seed/contract';
 
 const s3 = new S3Client({});
@@ -55,7 +55,19 @@ export async function readManifest(
  * Whether the weights for this config are seeded. Weights files present without
  * a manifest count as absent: nothing recorded that they are complete, or which
  * revision they came from.
+ *
+ * A manifest alone is not enough when companions are named: the weights prefix
+ * is derived from (runner, modelId, quant), so adding a companion to an
+ * already-seeded model does not change it — the earlier seed's manifest would
+ * otherwise read as complete and skip the re-seed a new companion needs.
  */
 export async function weightsPresent(bucket: string, cfg: DeployConfig): Promise<boolean> {
-  return (await readManifest(bucket, cfg.weightsPrefix)) !== null;
+  const manifest = await readManifest(bucket, cfg.weightsPrefix);
+  if (!manifest) {
+    return false;
+  }
+  const stored = new Set(manifest.files.map((f) => f.path));
+  return (Object.keys(cfg.companions ?? {}) as CompanionRole[]).every((role) =>
+    stored.has(companionFileName(role)),
+  );
 }

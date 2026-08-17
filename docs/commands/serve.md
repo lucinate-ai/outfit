@@ -8,6 +8,7 @@ the server behind it.
 outfit serve              # reads ./Outfit and runs its PROVIDER's server
 outfit serve path/to/Outfit
 outfit serve qwen3.6-27b  # a name registered with `outfit alias`
+outfit serve https://example.com/Outfit   # a URL, fetched instead of read from disk
 outfit serve --dry-run    # print the command without launching the server
 ```
 
@@ -37,6 +38,41 @@ Each engine reads its `PRESET` in its **own** flag vocabulary. That matters:
 llama.cpp's short aliases would rewrite another engine's keys (`m` to `--model`,
 `c` to `--ctx-size`), so a preset is never portable between engines.
 
+## Parallelism
+
+`CONTEXT` always means the context window a **single request** gets, whatever
+engine serves it. `PARALLEL` sets the number of concurrent request slots, and
+`outfit` translates it per engine so `CONTEXT`'s meaning holds everywhere:
+
+| `PROVIDER` | `PARALLEL n` becomes | Effect on `CONTEXT` |
+| ---------- | --------------------- | -------------------- |
+| `llamacpp` | `--parallel n` | Scaled: `--ctx-size` becomes `context * n` |
+| `vllm`     | `--max-num-seqs n` | Unscaled: `--max-model-len` is unaffected |
+| `omlx`     | `--max-concurrent-requests n` | No context flag either way |
+
+The `llamacpp` scaling exists because llama.cpp's own `--ctx-size` is a total
+KV-cache budget it divides across `--parallel` slots — so without help, asking
+for `CONTEXT 128k` with two parallel slots would silently give each request
+64k. `outfit` compensates by scaling: `CONTEXT 128k` + `PARALLEL 2` renders
+`--ctx-size 256000 --parallel 2`, so each slot still gets the 128k the Outfit
+asked for.
+
+`vllm` and `omlx` need no such compensation: both share one dynamically-sized
+KV-cache pool across concurrent requests via continuous batching rather than
+dividing a fixed budget per slot, so their own context settings are already a
+per-request ceiling — `PARALLEL` only caps how many requests run at once.
+
+If `PARALLEL` is left out entirely, it changes nothing — no `--parallel`-family
+flag is added, and `CONTEXT` maps to the engine's context flag exactly as it
+always has. It only applies to an Outfit-stated `CONTEXT`: a `PRESET`'s own
+`ctx-size`, left unstated by the Outfit, is not retroactively scaled — the
+preset is trusted to already account for its own slots. Like `CONTEXT`,
+`PARALLEL` overrides a preset's own `np`/`parallel`, `max-num-seqs`, or
+`max-concurrent-requests` value by the usual override rule.
+
+`PARALLEL` is Outfit-file-only — like `PRESET`, it has no meaning for a hosted
+provider selection, so there is no `outfit add --parallel`.
+
 ## llama.cpp
 
 ### Simple case — straight from the Outfit
@@ -48,6 +84,7 @@ PROVIDER llamacpp
 MODEL    unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL   # an HF repo, or a .gguf path
 ALIAS    qwen3.6                                    # llama-server --alias
 CONTEXT  32768                                      # llama-server --ctx-size
+PARALLEL 2                                          # llama-server --parallel (see below)
 BASEURL  http://127.0.0.1:8080/v1                   # llama-server --host/--port
 ```
 
@@ -83,8 +120,12 @@ Keys map straight to flags — `ctx-size = 262144` becomes `--ctx-size 262144`,
 - With no `ALIAS`, a preset holding exactly one section serves that one.
 - Several sections and no `ALIAS` is an error — name one.
 
-A relative `PRESET` path resolves against the Outfit's own directory, so the
-pair can travel together.
+A relative `PRESET` path resolves against the Outfit's own directory — or
+against its URL, when the Outfit itself was fetched from one — so the pair
+can travel together either way. `PRESET` may also be an absolute URL of its
+own, fetched only when `serve` builds the command, never merely because the
+Outfit was read. See [Fetching an Outfit from a
+URL](../outfit-file.md#fetching-an-outfit-from-a-url).
 
 ## oMLX
 
@@ -102,6 +143,8 @@ BASEURL  http://127.0.0.1:8000/v1   # omlx-cli serve --host/--port
 - `MODEL` and `ALIAS` keep their usual job of naming what the *agent* asks for;
   they are not launch flags.
 - `CONTEXT` sizes the *harness's* window — oMLX has no context flag.
+- `PARALLEL` becomes `--max-concurrent-requests` — see
+  [Parallelism](#parallelism) above.
 
 Everything else — the model directory, the memory guard, the SSD cache — comes
 from a `PRESET` written in oMLX's own flags, or from oMLX's settings
@@ -137,6 +180,27 @@ oMLX ships as a macOS app, so `serve` looks for `omlx-cli` on your `PATH` first
 and falls back to `/Applications/oMLX.app/Contents/MacOS/omlx-cli`. If you've
 only ever launched it from the menu bar, the fallback is the one that finds it.
 
+## vLLM
+
+```dockerfile
+PROVIDER vllm
+MODEL    Qwen/Qwen3.6-27B-FP8
+ALIAS    friendly                          # vllm serve --served-model-name
+CONTEXT  32768                             # vllm serve --max-model-len
+PARALLEL 4                                 # vllm serve --max-num-seqs (see below)
+BASEURL  http://0.0.0.0:8000/v1            # vllm serve --host/--port
+```
+
+`MODEL` is `vllm serve`'s positional argument, not a flag. `ALIAS`, `CONTEXT`,
+and `BASEURL` fill in the rest, exactly as for llama.cpp. `PARALLEL` becomes
+`--max-num-seqs` — a concurrency cap, not a context divisor: see
+[Parallelism](#parallelism) above for why vLLM's `CONTEXT` is never scaled by
+it, unlike llama.cpp's.
+
+`--tensor-parallel-size`/`--pipeline-parallel-size` (sharding a model across
+GPUs) are a different concept from `PARALLEL` and are not derived from it —
+set them by hand in a `PRESET`.
+
 ## The control API (`--api`) and `outfit daemon`
 
 `serve` is strictly foreground: it runs the engine in front of you until one
@@ -167,7 +231,8 @@ model and a fleet; a node holds nothing. See
 [`examples/fleet-local/`](../../examples/fleet-local/) for the whole shape on one
 machine.
 
-The API listens on `:4242` (change with `--api-addr`) and speaks JSON.
+The API listens on `:4242` (change with `--api-addr`; on the daemon,
+`--loopback`/`-l` binds `127.0.0.1:4242` instead) and speaks JSON.
 See [HTTP Control API](../http-api.md) for details, or
 [`openapi.yaml`](../openapi.yaml) for the full contract:
 
@@ -177,6 +242,7 @@ See [HTTP Control API](../http-api.md) for details, or
 | `POST /v1/start` | Start the engine (optional deploy-config body, optionally carrying the engine's API key; 409 while one runs) |
 | `POST /v1/stop` | Stop the engine (idempotent; never ends the daemon) |
 | `GET /v1/metrics` | Engine token counters plus host GPU/CPU/RAM |
+| `GET /v1/logs` | A slice of the engine's captured output, by offset |
 | `PUT /v1/deploy-config` | Set what the *next* start serves |
 
 Requests carry `Authorization: Bearer <token>`. The token comes from one of
@@ -264,6 +330,7 @@ output.
 | `-n`, `--dry-run` | Print the server command without running it |
 | `-a`, `--api` | Expose the control API beside the foreground engine |
 | `--api-addr` | Control API listen address (default `:4242`) |
+| `--loopback`, `-l` | (daemon only) Bind the control API to loopback, `127.0.0.1:4242` — needs no token |
 | `--log-level` | `debug`, `info` (default), `warn` or `error`; overrides [`OUTFIT_LOG_LEVEL`](../env-vars.md) |
 
 ## Notes

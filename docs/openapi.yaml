@@ -18,9 +18,10 @@ info:
     The control API drives one supervised inference engine: start it, stop it,
     ask what it is doing, and set what it serves next.
 
-    It listens on `:4242` by default (`--api-addr` overrides). A non-loopback
-    listen with no bearer token configured refuses to start, since the API can
-    start and stop processes; a loopback listen may go tokenless.
+     It listens on `:4242` by default (`--api-addr` overrides; on the daemon,
+     `--loopback` binds `127.0.0.1:4242`). A non-loopback
+     listen with no bearer token configured refuses to start, since the API can
+     start and stop processes; a loopback listen may go tokenless.
 
     Under `outfit daemon` nothing runs until a start request asks, and stopping
     the engine never ends the daemon — the API keeps answering. Under
@@ -477,6 +478,16 @@ components:
           description: The quantisation to select, where the runner takes one.
         contextSize:
           type: integer
+        parallel:
+          type: integer
+          description: |
+            The number of concurrent request slots the engine should run
+            with. Zero/absent means unset: no parallelism flag is added, and
+            contextSize is used unscaled. Translated into each runner's own
+            flag at start time — llamacpp's ctx-size is scaled by this value,
+            since llama.cpp divides that budget across its parallel slots;
+            vllm's context is left unscaled, since its concurrency is bounded
+            independently via max-num-seqs.
         servedModelName:
           type: string
           description: The name the endpoint advertises the model under.
@@ -485,6 +496,17 @@ components:
           description: Runner-specific flags, pre-tokenised.
           items:
             type: string
+        companions:
+          type: object
+          description: |
+            Companion weights loaded beside the main weights, keyed by role.
+            Each value is a bare filename within the model's own Hugging Face
+            repo, never a path — the deployment decides where it lands on disk
+            and names it there itself. Omitted when there are none.
+          additionalProperties:
+            type: string
+          propertyNames:
+            enum: [draft, mmproj]
 
     Message:
       type: object

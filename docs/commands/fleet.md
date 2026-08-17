@@ -78,6 +78,28 @@ elsewhere fails with that explanation rather than a bare connection refused —
 bind the engine to a reachable address (llama.cpp's `--host 0.0.0.0`), or
 declare an `engine` block, which is you taking responsibility for reachability.
 
+### Remote environments
+
+`kind` (defaulted to `daemon`) says how the fleet reaches a node. A node can
+also be an [`outfit remote`](remote.md) environment rather than a machine: its
+`name` is the registered environment it drives — no `host` needed — and it is
+reached through its control plane, which signs each call with your AWS
+credentials, so it needs no bearer token:
+
+```yaml
+nodes:
+  - name: qwen          # the registered environment, and what you type at `fleet start <node>`
+    kind: remote
+```
+
+The environment's control URLs live in its `remote.json` (under
+`~/.config/outfit/remotes/<name>/`), written by `outfit remote deploy` and never
+stored in the fleet file. So a daemon and an environment sit side by side as the
+same kind of row, and an environment that has not been deployed yet shows as
+`config-error` on its row rather than blanking the fleet. See
+[`examples/fleet-remote`](../../examples/fleet-remote/README.md) and
+[`examples/fleet-mixed`](../../examples/fleet-mixed/README.md).
+
 ### Spreading or consolidating
 
 `prefer` decides which node wins when several could all serve you:

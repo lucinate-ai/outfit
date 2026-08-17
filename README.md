@@ -184,8 +184,8 @@ outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
 outfit unalias <name>                    # drop a registered name
 outfit serve  [path] [--dry-run] [-a]    # run the PROVIDER's inference server, from the PRESET
                                          #   (-a/--api serves the control API beside it)
-outfit daemon [path] [--api-addr <addr>] # supervise an engine via the control API
-                                         #   (starts nothing until asked over the API)
+outfit daemon [--api-addr <addr>] [--loopback] # supervise an engine via the control API — reads
+                                         #   no Outfit, starts nothing until asked over the API
 outfit fleet <status|metrics|start|stop> # observe and drive the engines in fleet.yaml
                                          #   (one outfit watching every machine you run)
 outfit export [--provider <name>]        # print the current config as an Outfit
@@ -194,10 +194,12 @@ outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
 outfit completion <shell>                # tab completion (bash, zsh, powershell)
-outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]
+outfit remote <bootstrap|start|pause|stop|status|metrics|logs|deploy|env|ls|keep> [path]
                                          # control the remote GPU inference instance
                                          #   (bootstrap does the once-per-account setup;
                                          #    deploy sets what it serves, from the Outfit;
+                                         #    pause stops it while keeping it re-wakeable;
+                                         #    keep holds it against the idle sweep;
                                          #    logs reads the shipped logs, alive or not;
                                          #    env prints the running endpoint's env vars)
 ```
@@ -205,8 +207,8 @@ outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]
 Short flags: `-p` (provider), `-m` (model), `-a` (alias), `-c` (context), `-o` (output), `-u` (base-url), `-H` (harness), `-O` (outfit), and under `alias`: `-n` (name), `-l` (list), `-F` (force).
 
 Anywhere a `[path]` appears above you can put a name registered with
-[`outfit alias`](#aliases) instead — or leave it out and let `OUTFIT_ALIAS`
-name one.
+[`outfit alias`](#aliases) instead, an `http(s)` URL, fetched instead of read
+from disk — or leave it out and let `OUTFIT_ALIAS` name one.
 
 ## Documentation
 
@@ -259,13 +261,15 @@ BASEURL  https://gateway/v1         # optional; API base URL override
 outfit apply              # reads ./Outfit and applies it
 outfit apply path/to/Outfit
 outfit apply path/to/dir  # or a directory that holds an Outfit
+outfit apply https://example.com/team/Outfit   # or a URL, fetched instead of read
 outfit harness -O         # apply ./Outfit, then launch the agent wearing it
 outfit export > Outfit    # capture your current setup as an Outfit
 ```
 
 An `Outfit` describes one provider selection and applies exactly like the
 equivalent `add`. Full syntax is in [`docs/outfit-file.md`](docs/outfit-file.md),
-and ready-to-use examples live under [`examples/`](examples/).
+and ready-to-use examples live under [`examples/`](examples/), including
+[fetching one from a URL](examples/remote-outfit/).
 
 ## Aliases
 
@@ -279,6 +283,14 @@ Added alias "qwen3.6-27b" for /home/me/models/qwen3.6/Outfit …
 $ outfit apply   qwen3.6-27b      # from anywhere, no path needed
 $ outfit serve   qwen3.6-27b
 $ outfit harness qwen3.6-27b -- --some-agent-arg
+```
+
+The path can be a URL too — hand out a short name for a published `Outfit`
+instead of a link:
+
+```sh
+outfit alias -n team-default https://example.com/team/Outfit
+outfit apply team-default
 ```
 
 Set `OUTFIT_ALIAS` and the name is implied for a whole shell:
@@ -326,6 +338,7 @@ PROVIDER llamacpp
 MODEL    unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL   # HF repo, or a .gguf path
 ALIAS    qwen3.6                                    # llama-server --alias
 CONTEXT  32768                                      # llama-server --ctx-size
+# PARALLEL 2                                        # optional; concurrent slots
 ```
 
 ```sh
@@ -337,18 +350,24 @@ For flags an `Outfit` doesn't model (`-ngl`, `--jinja`, KV-cache types, draft
 models), point at a llama.cpp preset `.ini` with `PRESET` and `serve` flattens
 the chosen section into the command instead — with anything the `Outfit` states
 (like `CONTEXT`) overriding the preset. It's the missing piece presets don't
-cover: launching a *single* model. Details in
-[`docs/commands/serve.md`](docs/commands/serve.md).
+cover: launching a *single* model. `CONTEXT` always means the context per
+request; add `PARALLEL` to run more than one slot and `outfit` works out each
+engine's own accounting (llama.cpp's `--ctx-size` gets scaled, vLLM's and
+oMLX's don't) — see
+[Parallelism](docs/commands/serve.md#parallelism) for the full mapping.
+Details in [`docs/commands/serve.md`](docs/commands/serve.md).
 
 ### The daemon
 
 `outfit daemon` runs a long-lived agent that supervises one engine and serves
 a small control API: status, start, stop, metrics — token counters scraped
 from the engine plus GPU/CPU/RAM readings from the host — and a deploy-config
-push. It starts *nothing* on boot: the engine runs only when a start request
-asks, and the request can carry the deploy config (runner, model, flags) to
-run — or fall back to a previously pushed config, or the Outfit the daemon
-sits beside. Stopping the engine leaves the daemon answering.
+push. It's a worker: it reads no Outfit, no preset, and no `fleet.yaml`, and
+takes no Outfit path of its own — what it runs is decided entirely by
+whoever asks it, over the API. It starts *nothing* on boot: the engine runs
+only when a start request asks, and the request can carry the deploy config
+(runner, model, flags) to run — or fall back to a previously pushed one. With
+neither, a start says so. Stopping the engine leaves the daemon answering.
 
 It also keeps an eye on whether the engine is actually doing anything: it
 reads the engine's counters every 15 seconds and reports `lastActiveAt` and
@@ -358,14 +377,18 @@ from raw counters yourself.
 
 ```sh
 OUTFIT_API_TOKEN=…  outfit daemon           # control API on :4242
-outfit daemon --api-addr 127.0.0.1:4242     # loopback-only needs no token
+outfit daemon --loopback                    # loopback-only (127.0.0.1:4242), needs no token
+outfit daemon --api-token-file /run/secrets/outfit-token   # from a service manager
 outfit daemon --log-level warn              # quiet on a node a fleet polls
 ```
 
-The API is bearer-token authenticated (`OUTFIT_API_TOKEN`, e.g. from the
-`.env` beside the Outfit); a non-loopback listen without a token refuses to
-start. `outfit serve -a/--api` exposes the same API beside an ordinary
-foreground serve.
+The API is bearer-token authenticated — `OUTFIT_API_TOKEN`, `--api-token`, or
+`--api-token-file` (giving two at once is an error, since the daemon reads no
+Outfit and so has no adjacent `.env` to fall back to); a non-loopback listen
+without a token refuses to start — which is exactly what `--loopback` is for.
+`outfit serve -a/--api` exposes the same API beside an ordinary foreground
+serve, and — because that command *does* read an Outfit — takes its token
+from the environment as usual, `.env` included.
 
 Every request is summarised on stderr — method, path, status, duration, size,
 caller — alongside the engine's starts, stops and crashes. Never the token and
@@ -435,13 +458,17 @@ Running a model on your own cloud GPU box? [`remote/`](remote/) deploys one.
 while you are using it, and stops itself after a period of idleness.
 
 ```sh
-outfit remote start    # boot the instance, wait for the model to load,
-                       # then print OPENAI_BASE_URL / OPENAI_API_KEY exports
-outfit remote status   # instance state, endpoint health, and when it last
-                       # did any work
-outfit remote metrics  # tokens, GPU, CPU and RAM — plus the same last-active
-outfit remote logs     # what the engine (or the boot) said, even after it's gone
-outfit remote stop     # stop now instead of waiting for the idle timer
+outfit remote start     # boot the instance, wait for the model to load,
+                         # then print OPENAI_BASE_URL / OPENAI_API_KEY exports
+outfit remote status    # instance state, endpoint health, and when it last
+                         # did any work
+outfit remote metrics   # tokens, GPU, CPU and RAM — plus the same last-active
+outfit remote logs      # what the engine (or the boot) said, even after it's gone
+outfit remote pause     # stop now, but keep it re-wakeable
+outfit remote restart   # fresh engine, same address: stop it, then wake it
+outfit remote keep 4h   # hold it against the idle sweep for 4 hours
+                         # (start --keep does the same at wake time)
+outfit remote stop      # terminate now instead of waiting for the idle timer
 ```
 
 Instances ship their engine and boot output to CloudWatch, so `outfit remote
@@ -449,13 +476,15 @@ logs` still works once the instance has terminated — including for a start tha
 failed before the engine came up (`--source boot`). See
 [docs/commands/remote.md](docs/commands/remote.md#reading-the-logs).
 
-Configuration is found in one of two places. A project's `Outfit` file can
-name it with a `REMOTE` instruction (`REMOTE remote.json`, resolved relative
-to the Outfit — like `PRESET`, so the pair travel together); otherwise the
-per-user `remote.json` in outfit's config directory
-(`${OUTFIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/outfit}`, see
-[docs/env-vars.md](docs/env-vars.md)) is used. Either
-way, paste the `OutfitRemoteConfig` output of the `remote/` deployment there:
+Configuration lives in a `remote.json`. A project's `Outfit` file can name
+one with a `REMOTE` instruction — either a path (`REMOTE remote.json`,
+resolved relative to the Outfit, like `PRESET`, so the pair travel together)
+or the name of a registered environment (`REMOTE dev-2`, whose file sits at
+`remotes/dev-2/remote.json` under outfit's config directory,
+`${OUTFIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/outfit}`). With no
+`REMOTE`, the `default` environment is used. Either way the file takes the
+`OutfitRemoteConfig` output of the `remote/` deployment — or `outfit remote
+deploy` writes it when it registers the environment:
 
 ```json
 {"start_url": "https://...lambda-url...on.aws/", "stop_url": "https://...", "region": "eu-west-1", "base_url": "http://198.51.100.7:8000/v1"}
@@ -466,8 +495,9 @@ and `status` report the address themselves — but `outfit apply` reads it, so a
 Outfit with a `REMOTE` line can leave `BASEURL` out and still point your agent
 at the endpoint. A `BASEURL` in the Outfit takes precedence.
 
-Each field can be overridden with `OUTFIT_REMOTE_START_URL`,
-`OUTFIT_REMOTE_STOP_URL` and `OUTFIT_REMOTE_REGION`. Requests are SigV4-signed
+Every URL and the region can be overridden with the matching
+[`OUTFIT_REMOTE_*`](docs/env-vars.md) environment variable. Requests are
+SigV4-signed
 with your AWS credentials (env, profile or SSO — the standard chain), which
 must be allowed `lambda:InvokeFunctionUrl`. A cold `start` takes a few
 minutes while the instance boots and loads the model; `--timeout` (default
@@ -519,6 +549,7 @@ with a ready-to-apply `Outfit`:
 - [Gemma-4-12B-IT on llama.cpp](examples/llamacpp/gemma4/README.md)
 - [Qwen3.6-35B-A3B on oMLX (Apple Silicon)](examples/omlx/qwen3.6/README.md)
 - [Gemma-4-E2B on oMLX (Apple Silicon)](examples/omlx/gemma-4-e2b/README.md)
+- [Fetching an Outfit from a URL](examples/remote-outfit/README.md)
 
 ## Adding providers and models
 

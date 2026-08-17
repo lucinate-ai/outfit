@@ -49,7 +49,11 @@ type Config struct {
 	// the seed Lambda existed keeps working for every other subcommand, and
 	// only the seed subcommand names the value to add.
 	SeedURL string `json:"seed_url"`
-	Region  string `json:"region"`
+	// UpdateURL is the Lambda for arbitrary post-provision instance commands
+	// (currently: set-keep). Optional — configs predating the update Lambda
+	// still work for start/stop/deploy; Keep will fail with a clear message.
+	UpdateURL string `json:"update_url"`
+	Region    string `json:"region"`
 	// BaseURL is the endpoint's own address (the environment's stable Elastic
 	// IP). It belongs to the deployment rather than to the Outfit, so it is
 	// written here and `apply` reads it back for an Outfit that states no
@@ -97,9 +101,9 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 	return finishConfig(cfg, getenv, path)
 }
 
-// LoadConfigFile reads the remote config from an explicit file — typically
-// one named by an Outfit's REMOTE instruction — then applies the same
-// environment overrides as LoadConfig. Unlike LoadConfig, the file must
+// LoadConfigFile reads the remote config from an explicit local file —
+// typically one named by an Outfit's REMOTE instruction — then applies the
+// same environment overrides as LoadConfig. Unlike LoadConfig, the file must
 // exist: it was asked for by name.
 func LoadConfigFile(path string, getenv func(string) string) (Config, error) {
 	data, err := os.ReadFile(path)
@@ -111,11 +115,20 @@ func LoadConfigFile(path string, getenv func(string) string) (Config, error) {
 		}
 		return Config{}, err
 	}
+	return LoadConfigBytes(data, path, getenv)
+}
+
+// LoadConfigBytes parses an already-fetched remote config — typically the
+// body of a REMOTE instruction resolved to a URL, which the caller fetches
+// itself (LoadConfigFile only knows how to read local disk) — and applies the
+// same environment overrides and validation as LoadConfigFile. source names
+// the config for error messages.
+func LoadConfigBytes(data []byte, source string, getenv func(string) string) (Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parsing %s: %w", path, err)
+		return Config{}, fmt.Errorf("parsing %s: %w", source, err)
 	}
-	return finishConfig(cfg, getenv, path)
+	return finishConfig(cfg, getenv, source)
 }
 
 // finishConfig applies env overrides and validates. source names the config
@@ -138,6 +151,9 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	}
 	if v := getenv("OUTFIT_REMOTE_SEED_URL"); v != "" {
 		cfg.SeedURL = v
+	}
+	if v := getenv("OUTFIT_REMOTE_UPDATE_URL"); v != "" {
+		cfg.UpdateURL = v
 	}
 	if v := getenv("OUTFIT_REMOTE_REGION"); v != "" {
 		cfg.Region = v
@@ -206,7 +222,11 @@ type Response struct {
 	ModelID       string `json:"modelId"`
 	ContextSize   int    `json:"contextSize"`
 	WeightsPrefix string `json:"weightsPrefix"`
-	Error         string `json:"error"`
+	// RetainUntil is the instance's retention deadline, returned when the
+	// Retain-Until tag is present (set-keep or start --keep). camelCase to
+	// match the Lambda's JSON.
+	RetainUntil string `json:"retainUntil"`
+	Error       string `json:"error"`
 }
 
 // DeployConfig is what the deploy Lambda accepts: the runner-neutral
@@ -214,12 +234,23 @@ type Response struct {
 // weights prefix — the Lambda derives the S3 layout itself, and seeds the
 // weights when they are not there yet, so this stays a statement of intent.
 type DeployConfig struct {
-	Runner          string   `json:"runner"`
-	ModelID         string   `json:"modelId"`
-	Quant           string   `json:"quant"`
-	ContextSize     int      `json:"contextSize"`
+	Runner      string `json:"runner"`
+	ModelID     string `json:"modelId"`
+	Quant       string `json:"quant"`
+	ContextSize int    `json:"contextSize"`
+	// Parallel is the number of concurrent request slots the engine should
+	// run with, translated into the runner's own flag the same way a local
+	// `outfit serve` would — including scaling ContextSize for a llamacpp
+	// runner, since llama.cpp divides its ctx-size budget across slots. Zero
+	// means unset: no parallelism flag, ContextSize unscaled.
+	Parallel        int      `json:"parallel,omitempty"`
 	ServedModelName string   `json:"servedModelName"`
 	ServeArgs       []string `json:"serveArgs"`
+	// Companions names extra files from the model's own Hugging Face repo that
+	// the engine loads beside the weights, keyed by role ("draft", "mmproj").
+	// Values are bare filenames within that repo, never paths. Omitted when
+	// empty, so a deployment naming none sends exactly what it always did.
+	Companions map[string]string `json:"companions,omitempty"`
 }
 
 // Deploy creates (or updates) cfg.Environment on the control plane and sets
@@ -228,7 +259,11 @@ type DeployConfig struct {
 // are absent, and stores the config; deploying does not start the instance.
 // allowedCidr scopes who may reach this environment's instance; it is required
 // the first time and optional afterwards (empty leaves ingress alone).
-func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string) (*Response, error) {
+// reseed asks the control plane to fetch the weights even when they are
+// already in S3. It is a property of this request, not of what the environment
+// serves, so it rides beside allowedCidr rather than on DeployConfig — which is
+// persisted verbatim, and would re-seed on every wake that read it back.
+func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string, reseed bool) (*Response, error) {
 	if cfg.DeployURL == "" {
 		return nil, fmt.Errorf(
 			"no deploy_url configured: add the remote/ deployment's DeployUrl output to the remote config (or set OUTFIT_REMOTE_DEPLOY_URL)")
@@ -236,7 +271,8 @@ func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string
 	body, err := json.Marshal(struct {
 		DeployConfig
 		AllowedCidr string `json:"allowedCidr,omitempty"`
-	}{dc, allowedCidr})
+		Reseed      bool   `json:"reseed,omitempty"`
+	}{dc, allowedCidr, reseed})
 	if err != nil {
 		return nil, err
 	}
@@ -262,21 +298,52 @@ func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string
 // connection. A variable so tests can shorten it.
 var startRetryWait = 5 * time.Second
 
+// StateInFlight is the state Start reports to its onState observer when a new
+// attempt is issued and no response has come back yet. It is a client-side
+// report of the client's own situation — no Lambda reply ever carries it. An
+// in-flight attempt supersedes an earlier no-capacity report: that report
+// described the previous attempt, and a refusal of the new one comes back
+// within seconds of trying each zone, while a successful one holds its request
+// while the instance boots. An observer reading it should describe a start as
+// underway, not a capacity wait.
+const StateInFlight = "in-flight"
+
 // Start boots the instance and blocks until the model is serving, retrying
 // while the endpoint reports it is still starting. progress is called with a
 // status line before each wait. onState, when non-nil, is called with the raw
-// state of every poll that returns a response, so a caller can describe what is
-// happening (booting versus waiting for capacity) rather than assume a boot is
-// underway.
+// state of every poll that returns a response, and with StateInFlight when a
+// new attempt is issued and its response has not come back, so a caller can
+// describe what is happening (booting versus waiting for capacity) rather than
+// assume a boot is underway.
 //
 // A start holds one long-lived request while the instance boots, so a network
 // blip mid-wait (switching networks, a dropped VPN) surfaces as a transport
 // error even though the boot continues server-side. Those are retried within
 // the caller's deadline: the wake is idempotent — a repeated call reattaches
 // to the same booting instance — so retrying never launches a second one.
-func Start(ctx context.Context, cfg Config, progress func(string), onState func(string)) (*Response, error) {
+//
+// When retainUntil is non-nil, the instance's Retain-Until tag is set so the
+// idle sweep does not terminate it before the stated deadline.
+func Start(ctx context.Context, cfg Config, progress func(string), onState func(string), retainUntil *time.Time) (*Response, error) {
+	startURL := cfg.StartURL
+	if retainUntil != nil {
+		u, err := url.Parse(startURL)
+		if err == nil {
+			q := u.Query()
+			q.Set("retainUntil", retainUntil.UTC().Format(time.RFC3339))
+			u.RawQuery = q.Encode()
+			startURL = u.String()
+		}
+	}
 	for {
-		resp, err := call(ctx, cfg, http.MethodPost, cfg.StartURL, nil)
+		// Supersedes whatever the previous attempt reported — including a
+		// no-capacity reply: this attempt has not refused anything yet, and a
+		// refusal arrives long before a boot would, so the observer should not
+		// keep reading the older attempt's verdict while this one is in flight.
+		if onState != nil {
+			onState(StateInFlight)
+		}
+		resp, err := call(ctx, cfg, http.MethodPost, startURL, nil)
 		if err != nil {
 			var urlErr *url.Error
 			if ctx.Err() == nil && errors.As(err, &urlErr) {
@@ -330,7 +397,9 @@ func Status(ctx context.Context, cfg Config) (*Response, error) {
 	return resp, nil
 }
 
-// Stop stops the instance immediately rather than waiting for the idle timer.
+// Stop stops the instance immediately rather than waiting for the idle timer:
+// it terminates it, discarding the boot disk and the weights on it, so the
+// next start is a full launch.
 func Stop(ctx context.Context, cfg Config) (*Response, error) {
 	resp, err := call(ctx, cfg, http.MethodPost, cfg.StopURL, nil)
 	if err != nil {
@@ -338,6 +407,90 @@ func Stop(ctx context.Context, cfg Config) (*Response, error) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, controlReplyError("stop", resp)
+	}
+	return resp, nil
+}
+
+// Pause stops the instance without terminating it: the boot disk and its
+// weights survive, so a later Start re-wakes it instead of launching fresh.
+// The instance is terminated by the control plane's sweep once it has been
+// stopped beyond the retention window. When force is set, the stop is marked
+// forced on the way over: the control plane takes the box down without first
+// asking the engine to shut down, which is what a wedged engine or daemon
+// needs.
+func Pause(ctx context.Context, cfg Config, force bool) (*Response, error) {
+	resp, err := call(ctx, cfg, http.MethodPost, pauseURL(cfg.StopURL, force), nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, controlReplyError("pause", resp)
+	}
+	return resp, nil
+}
+
+// Restart stops the instance in the pause manner — without terminating it, so
+// the boot disk and its weights survive, the re-wake is fast, and the
+// environment's address does not change — and then wakes it up, reusing
+// Start's retry and deadline behaviour until the model serves again. force
+// marks the stop as forced: the engine is not asked to shut down first. When
+// the wake fails after the stop takes effect, the error says the instance is
+// stopped and that Start will bring it back — the very state a manual pause
+// leaves behind.
+func Restart(ctx context.Context, cfg Config, force bool, progress func(string), onState func(string)) (*Response, error) {
+	if _, err := Pause(ctx, cfg, force); err != nil {
+		return nil, err
+	}
+	progress("stopped; waking it")
+	resp, err := Start(ctx, cfg, progress, onState, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w — the instance is stopped; `outfit remote start` will bring it back", err)
+	}
+	return resp, nil
+}
+
+// pauseURL points the stop Lambda at its pause mode: the same Function URL
+// with an action parameter, so both modes share the one configured endpoint
+// and old configs need no new entry. force additionally marks the stop as
+// forced — the same parameter the terminate mode reads — so a control plane
+// that predates it simply ignores it and makes the graceful stop.
+func pauseURL(stopURL string, force bool) string {
+	u, err := url.Parse(stopURL)
+	if err != nil {
+		return stopURL
+	}
+	q := u.Query()
+	q.Set("action", "pause")
+	if force {
+		q.Set("force", "true")
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// Keep sets the Retain-Until tag on the environment's instance, preventing the
+// idle sweep from terminating it before the stated deadline. A manual stop or
+// pause still takes effect: the tag guards against accidental death. The CLI
+// computes the deadline from a duration and passes the absolute time here.
+func Keep(ctx context.Context, cfg Config, retainUntil time.Time) (*Response, error) {
+	if cfg.UpdateURL == "" {
+		return nil, fmt.Errorf(
+			"no update_url configured: the remote deployment needs to be updated for keep support")
+	}
+	u, err := url.Parse(cfg.UpdateURL)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("cmd", "set-keep")
+	q.Set("retainUntil", retainUntil.UTC().Format(time.RFC3339))
+	u.RawQuery = q.Encode()
+	resp, err := call(ctx, cfg, http.MethodPost, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, controlReplyError("keep", resp)
 	}
 	return resp, nil
 }

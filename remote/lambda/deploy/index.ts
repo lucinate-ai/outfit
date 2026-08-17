@@ -78,18 +78,37 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     return jsonResponse(400, { error: `allowedCidr must be an IPv4 CIDR, got ${allowedCidr}` });
   }
 
+  // A property of this request, not of what the environment serves — so it is
+  // read from the raw body rather than by parseDeployConfig, and never reaches
+  // the persisted deploy-config. Stored, it would re-seed on every wake that
+  // read it back.
+  if (parsedBody.reseed !== undefined && typeof parsedBody.reseed !== 'boolean') {
+    return jsonResponse(400, {
+      error: `reseed must be a boolean, got ${JSON.stringify(parsedBody.reseed)}`,
+    });
+  }
+  const reseed = parsedBody.reseed === true;
+
   // Seed before anything else: if the weights are missing and the seed cannot
   // even be launched, the environment (and any current working config) is left
   // alone rather than half-created.
+  //
+  // A requested re-seed skips the presence check rather than overriding it —
+  // there is no point paying for HEADs whose answer is ignored — and forces
+  // the launch exactly as `outfit remote seed start --force` does, escaping
+  // the idempotency token deliberately rather than being handed back the
+  // attempt it is meant to replace.
   let seeding = false;
   let seedId: string | undefined;
   try {
-    if (!(await weightsPresent(WEIGHTS_BUCKET, config))) {
+    if (reseed || !(await weightsPresent(WEIGHTS_BUCKET, config))) {
       const infra = seedInfraFromEnv();
       // The seed id, not the instance id: the instance is an implementation
       // detail that changes if the seed is relaunched, while the id is stable
       // and is what `outfit remote seed status` takes.
-      const launched = await launchSeedInstance(buildSeedJob(config, infra, ''), infra);
+      const launched = await launchSeedInstance(buildSeedJob(config, infra, ''), infra, {
+        force: reseed,
+      });
       seedId = launched.seedId;
       seeding = true;
     }
@@ -133,6 +152,9 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
       weightsPrefix: config.weightsPrefix,
       seeding,
       seedId,
+      // Distinguishes a forced re-seed from one the missing weights caused,
+      // which is otherwise invisible after the fact.
+      reseed,
     }),
   );
   return jsonResponse(200, {

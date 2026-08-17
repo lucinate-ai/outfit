@@ -43,6 +43,11 @@ func TestParse(t *testing.T) {
 			want: Selection{Provider: "llamacpp", Model: "gemma", Context: "128k", Output: "32k", BaseURL: "http://localhost:9090/v1"},
 		},
 		{
+			name: "parallel",
+			in:   "PROVIDER llamacpp\nMODEL gemma\nCONTEXT 128k\nPARALLEL 2\n",
+			want: Selection{Provider: "llamacpp", Model: "gemma", Context: "128k", Parallel: "2"},
+		},
+		{
 			name: "base url aliases",
 			in:   "PROVIDER openai-compatible\nMODEL m\nURL https://gw/v1\n",
 			want: Selection{Provider: "openai-compatible", Model: "m", BaseURL: "https://gw/v1"},
@@ -89,6 +94,7 @@ func TestParse_Errors(t *testing.T) {
 		"keyword no value":      "PROVIDER\n",
 		"too many values":       "PROVIDER a b\n",
 		"duplicate keyword":     "PROVIDER a\nPROVIDER b\n",
+		"duplicate parallel":    "PROVIDER a\nMODEL m\nPARALLEL 1\nPARALLEL 2\n",
 		"duplicate alias":       "PROVIDER a\nMODEL m\nBASEURL u1\nURL u2\n",
 		"env without equals":    "PROVIDER a\nMODEL m\nENV JUST_A_NAME\n",
 		"env empty key":         "PROVIDER a\nMODEL m\nENV =value\n",
@@ -110,6 +116,7 @@ func TestFormatRoundTrip(t *testing.T) {
 		Alias:    "deepseek",
 		Context:  "128000",
 		Output:   "32000",
+		Parallel: "2",
 		BaseURL:  "https://gateway.example/v1",
 		Preset:   "./preset.ini",
 		Env:      []EnvVar{{Key: "AWS_PROFILE", Value: "dev"}, {Key: "AWS_REGION", Value: "eu-west-2"}},
@@ -121,12 +128,39 @@ func TestFormatRoundTrip(t *testing.T) {
 	if !strings.Contains(out, "ENV      AWS_PROFILE=dev") {
 		t.Errorf("Format should emit ENV lines, got:\n%s", out)
 	}
+	if !strings.Contains(out, "PARALLEL 2") {
+		t.Errorf("Format should emit PARALLEL, got:\n%s", out)
+	}
 	got, err := Parse([]byte(out))
 	if err != nil {
 		t.Fatalf("re-parse: %v", err)
 	}
 	if !reflect.DeepEqual(got, sel) {
 		t.Errorf("round-trip changed selection: %+v -> %+v", sel, got)
+	}
+}
+
+func TestParse_Parallel(t *testing.T) {
+	sel, err := Parse([]byte("PROVIDER llamacpp\nMODEL gemma\nCONTEXT 128k\nPARALLEL 2\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.Parallel != "2" {
+		t.Errorf("Parallel = %q, want \"2\"", sel.Parallel)
+	}
+	if out := Format(sel); !strings.Contains(out, "PARALLEL 2") {
+		t.Errorf("Format should emit PARALLEL, got:\n%s", out)
+	}
+	if _, err := Parse([]byte("PROVIDER x\nMODEL m\nPARALLEL 1\nPARALLEL 2\n")); err == nil {
+		t.Error("duplicate PARALLEL should error")
+	}
+}
+
+func TestFormat_NoParallelOmitsLine(t *testing.T) {
+	sel := Selection{Provider: "llamacpp", Model: "gemma", Context: "128000"}
+	out := Format(sel)
+	if strings.Contains(out, "PARALLEL") {
+		t.Errorf("Format should omit PARALLEL when unset, got:\n%s", out)
 	}
 }
 

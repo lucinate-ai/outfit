@@ -127,8 +127,25 @@ func TestCmdServe_DaemonFlagRemoved(t *testing.T) {
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
 	captureStderr(t, func() {
 		if err := cmdServe([]string{"-d", outfitPath}); err == nil ||
-			!strings.Contains(err.Error(), "not defined") {
+			!strings.Contains(err.Error(), "unknown") {
 			t.Errorf("serve -d = %v, want unknown-flag error", err)
+		}
+	})
+}
+
+// TestCmdServe_HasNoLoopbackFlag pins the shorthand's scope: the spec gives
+// --loopback to the daemon alone, so serve's API must still keep --api-addr
+// rather than growing a second bind source.
+func TestCmdServe_HasNoLoopbackFlag(t *testing.T) {
+	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
+	captureStderr(t, func() {
+		if err := cmdServe([]string{"-a", "--loopback", outfitPath}); err == nil ||
+			!strings.Contains(err.Error(), "unknown") {
+			t.Errorf("serve --loopback = %v, want unknown-flag error", err)
+		}
+		if err := cmdServe([]string{"-a", "-l", outfitPath}); err == nil ||
+			!strings.Contains(err.Error(), "unknown") {
+			t.Errorf("serve -l = %v, want unknown-flag error", err)
 		}
 	})
 }
@@ -153,6 +170,96 @@ func TestCmdDaemon_RefusesTokenlessNonLoopback(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), daemon.TokenEnvVar) {
 		t.Fatalf("tokenless daemon on %s = %v, want refusal naming %s",
 			daemon.DefaultAPIAddr, err, daemon.TokenEnvVar)
+	}
+}
+
+func TestDaemonAPIAddr(t *testing.T) {
+	tests := []struct {
+		name     string
+		apiAddr  string
+		explicit bool
+		loopback bool
+		want     string
+		wantErr  bool
+	}{
+		{name: "neither", apiAddr: daemon.DefaultAPIAddr, want: daemon.DefaultAPIAddr},
+		{name: "typed address alone", apiAddr: "10.0.0.5:9999", explicit: true, want: "10.0.0.5:9999"},
+		{name: "loopback replaces the default", apiAddr: daemon.DefaultAPIAddr, loopback: true, want: daemon.LoopbackAPIAddr},
+		{name: "loopback and a typed address conflict", apiAddr: "10.0.0.5:9999", explicit: true, loopback: true, wantErr: true},
+		{name: "loopback and the repeated default conflict", apiAddr: daemon.DefaultAPIAddr, explicit: true, loopback: true, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := daemonAPIAddr(tt.apiAddr, tt.explicit, tt.loopback)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("daemonAPIAddr(%q, %v, %v) error = %v, wantErr %v", tt.apiAddr, tt.explicit, tt.loopback, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Fatalf("daemonAPIAddr = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCmdDaemon_LoopbackConflictsWithExplicitAddr covers the rule through the
+// real flag parsing, so the -l spelling and an --api-addr typed to the
+// default's own value are both counted as explicit. The conflict is detected
+// by fs.Visit, which is order-independent — the last case types the address
+// first, pinning that a sequential rewrite can't make the rule depend on
+// flag position.
+func TestCmdDaemon_LoopbackConflictsWithExplicitAddr(t *testing.T) {
+	for _, args := range [][]string{
+		{"--loopback", "--api-addr", "127.0.0.1:0"},
+		{"--loopback", "--api-addr", daemon.DefaultAPIAddr},
+		{"-l", "--api-addr", daemon.DefaultAPIAddr},
+		{"--api-addr", "127.0.0.1:0", "--loopback"},
+	} {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv(daemon.TokenEnvVar, "")
+		t.Chdir(t.TempDir())
+		err := cmdDaemon(args)
+		if err == nil || !strings.Contains(err.Error(), "--loopback") || !strings.Contains(err.Error(), "--api-addr") {
+			t.Fatalf("cmdDaemon(%v) = %v, want a conflict naming both flags", args, err)
+		}
+	}
+}
+
+// TestCmdDaemon_LoopbackBindsLoopback checks the shorthand end to end: the
+// daemon binds daemon.LoopbackAPIAddr and answers unauthenticated, because a
+// loopback listen needs no token. The port is fixed, so the test declines
+// rather than fights one — a developer in this repo often has a real daemon
+// on it, and the rest of the suite never binds a fixed port for the same
+// reason.
+func TestCmdDaemon_LoopbackBindsLoopback(t *testing.T) {
+	probe, err := net.DialTimeout("tcp", daemon.LoopbackAPIAddr, 500*time.Millisecond)
+	if err == nil {
+		probe.Close()
+		t.Skipf("%s is taken", daemon.LoopbackAPIAddr)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(daemon.TokenEnvVar, "")
+	t.Chdir(t.TempDir())
+
+	waitAddr := apiAddrFromStderr(t)
+	done := make(chan error, 1)
+	go func() { done <- cmdDaemon([]string{"--loopback"}) }()
+	addr := waitAddr()
+	if addr != daemon.LoopbackAPIAddr {
+		t.Fatalf("daemon --loopback bound %s, want %s", addr, daemon.LoopbackAPIAddr)
+	}
+	// No token was configured anywhere: an unauthenticated status answers.
+	if code, body := apiDo(t, "GET", "http://"+addr+"/v1/status", "", ""); code != 200 || body["state"] != "idle" {
+		t.Fatalf("unauthenticated status = %d %v, want 200 idle", code, body)
+	}
+
+	interruptSelf(t)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("daemon exited with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon did not exit on SIGINT")
 	}
 }
 
@@ -370,6 +477,28 @@ func TestCmdServe_VllmDryRun(t *testing.T) {
 	}
 }
 
+// TestCmdServe_VllmParallelDoesNotScaleContext checks vLLM's PARALLEL maps to
+// --max-num-seqs, a concurrency cap independent of context: unlike
+// llama.cpp, --max-model-len (from CONTEXT) is never scaled by it.
+func TestCmdServe_VllmParallelDoesNotScaleContext(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER vllm\nMODEL org/model\nCONTEXT 128k\nPARALLEL 4\n")
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, want := range []string{"--max-model-len 128000", "--max-num-seqs 4"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("vllm argv missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--max-model-len 512000") {
+		t.Errorf("vllm's context must not be scaled by PARALLEL:\n%s", out)
+	}
+}
+
 func TestArgvFromDeployConfigVllm(t *testing.T) {
 	engine, err := engineFor("vllm")
 	if err != nil {
@@ -391,6 +520,84 @@ func TestArgvFromDeployConfigVllm(t *testing.T) {
 	}
 	for _, want := range []string{"--served-model-name friendly", "--max-model-len 32768",
 		"--gpu-memory-utilization 0.92"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q: %s", want, got)
+		}
+	}
+}
+
+// TestArgvFromDeployConfigLlamacppScalesContext checks a pushed deploy config
+// (the daemon/fleet path) scales ctx-size by parallel exactly as a local
+// `outfit serve` would — the whole point of putting this math in the shared
+// *ServeParams functions.
+func TestArgvFromDeployConfigLlamacppScalesContext(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:      "llamacpp",
+		ModelID:     "/opt/llm/model.gguf",
+		ContextSize: 128000,
+		Parallel:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	for _, want := range []string{"--ctx-size 256000", "--parallel 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q: %s", want, got)
+		}
+	}
+}
+
+// TestArgvFromDeployConfigParallelWithoutContext covers a state only the fleet
+// path can reach: waking a node does not require a context size (the engine's
+// own default stands), so a config may carry a slot count and no context at
+// all. The slot count must still be applied, and nothing may invent a
+// ctx-size out of the zero — a scaled `0 * n` would cap the engine at nothing.
+func TestArgvFromDeployConfigParallelWithoutContext(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:   "llamacpp",
+		ModelID:  "/opt/llm/model.gguf",
+		Parallel: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	if !strings.Contains(got, "--parallel 2") {
+		t.Errorf("argv missing --parallel 2: %s", got)
+	}
+	if strings.Contains(got, "--ctx-size") {
+		t.Errorf("no stored context size should mean no ctx-size flag at all: %s", got)
+	}
+}
+
+// TestArgvFromDeployConfigVllmParallel checks vLLM's PARALLEL maps to
+// --max-num-seqs with no effect on --max-model-len, from a pushed deploy
+// config just as from a local Outfit.
+func TestArgvFromDeployConfigVllmParallel(t *testing.T) {
+	engine, err := engineFor("vllm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:      "vllm",
+		ModelID:     "/opt/llm/model",
+		ContextSize: 32768,
+		Parallel:    4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	for _, want := range []string{"--max-model-len 32768", "--max-num-seqs 4"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("argv missing %q: %s", want, got)
 		}

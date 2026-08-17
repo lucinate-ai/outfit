@@ -37,6 +37,7 @@ const LLAMACPP: DeployConfig = {
   contextSize: 32768,
   servedModelName: 'friendly',
   serveArgs: ['--flash-attn'],
+  companions: {},
 };
 
 const VLLM: DeployConfig = {
@@ -87,6 +88,47 @@ describe('buildInferenceUserData', () => {
     }
     // The daemon switches the metrics endpoint on itself.
     expect(data).not.toContain('--metrics');
+  });
+
+  it('names a companion drafter at its synced path', () => {
+    const data = buildInferenceUserData('prod', {
+      ...LLAMACPP,
+      companions: { draft: 'dflash-kquant.gguf' },
+    });
+    // The deployment owns *where* the drafter is; the source filename never
+    // reaches the instance, only the normalised name.
+    expect(data).toContain('"--spec-draft-model"');
+    expect(data).toContain('"/opt/llm/model/draft.gguf"');
+    expect(data).not.toContain('dflash-kquant.gguf');
+  });
+
+  it('leaves the command unchanged when no companions are named', () => {
+    // The compatibility guarantee: a pre-companion deployment must produce
+    // byte-identical boot data.
+    const { companions, ...preCompanions } = LLAMACPP;
+    expect(buildInferenceUserData('prod', preCompanions as DeployConfig)).toBe(
+      buildInferenceUserData('prod', LLAMACPP),
+    );
+    expect(buildInferenceUserData('prod', LLAMACPP)).not.toContain('--spec-draft-model');
+  });
+
+  it('ignores a companion for vllm rather than failing', () => {
+    const data = buildInferenceUserData('prod', {
+      ...VLLM,
+      companions: { draft: 'dflash-kquant.gguf' },
+    });
+    expect(data).not.toContain('--spec-draft-model');
+    expect(data).toContain('"modelId": "/opt/llm/model"');
+  });
+
+  it('omits parallel from the rendered deploy config when unset', () => {
+    const data = buildInferenceUserData('prod', LLAMACPP);
+    expect(data).not.toContain('"parallel"');
+  });
+
+  it('carries parallel through to the rendered deploy config when set', () => {
+    const data = buildInferenceUserData('prod', { ...LLAMACPP, parallel: 2 });
+    expect(data).toContain('"parallel": 2');
   });
 
   it('renders the vllm deploy config with the model dir and env-file key delivery', () => {

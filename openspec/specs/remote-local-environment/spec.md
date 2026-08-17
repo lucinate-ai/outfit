@@ -21,7 +21,11 @@ own `ENV` instructions. The loaded values SHALL be visible to everything the
 command does afterwards — the AWS credential chain, the region resolution, and
 the `OUTFIT_REMOTE_*` overrides. When a command resolves no Outfit (no path
 argument and no `./Outfit`), there is nothing adjacent to load and the command
-SHALL proceed on the process environment alone.
+SHALL proceed on the process environment alone. When the resolved Outfit was
+fetched from a URL, there is likewise no local `.env` beside it to load — a
+URL has no local directory — and the command SHALL proceed on the Outfit's own
+`ENV` instructions and the process environment alone, exactly as the
+no-Outfit-resolved case does.
 
 #### Scenario: A .env beside the Outfit reaches the control calls
 
@@ -42,6 +46,12 @@ SHALL proceed on the process environment alone.
   per-user configuration
 - **THEN** no adjacent `.env` is read and the command proceeds on the process
   environment alone
+
+#### Scenario: A URL-sourced Outfit has no adjacent .env
+
+- **WHEN** a `remote` command resolves an Outfit fetched from a URL
+- **THEN** no `.env` read is attempted, and only that Outfit's own `ENV`
+  instructions and the process environment are applied
 
 ### Requirement: Precedence of local environment sources
 

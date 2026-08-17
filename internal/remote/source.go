@@ -21,6 +21,15 @@ const defaultSourceRef = "main"
 // version that is not exactly on a tag; such a build is treated as dev.
 var gitDescribeSuffix = regexp.MustCompile(`-\d+-g[0-9a-f]+$`)
 
+// isCleanReleaseVersion reports whether version names an exact release tag —
+// not a dev build, a dirty working tree, or a build off an untagged commit.
+func isCleanReleaseVersion(version string) bool {
+	if version == "" || version == "dev" || strings.HasSuffix(version, "-dirty") {
+		return false
+	}
+	return !gitDescribeSuffix.MatchString(version)
+}
+
 // ResolveRef picks the ref of the remote/ sources to download so they match the
 // running binary. An explicit override wins; a clean release maps to its release
 // tag; a "dev", dirty, or mid-history build falls back to the default branch.
@@ -28,10 +37,7 @@ func ResolveRef(version, override string) string {
 	if override != "" {
 		return override
 	}
-	if version == "" || version == "dev" || strings.HasSuffix(version, "-dirty") {
-		return defaultSourceRef
-	}
-	if gitDescribeSuffix.MatchString(version) {
+	if !isCleanReleaseVersion(version) {
 		return defaultSourceRef
 	}
 	// Release tags carry a "v" prefix (v1.13.0). The Makefile's git-describe
@@ -41,6 +47,20 @@ func ResolveRef(version, override string) string {
 		return "v" + version
 	}
 	return version
+}
+
+// ReleaseVersion reports the CDK project's outfitVersion for a running binary
+// at version, its "v" prefix stripped — empty for a dev, dirty, or
+// mid-history build. The downloaded sources are a codeload tarball with no
+// .git directory, so the CDK project's own git-describe fallback (see
+// remote/lib/config.ts) always comes back empty; bootstrap passes this value
+// as -c outfitVersion so a real release still bakes its own version without
+// the caller needing to pass it by hand.
+func ReleaseVersion(version string) string {
+	if !isCleanReleaseVersion(version) {
+		return ""
+	}
+	return strings.TrimPrefix(version, "v")
 }
 
 // SourceRoot is the parent of the ref-keyed CDK source caches,

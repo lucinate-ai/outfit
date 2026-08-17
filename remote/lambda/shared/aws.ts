@@ -1,11 +1,14 @@
 import {
   AssociateAddressCommand,
+  CreateTagsCommand,
   DescribeImagesCommand,
   DescribeInstancesCommand,
   EC2Client,
   type Filter,
   RunInstancesCommand,
   type RunInstancesCommandInput,
+  StartInstancesCommand,
+  StopInstancesCommand,
   TerminateInstancesCommand,
   _InstanceType,
 } from '@aws-sdk/client-ec2';
@@ -19,6 +22,7 @@ import {
 } from '@aws-sdk/client-ssm';
 import { randomUUID } from 'node:crypto';
 import { type DeployConfig, parseDeployConfig } from './deploy-config';
+import { DAEMON_START_CMD, DAEMON_STOP_CMD, DAEMON_UNREACHABLE } from './daemon';
 
 const ec2 = new EC2Client({});
 const ssm = new SSMClient({});
@@ -48,13 +52,33 @@ export function errorName(err: unknown): string {
  */
 export const RETAIN_UNTIL_TAG = 'Retain-Until';
 
-function parseRetainUntil(tags?: { Key?: string; Value?: string }[]): Date | undefined {
-  const raw = tags?.find((t) => t.Key === RETAIN_UNTIL_TAG)?.Value;
+/**
+ * Instance tag holding the ISO-8601 UTC time the control plane last issued a
+ * stop for this instance (idle sweep or a manual `outfit remote pause`).
+ * Stopped instances are billed for storage while they sleep, so the sweep
+ * counts stop retention from this tag; EC2 itself exposes no stop time.
+ */
+export const STOPPED_AT_TAG = 'Stopped-At';
+
+/**
+ * Instance tag holding the ISO-8601 UTC time the control plane last re-woke a
+ * stopped instance. The max-runtime and grace-period judgements measure the
+ * current session, so start writes this rather than trusting how `LaunchTime`
+ * survives a stop/start cycle.
+ */
+export const STARTED_AT_TAG = 'Started-At';
+
+function parseTagDate(tags: { Key?: string; Value?: string }[] | undefined, key: string): Date | undefined {
+  const raw = tags?.find((t) => t.Key === key)?.Value;
   if (!raw) {
     return undefined;
   }
   const ms = Date.parse(raw);
   return Number.isNaN(ms) ? undefined : new Date(ms);
+}
+
+function parseRetainUntil(tags?: { Key?: string; Value?: string }[]): Date | undefined {
+  return parseTagDate(tags, RETAIN_UNTIL_TAG);
 }
 
 export interface InstanceInfo {
@@ -65,6 +89,10 @@ export interface InstanceInfo {
   launchTime?: Date;
   /** Parsed from the Retain-Until tag, if present and a valid datetime. */
   retainUntil?: Date;
+  /** Parsed from the Stopped-At tag — when the stop was issued, if ever. */
+  stoppedAt?: Date;
+  /** Parsed from the Started-At tag — when the current session began, if the instance was re-woken. */
+  startedAt?: Date;
   /** The environment the instance belongs to (its cloud-vm-llm:env tag). */
   environment?: string;
   /** All of the instance's tags, for callers that key on their own (e.g. seeds). */
@@ -93,6 +121,8 @@ export async function getInstance(instanceId: string): Promise<InstanceInfo> {
     state: instance.State?.Name ?? 'unknown',
     launchTime: instance.LaunchTime,
     retainUntil: parseRetainUntil(instance.Tags),
+    stoppedAt: parseTagDate(instance.Tags, STOPPED_AT_TAG),
+    startedAt: parseTagDate(instance.Tags, STARTED_AT_TAG),
   };
 }
 
@@ -112,7 +142,11 @@ export async function findManagedInstances(
     new DescribeInstancesCommand({
       Filters: [
         { Name: `tag:${tagKey}`, Values: [tagValue] },
-        { Name: 'instance-state-name', Values: ['pending', 'running'] },
+        // stopped stays in: the sweep must see stopped instances to terminate
+        // them after retention, and the start Lambda must find the one to
+        // re-wake. stopping/shutting-down are transient — no body of code acts
+        // on them, only waits them out.
+        { Name: 'instance-state-name', Values: ['pending', 'running', 'stopped'] },
         ...extraFilters,
       ],
     }),
@@ -126,6 +160,8 @@ export async function findManagedInstances(
       instanceType: instance.InstanceType as string | undefined,
       launchTime: instance.LaunchTime,
       retainUntil: parseRetainUntil(instance.Tags),
+      stoppedAt: parseTagDate(instance.Tags, STOPPED_AT_TAG),
+      startedAt: parseTagDate(instance.Tags, STARTED_AT_TAG),
       environment: instance.Tags?.find((t) => t.Key === 'cloud-vm-llm:env')?.Value,
       tags: Object.fromEntries(
         (instance.Tags ?? [])
@@ -233,6 +269,24 @@ export async function terminateInstance(instanceId: string): Promise<void> {
   await ec2.send(new TerminateInstancesCommand({ InstanceIds: [instanceId] }));
 }
 
+export async function stopInstance(instanceId: string): Promise<void> {
+  await ec2.send(new StopInstancesCommand({ InstanceIds: [instanceId] }));
+}
+
+export async function startInstance(instanceId: string): Promise<void> {
+  await ec2.send(new StartInstancesCommand({ InstanceIds: [instanceId] }));
+}
+
+/** Set (or replace) one instance tag. Best-effort callers may let this throw. */
+export async function tagInstance(instanceId: string, key: string, value: string): Promise<void> {
+  await ec2.send(
+    new CreateTagsCommand({
+      Resources: [instanceId],
+      Tags: [{ Key: key, Value: value }],
+    }),
+  );
+}
+
 export async function associateEip(allocationId: string, instanceId: string): Promise<void> {
   await ec2.send(
     new AssociateAddressCommand({
@@ -299,6 +353,36 @@ export async function runShellCommand(
     }
   }
   return { status: 'Timeout', stdout: '' };
+}
+
+/**
+ * Ask the daemon on an instance to stop its engine, best-effort. Returns true
+ * when the daemon answered with a success status, false when it did not answer
+ * or the command failed. This is deliberately tolerant: a crashed daemon should
+ * not prevent the Lambda from proceeding to stop the EC2 instance.
+ */
+export async function stopEngineDaemon(instanceId: string): Promise<boolean> {
+  try {
+    const result = await runShellCommand(instanceId, DAEMON_STOP_CMD, 10);
+    return result.status === 'Success';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ask the daemon on an instance to start its engine, best-effort. The daemon
+ * answers whenever it is up — including with a "not running" reply that the
+ * health poll then gates on — so a false here means the request was not
+ * delivered, not that the engine will not run.
+ */
+export async function startEngineDaemon(instanceId: string): Promise<boolean> {
+  try {
+    const result = await runShellCommand(instanceId, DAEMON_START_CMD, 10);
+    return result.status === 'Success' && !result.stdout.includes(DAEMON_UNREACHABLE);
+  } catch {
+    return false;
+  }
 }
 
 /**

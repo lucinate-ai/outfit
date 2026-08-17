@@ -7,6 +7,10 @@ import {
   readDeployConfig,
   requireEnv,
   runShellCommand,
+  STOPPED_AT_TAG,
+  stopEngineDaemon,
+  stopInstance,
+  tagInstance,
   terminateInstance,
   type InstanceInfo,
 } from '../shared/aws';
@@ -25,6 +29,7 @@ const GRACE_PERIOD_MINUTES = Number(requireEnv('GRACE_PERIOD_MINUTES'));
 const MAX_RUNTIME_MINUTES = Number(requireEnv('MAX_RUNTIME_MINUTES'));
 const MAX_SEED_MINUTES = Number(requireEnv('MAX_SEED_MINUTES'));
 const SEED_STALL_MINUTES = Number(requireEnv('SEED_STALL_MINUTES'));
+const STOP_RETENTION_MINUTES = Number(requireEnv('STOP_RETENTION_MINUTES'));
 
 
 type StopEvent = ScheduledEvent | LambdaFunctionURLEvent;
@@ -46,7 +51,17 @@ export async function handler(event: StopEvent): Promise<LambdaFunctionURLResult
   return manualStop(event);
 }
 
-/** Function URL — POST terminates one environment's instance; GET reports it. */
+/**
+ * Function URL — POST stops one environment's instance; GET reports it. The
+ * `action` query parameter chooses the shutdown: `pause` (the default for a
+ * manual `outfit remote pause`) stops without terminating, so the instance can
+ * be re-woken; anything else terminates, which is what a manual
+ * `outfit remote stop` wants. A further query parameter, `force=true`, marks
+ * the stop as forced: the engine is not asked to shut down first, so a wedged
+ * engine or daemon cannot prevent the box from going down (a manual
+ * `outfit remote restart -F`). The stop-time tag, the EC2 call and the reply
+ * are the same either way.
+ */
 async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   let env: string;
   try {
@@ -61,10 +76,23 @@ async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunction
   if (method === 'GET') {
     return jsonResponse(200, { state: instance?.state ?? 'stopped', environment: env });
   }
+  const force = event.queryStringParameters?.force === 'true';
   if (instance) {
+    if (event.queryStringParameters?.action === 'pause') {
+      return pauseInstance(instance, env, force);
+    }
+    if (!force) {
+      await stopEngineDaemon(instance.instanceId);
+    }
     await terminateInstance(instance.instanceId);
     console.log(
-      JSON.stringify({ mode: 'manual', action: 'terminate', environment: env, instanceId: instance.instanceId }),
+      JSON.stringify({
+        mode: 'manual',
+        action: 'terminate',
+        environment: env,
+        instanceId: instance.instanceId,
+        force,
+      }),
     );
     return jsonResponse(200, { state: 'terminating', environment: env });
   }
@@ -73,9 +101,50 @@ async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunction
 }
 
 /**
+ * Stop (never terminate) one environment's instance. Tagging before the stop
+ * means a crash in between leaves a stopped instance with its stop time
+ * recorded; a tagless already-stopped instance is self-healed the same way the
+ * sweep does. The sweep then owns the eventual termination after retention.
+ * When force is set the engine is not asked to shut down first — the EC2 stop
+ * takes the box down with the engine still in it, which is what a wedged
+ * engine needs — but everything else about the stop is unchanged.
+ */
+async function pauseInstance(
+  instance: InstanceInfo,
+  env: string,
+  force: boolean,
+): Promise<LambdaFunctionURLResult> {
+  if (instance.state === 'stopped') {
+    if (!instance.stoppedAt) {
+      await tagInstance(instance.instanceId, STOPPED_AT_TAG, new Date().toISOString());
+    }
+    console.log(
+      JSON.stringify({ mode: 'manual', action: 'noop', environment: env, instanceId: instance.instanceId }),
+    );
+    return jsonResponse(200, { state: 'stopped', environment: env });
+  }
+  await tagInstance(instance.instanceId, STOPPED_AT_TAG, new Date().toISOString());
+  if (!force) {
+    await stopEngineDaemon(instance.instanceId);
+  }
+  await stopInstance(instance.instanceId);
+  console.log(
+    JSON.stringify({
+      mode: 'manual',
+      action: 'stop',
+      environment: env,
+      instanceId: instance.instanceId,
+      force,
+    }),
+  );
+  return jsonResponse(200, { state: 'stopping', environment: env });
+}
+
+/**
  * EventBridge tick — one shared sweep covers every environment: each running
- * instance is judged on its own environment's activity, config and state, and
- * only the idle ones are terminated.
+ * instance is judged on its own environment's activity and idle ones are
+ * stopped (not terminated, so a re-wake is fast), and each stopped instance is
+ * terminated once its stop retention passes.
  */
 async function idleSweep(): Promise<void> {
   const instances = await findManagedInstances(TAG_KEY, TAG_VALUE);
@@ -94,13 +163,31 @@ async function idleSweep(): Promise<void> {
   }
 }
 
-/** Judge one instance and terminate it if idle past its bounds. */
+/** Judge one instance: stop a running idle one, terminate one stopped past its retention. */
 async function idleCheck(instance: InstanceInfo): Promise<void> {
   const env = instance.environment;
-  if (instance.state !== 'running' || !instance.launchTime) {
+  const now = new Date();
+  // Session start: the re-wake time when the instance was recently re-woken,
+  // else its first launch. Max runtime and the grace period bound one running
+  // session, so a stop/start cycle must not inherit the previous one's age.
+  const sessionStart = instance.startedAt ?? instance.launchTime;
+  if (!sessionStart) {
     console.log(
       JSON.stringify({ mode: 'idle', action: 'noop', environment: env, state: instance.state }),
     );
+    return;
+  }
+  if (instance.state !== 'running' && instance.state !== 'stopped') {
+    // stopping/shutting-down are transient: acting here could race the
+    // transition, so the sweep waits them out.
+    console.log(
+      JSON.stringify({ mode: 'idle', action: 'noop', environment: env, state: instance.state }),
+    );
+    return;
+  }
+
+  if (instance.state === 'stopped') {
+    await idleCheckStopped(instance, env, now, sessionStart);
     return;
   }
 
@@ -132,20 +219,78 @@ async function idleCheck(instance: InstanceInfo): Promise<void> {
     );
   }
   const decision = decideIdle({
-    now: new Date(),
-    launchTime: instance.launchTime,
+    now,
+    launchTime: sessionStart,
     metrics,
     idleThresholdMinutes: IDLE_THRESHOLD_MINUTES,
     gracePeriodMinutes: GRACE_PERIOD_MINUTES,
     maxRuntimeMinutes: MAX_RUNTIME_MINUTES,
     retainUntil: instance.retainUntil,
+    instanceState: 'running',
   });
   console.log(
     JSON.stringify({ mode: 'idle', environment: env, decision: decision.action, reason: decision.reason }),
   );
 
   if (decision.action === 'stop') {
+    // Tag before the stop: a Lambda crash between the two then leaves a
+    // stopped instance with its stop time already recorded, and a stale tag on
+    // a still-running instance is ignored by the running path.
+    await tagInstance(instance.instanceId, STOPPED_AT_TAG, now.toISOString());
+    await stopEngineDaemon(instance.instanceId);
+    await stopInstance(instance.instanceId);
+    console.log(
+      JSON.stringify({ mode: 'idle', action: 'stop', environment: env, instanceId: instance.instanceId }),
+    );
+  }
+}
+
+/**
+ * A stopped instance is judged on stop retention alone — it holds no running
+ * engine, so there is no activity to scrape. Without a stop time it is
+ * self-healed: a stop issued outside the control plane (or a crash between the
+ * stop call and its tag) buys the full retention from now rather than an
+ * immediate death.
+ */
+async function idleCheckStopped(
+  instance: InstanceInfo,
+  env: string | undefined,
+  now: Date,
+  sessionStart: Date,
+): Promise<void> {
+  if (!instance.stoppedAt) {
+    console.log(
+      JSON.stringify({
+        mode: 'idle',
+        action: 'self-heal',
+        environment: env,
+        instanceId: instance.instanceId,
+        warning: `stopped instance has no ${STOPPED_AT_TAG} tag; recording now and retrying after retention`,
+      }),
+    );
+    await tagInstance(instance.instanceId, STOPPED_AT_TAG, now.toISOString());
+    return;
+  }
+  const decision = decideIdle({
+    now,
+    launchTime: sessionStart,
+    metrics: { ok: false },
+    idleThresholdMinutes: IDLE_THRESHOLD_MINUTES,
+    gracePeriodMinutes: GRACE_PERIOD_MINUTES,
+    maxRuntimeMinutes: MAX_RUNTIME_MINUTES,
+    retainUntil: instance.retainUntil,
+    stopRetentionMinutes: STOP_RETENTION_MINUTES,
+    stoppedSince: instance.stoppedAt,
+    instanceState: 'stopped',
+  });
+  console.log(
+    JSON.stringify({ mode: 'idle', environment: env, decision: decision.action, reason: decision.reason }),
+  );
+  if (decision.action === 'terminate') {
     await terminateInstance(instance.instanceId);
+    console.log(
+      JSON.stringify({ mode: 'idle', action: 'terminate', environment: env, instanceId: instance.instanceId }),
+    );
   }
 }
 

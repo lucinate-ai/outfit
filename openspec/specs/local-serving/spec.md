@@ -114,18 +114,26 @@ entirely when the Outfit states no `BASEURL`, so the engine's own defaults stand
 ### Requirement: Preset-based serving
 
 With a `PRESET`, the referenced `.ini` SHALL supply the command: a relative
-preset path resolves against the Outfit's own directory, so the pair can travel
-together. The preset's `[*]`/`[global]` section holds shared defaults; each named
-section is one model whose keys are server arguments with dashes stripped. The
-served section is chosen by the Outfit's `ALIAS`, matched case-insensitively; a
+preset reference resolves against the Outfit's own source — a local directory
+join when the Outfit was read from disk, URL-relative resolution when the
+Outfit was fetched from a URL — so the pair can travel together either way. A
+`PRESET` MAY itself be an absolute `http://`/`https://` URL regardless of
+where the Outfit lives, in which case it is fetched over HTTP. Fetching a
+remote `PRESET` SHALL happen only when a command that consumes it (`outfit
+serve`, `outfit remote deploy`) actually builds its launch or deploy
+configuration — never merely because the Outfit was read or applied. The
+preset's `[*]`/`[global]` section holds shared defaults; each named section is
+one model whose keys are server arguments with dashes stripped. The served
+section is chosen by the Outfit's `ALIAS`, matched case-insensitively; a
 preset with exactly one section is always served; no sections is an error;
 several sections with no matching name SHALL fail listing the available
 sections. Values the Outfit itself states SHALL override the preset's.
 
-A preset SHALL be read in the flag vocabulary of the engine the `PROVIDER` names,
-never in a vocabulary inferred from the file. A preset written for one engine is
-therefore not portable to another: read in the wrong vocabulary it would parse
-cleanly and produce a command with silently rewritten or dropped flags.
+A preset SHALL be read in the flag vocabulary of the engine the `PROVIDER`
+names, never in a vocabulary inferred from the file. A preset written for one
+engine is therefore not portable to another: read in the wrong vocabulary it
+would parse cleanly and produce a command with silently rewritten or dropped
+flags.
 
 #### Scenario: Outfit overrides the preset
 
@@ -145,6 +153,24 @@ cleanly and produce a command with silently rewritten or dropped flags.
   alias
 - **THEN** the key is rendered as written, not rewritten to llama.cpp's
   long-form flag
+
+#### Scenario: A remote preset
+
+- **WHEN** the Outfit sets `PRESET https://example.com/preset.ini`
+- **THEN** `outfit serve` fetches that URL and serves the section its `ALIAS`
+  selects
+
+#### Scenario: A preset relative to a URL-sourced Outfit
+
+- **WHEN** an Outfit fetched from `https://example.com/team/Outfit` sets
+  `PRESET ./preset.ini`
+- **THEN** `outfit serve` fetches `https://example.com/team/preset.ini`
+
+#### Scenario: A preset is not fetched by commands that do not need it
+
+- **WHEN** `outfit apply` runs against an Outfit whose `PRESET` is a URL
+- **THEN** the preset URL is never fetched, matching how a local `PRESET` is
+  already ignored by `apply`
 
 ### Requirement: Flag rendering
 
@@ -171,6 +197,97 @@ the tokens that need it, and SHALL pass values to the server verbatim.
 
 - **WHEN** an oMLX preset sets `model-dir` and `memory-guard`
 - **THEN** both render as their long-form flags with their values unchanged
+
+### Requirement: Parallelism
+
+`CONTEXT` SHALL always mean the context window a single request gets, whatever
+engine serves it. An Outfit's `PARALLEL` SHALL set the number of concurrent
+request slots, translated per engine so that `CONTEXT`'s meaning holds:
+
+- For `llamacpp`, `PARALLEL n` SHALL be rendered as `--parallel n`. Because
+  llama.cpp treats `--ctx-size` as a total budget divided across its parallel
+  slots, when the Outfit **also** states `CONTEXT`, the rendered `--ctx-size`
+  SHALL be `context_tokens * n` rather than `context_tokens`, so each slot
+  still gets the context the Outfit asked for. `CONTEXT` set with no
+  `PARALLEL` SHALL render `--ctx-size` as `context_tokens`, unscaled, exactly
+  as before this capability existed.
+- For `vllm`, `PARALLEL n` SHALL be rendered as `--max-num-seqs n`.
+  `--max-model-len` (from `CONTEXT`) SHALL NOT be scaled by `PARALLEL`: vLLM's
+  concurrency is bounded independently of a single request's context length.
+- For `omlx`, `PARALLEL n` SHALL be rendered as `--max-concurrent-requests n`.
+  oMLX has no context flag to scale either way.
+
+An Outfit stating no `PARALLEL` SHALL produce a command identical to one from
+before this capability existed, for all three engines. A `PARALLEL` value
+SHALL be validated as a positive integer at the point it is used (`serve`, a
+daemon-pushed config, or `remote deploy`); a value that is not SHALL fail
+naming the invalid value rather than being passed to the engine.
+
+When `CONTEXT` is supplied by a `PRESET` section's own `ctx-size` rather than
+by the Outfit, `PARALLEL` SHALL NOT rescale it — only an Outfit-stated
+`CONTEXT` participates in the `llamacpp` multiply. A `PARALLEL` value SHALL
+still override a preset's own `np`/`parallel` (llama.cpp), `max-num-seqs`
+(vLLM), or `max-concurrent-requests` (oMLX) value by the same
+override-by-canonical-name rule `CONTEXT` already uses against a preset's
+`ctx-size`.
+
+#### Scenario: llama.cpp context is scaled by parallel slots
+
+- **WHEN** an Outfit states `PROVIDER llamacpp`, `CONTEXT 128k`, and
+  `PARALLEL 2`
+- **THEN** the printed command includes `--ctx-size 256000` and `--parallel 2`
+
+#### Scenario: llama.cpp parallel with no context set
+
+- **WHEN** an Outfit states `PROVIDER llamacpp` and `PARALLEL 4` with no
+  `CONTEXT`
+- **THEN** the printed command includes `--parallel 4` and no `--ctx-size`
+  flag is added
+
+#### Scenario: llama.cpp context with no parallel set is unscaled
+
+- **WHEN** an Outfit states `PROVIDER llamacpp` and `CONTEXT 128k` with no
+  `PARALLEL`
+- **THEN** the printed command includes `--ctx-size 128000`, exactly as it
+  would have before `PARALLEL` existed
+
+#### Scenario: A preset's own context is not rescaled
+
+- **WHEN** an Outfit states `PROVIDER llamacpp`, `PARALLEL 2`, and a `PRESET`
+  whose section sets `ctx-size` but the Outfit itself states no `CONTEXT`
+- **THEN** the printed command includes `--parallel 2` and the preset's
+  `ctx-size` value passes through unscaled
+
+#### Scenario: vLLM concurrency does not touch context
+
+- **WHEN** an Outfit states `PROVIDER vllm`, `CONTEXT 128k`, and `PARALLEL 4`
+- **THEN** the printed command includes `--max-model-len 128000` and
+  `--max-num-seqs 4`, with neither value derived from the other
+
+#### Scenario: oMLX concurrency
+
+- **WHEN** an Outfit states `PROVIDER omlx` and `PARALLEL 8`
+- **THEN** the printed command includes `--max-concurrent-requests 8` and no
+  context flag, exactly as with no `PARALLEL` stated
+
+#### Scenario: No PARALLEL means no change
+
+- **WHEN** an Outfit states no `PARALLEL`, for any of the three engines
+- **THEN** the printed command is identical to what it would have been before
+  this capability existed
+
+#### Scenario: Invalid parallel count
+
+- **WHEN** an Outfit states `PARALLEL 0`, a negative number, or a non-numeric
+  value, for any of the three engines
+- **THEN** the command fails naming the invalid value rather than passing it
+  to the engine
+
+#### Scenario: Outfit PARALLEL overrides a preset's own value
+
+- **WHEN** an Outfit states `PROVIDER llamacpp` and `PARALLEL 2`, and its
+  `PRESET` section separately sets `np = 4`
+- **THEN** the printed command includes `--parallel 2`, not `--parallel 4`
 
 ### Requirement: Secrets never reach the server command
 

@@ -177,7 +177,7 @@ func TestStart_RetriesUntilReady(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var progress []string
-	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil)
+	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +192,9 @@ func TestStart_RetriesUntilReady(t *testing.T) {
 	}
 }
 
-// onState must see the raw state of every poll, so a caller can tell a
-// capacity wait apart from a boot rather than assume the instance is starting.
+// onState must see both the raw state of every poll and each attempt as it is
+// issued, so a caller can tell a capacity wait apart from a boot rather than
+// assume the instance is starting.
 func TestStart_ReportsEachPollState(t *testing.T) {
 	stubAWSEnv(t)
 	calls := 0
@@ -211,11 +212,65 @@ func TestStart_ReportsEachPollState(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var states []string
-	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }); err != nil {
+	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(states, ","); got != "no-capacity,ready" {
-		t.Errorf("onState saw %q, want %q", got, "no-capacity,ready")
+	want := StateInFlight + ",no-capacity," + StateInFlight + ",ready"
+	if got := strings.Join(states, ","); got != want {
+		t.Errorf("onState saw %q, want %q", got, want)
+	}
+}
+
+// A boot following a capacity wait must not leave the observer holding the
+// stale no-capacity state: the attempt that finds capacity holds its request
+// open without a reply, so Start must report it as in flight for the boot to
+// be distinguishable from still waiting on capacity.
+func TestStart_ReportsInFlightAfterACapacityWait(t *testing.T) {
+	stubAWSEnv(t)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"state":"no-capacity","retry_after_seconds":0}`))
+			return
+		}
+		// The attempt that finds capacity holds its request open while the
+		// instance boots and answers only when ready.
+		time.Sleep(50 * time.Millisecond)
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	var states []string
+	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }, nil); err != nil {
+		t.Fatal(err)
+	}
+	lastNoCapacity, inFlightAfter, readyAfter := -1, false, false
+	for i, s := range states {
+		switch s {
+		case "no-capacity":
+			lastNoCapacity = i
+		case StateInFlight:
+			if i > lastNoCapacity {
+				inFlightAfter = true
+			}
+		case "ready":
+			if i > lastNoCapacity {
+				readyAfter = true
+			}
+		}
+	}
+	if lastNoCapacity == -1 {
+		t.Fatalf("onState never saw the no-capacity reply: %v", states)
+	}
+	if !inFlightAfter {
+		t.Errorf("no in-flight report between the no-capacity reply and ready: %v", states)
+	}
+	if !readyAfter {
+		t.Errorf("no ready report after the no-capacity reply: %v", states)
 	}
 }
 
@@ -246,7 +301,7 @@ func TestStart_RetriesADroppedConnection(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var progress []string
-	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil)
+	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +336,7 @@ func TestStart_DoesNotRetryPastTheDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(ctx, cfg, func(string) {}, nil)
+	_, err := Start(ctx, cfg, func(string) {}, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error once the deadline passed")
 	}
@@ -296,7 +351,7 @@ func TestStart_Failure(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(context.Background(), cfg, func(string) {}, nil)
+	_, err := Start(context.Background(), cfg, func(string) {}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "cannot start") {
 		t.Errorf("expected the server's message in the error, got %v", err)
 	}
@@ -313,7 +368,7 @@ func TestStart_ContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(ctx, cfg, func(string) {}, nil)
+	_, err := Start(ctx, cfg, func(string) {}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Errorf("expected a gave-up error, got %v", err)
 	}
@@ -346,6 +401,228 @@ func TestStatusAndStop(t *testing.T) {
 	}
 	if stop.State != "stopping" {
 		t.Errorf("unexpected stop response: %+v", stop)
+	}
+}
+
+func TestPause(t *testing.T) {
+	stubAWSEnv(t)
+	var gotAction, gotMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotAction = r.URL.Query().Get("action")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	pause, err := Pause(context.Background(), cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pause.State != "stopping" {
+		t.Errorf("unexpected pause response: %+v", pause)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("pause should POST, got %s", gotMethod)
+	}
+	// The pause speaks to the stop Lambda in pause mode: same URL, an action
+	// parameter — nothing new to configure.
+	if gotAction != "pause" {
+		t.Errorf("pause must select the stop Lambda's pause mode, got action=%q", gotAction)
+	}
+}
+
+// pauseURL keeps the pause mode (action on the stop URL) and, only when asked
+// for, marks the stop forced; a URL the parser rejects is handed back as-is,
+// so a malformed config fails later where it always failed.
+func TestPauseURL(t *testing.T) {
+	if got := pauseURL("https://stop.example/", false); got != "https://stop.example/?action=pause" {
+		t.Errorf("unforced pause URL = %q, want the pause mode and nothing else", got)
+	}
+	if got := pauseURL("https://stop.example/", true); got != "https://stop.example/?action=pause&force=true" {
+		t.Errorf("forced pause URL = %q, want action and force", got)
+	}
+	if got := pauseURL("://bad", true); got != "://bad" {
+		t.Errorf("unparseable URL should be returned as-is, got %q", got)
+	}
+}
+
+// A forced pause marks the stop forced on the way over (force=true beside
+// action=pause) so the control plane can skip the graceful engine stop; an
+// unforced one sends nothing, so an old control plane sees exactly what it
+// always saw.
+func TestPause_ForceParameter(t *testing.T) {
+	stubAWSEnv(t)
+	var gotAction, gotForce [2]string
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAction[calls] = r.URL.Query().Get("action")
+		gotForce[calls] = r.URL.Query().Get("force")
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	if _, err := Pause(context.Background(), cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	if gotAction[0] != "pause" || gotForce[0] != "true" {
+		t.Errorf("forced pause must send action=pause&force=true, got action=%q force=%q", gotAction[0], gotForce[0])
+	}
+	if _, err := Pause(context.Background(), cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if gotAction[1] != "pause" {
+		t.Errorf("unforced pause must still select the stop Lambda's pause mode, got action=%q", gotAction[1])
+	}
+	if gotForce[1] != "" {
+		t.Errorf("unforced pause must not send a force parameter, got force=%q", gotForce[1])
+	}
+}
+
+// A restart is a pause-style stop followed by the wake, in that order: the
+// stop keeps the boot disk (action=pause), and the wake blocks until ready.
+func TestRestart_StopsThenWakes(t *testing.T) {
+	stubAWSEnv(t)
+	var order []string
+	var stopQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "pause" {
+			order = append(order, "stop")
+			stopQuery = r.URL.RawQuery
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		order = append(order, "wake")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	var progress []string
+	resp, err := Restart(context.Background(), cfg, false, func(msg string) { progress = append(progress, msg) }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.State != "ready" || resp.BaseURL != "http://198.51.100.1:8000/v1" {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+	if len(order) != 2 || order[0] != "stop" || order[1] != "wake" {
+		t.Fatalf("expected the stop before the wake, got %v", order)
+	}
+	// The stop is pause-style and unforced: the boot disk survives, the engine
+	// is stopped politely.
+	if !strings.Contains(stopQuery, "action=pause") || strings.Contains(stopQuery, "force=") {
+		t.Errorf("unforced restart must stop in pause mode without force, got %q", stopQuery)
+	}
+	if len(progress) == 0 || !strings.Contains(progress[0], "stopped; waking") {
+		t.Errorf("expected a stop-phase progress line, got %v", progress)
+	}
+}
+
+func TestRestart_ForceMarksTheStop(t *testing.T) {
+	stubAWSEnv(t)
+	var stopQuery string
+	var woke bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "pause" {
+			stopQuery = r.URL.RawQuery
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		woke = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	if _, err := Restart(context.Background(), cfg, true, func(string) {}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stopQuery, "action=pause") || !strings.Contains(stopQuery, "force=true") {
+		t.Errorf("forced restart must stop in pause mode with force=true, got %q", stopQuery)
+	}
+	if !woke {
+		t.Error("forced restart must still wake the instance")
+	}
+}
+
+// A failed stop never reaches the wake: the instance may still be running, so
+// starting it again is pointless and the error is the stop's.
+func TestRestart_StopFailureNeverWakes(t *testing.T) {
+	stubAWSEnv(t)
+	woke := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") != "pause" {
+			woke = true
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"terminated","message":"cannot stop"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Restart(context.Background(), cfg, false, func(string) {}, nil)
+	if err == nil || !strings.Contains(err.Error(), "cannot stop") {
+		t.Errorf("expected the stop's error, got %v", err)
+	}
+	if woke {
+		t.Error("a failed stop must not wake the instance")
+	}
+}
+
+// When the stop took effect but the wake then fails, the error says the
+// instance is stopped and names the command that recovers it.
+func TestRestart_WakeFailureNamesRecovery(t *testing.T) {
+	stubAWSEnv(t)
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "pause" {
+			calls = append(calls, "stop")
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		calls = append(calls, "wake")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"terminated","message":"cannot start"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Restart(context.Background(), cfg, false, func(string) {}, nil)
+	if err == nil {
+		t.Fatal("expected a wake failure")
+	}
+	if !strings.Contains(err.Error(), "stopped") ||
+		!strings.Contains(err.Error(), "outfit remote start") {
+		t.Errorf("expected the recovery hint in the error, got %v", err)
+	}
+	if len(calls) != 2 || calls[0] != "stop" || calls[1] != "wake" {
+		t.Fatalf("expected the wake to be attempted after the stop, got %v", calls)
+	}
+}
+
+func TestPause_NonSuccess(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"stopped","message":"cannot stop"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Pause(context.Background(), cfg, false)
+	if err == nil || !strings.Contains(err.Error(), "pause") ||
+		!strings.Contains(err.Error(), "cannot stop") {
+		t.Errorf("expected a pause error with the reply's detail, got %v", err)
 	}
 }
 
@@ -474,7 +751,7 @@ func TestDeploy_Success(t *testing.T) {
 
 	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
 	dc := DeployConfig{Runner: "vllm", ModelID: "org/model"}
-	resp, err := Deploy(context.Background(), cfg, dc, "203.0.113.0/24")
+	resp, err := Deploy(context.Background(), cfg, dc, "203.0.113.0/24", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,6 +762,30 @@ func TestDeploy_Success(t *testing.T) {
 	if !strings.Contains(string(gotBody), `"runner":"vllm"`) ||
 		!strings.Contains(string(gotBody), `"allowedCidr":"203.0.113.0/24"`) {
 		t.Errorf("deploy did not send the expected body: %s", gotBody)
+	}
+	// Omitted entirely when not asked for, so an older control plane sees the
+	// body it always saw.
+	if strings.Contains(string(gotBody), "reseed") {
+		t.Errorf("reseed should be omitted when false: %s", gotBody)
+	}
+}
+
+func TestDeploy_ReseedReachesTheRequest(t *testing.T) {
+	stubAWSEnv(t)
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"state":"deployed","deployed":true,"seeding":true}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
+	dc := DeployConfig{Runner: "vllm", ModelID: "org/model"}
+	if _, err := Deploy(context.Background(), cfg, dc, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gotBody), `"reseed":true`) {
+		t.Errorf("reseed did not reach the request body: %s", gotBody)
 	}
 }
 
@@ -497,14 +798,14 @@ func TestDeploy_ExpiredCredentials(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
-	if _, err := Deploy(context.Background(), cfg, DeployConfig{Runner: "vllm"}, ""); err == nil ||
+	if _, err := Deploy(context.Background(), cfg, DeployConfig{Runner: "vllm"}, "", false); err == nil ||
 		!strings.Contains(err.Error(), "expired or invalid") {
 		t.Errorf("expected deploy to fail with an expired-credentials error, got %v", err)
 	}
 }
 
 func TestDeploy_MissingURL(t *testing.T) {
-	if _, err := Deploy(context.Background(), Config{}, DeployConfig{}, ""); err == nil ||
+	if _, err := Deploy(context.Background(), Config{}, DeployConfig{}, "", false); err == nil ||
 		!strings.Contains(err.Error(), "no deploy_url") {
 		t.Errorf("expected a missing-URL error, got %v", err)
 	}
@@ -521,7 +822,7 @@ func TestStart_ExpiredCredentials(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, Region: "eu-west-1"}
-	if _, err := Start(context.Background(), cfg, func(string) {}, nil); err == nil ||
+	if _, err := Start(context.Background(), cfg, func(string) {}, nil, nil); err == nil ||
 		!strings.Contains(err.Error(), "expired or invalid") {
 		t.Errorf("expected start to fail with an expired-credentials error, got %v", err)
 	}
@@ -775,5 +1076,106 @@ func TestProbeReachability_BadURL(t *testing.T) {
 	err := ProbeReachability("://not-a-url")
 	if err == nil {
 		t.Error("probe should fail on an unparseable URL")
+	}
+}
+
+func TestKeep(t *testing.T) {
+	stubAWSEnv(t)
+	var gotCmd, gotRetainUntil, gotMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotCmd = r.URL.Query().Get("cmd")
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment":"test","retainUntil":"2025-01-01T00:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, UpdateURL: server.URL, Region: "eu-west-1"}
+	retainUntil := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	resp, err := Keep(context.Background(), cfg, retainUntil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.RetainUntil != "2025-01-01T00:00:00Z" {
+		t.Errorf("unexpected retainUntil: %q", resp.RetainUntil)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("keep should POST, got %s", gotMethod)
+	}
+	if gotCmd != "set-keep" {
+		t.Errorf("keep should send cmd=set-keep, got %q", gotCmd)
+	}
+	if gotRetainUntil != "2025-01-01T00:00:00Z" {
+		t.Errorf("keep should send retainUntil as ISO-8601, got %q", gotRetainUntil)
+	}
+}
+
+func TestKeep_NoUpdateURL(t *testing.T) {
+	stubAWSEnv(t)
+	cfg := Config{StartURL: "https://start/", StopURL: "https://stop/", Region: "eu-west-1"}
+	_, err := Keep(context.Background(), cfg, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "no update_url") {
+		t.Errorf("expected a no-update-url error, got %v", err)
+	}
+}
+
+func TestKeep_NonSuccess(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"no running instance"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, UpdateURL: server.URL, Region: "eu-west-1"}
+	_, err := Keep(context.Background(), cfg, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "keep") ||
+		!strings.Contains(err.Error(), "no running instance") {
+		t.Errorf("expected a keep error with the reply's detail, got %v", err)
+	}
+}
+
+func TestStart_RetainUntil(t *testing.T) {
+	stubAWSEnv(t)
+	var gotRetainUntil string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","retainUntil":"2025-01-01T04:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	retainUntil := time.Date(2025, 1, 1, 4, 0, 0, 0, time.UTC)
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	resp, err := Start(context.Background(), cfg, func(string) {}, nil, &retainUntil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRetainUntil != "2025-01-01T04:00:00Z" {
+		t.Errorf("start should send retainUntil as ISO-8601, got %q", gotRetainUntil)
+	}
+	if resp.RetainUntil != "2025-01-01T04:00:00Z" {
+		t.Errorf("unexpected retainUntil in response: %q", resp.RetainUntil)
+	}
+}
+
+func TestStart_NoRetainUntil(t *testing.T) {
+	stubAWSEnv(t)
+	var gotRetainUntil string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Start(context.Background(), cfg, func(string) {}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRetainUntil != "" {
+		t.Errorf("start without retainUntil should not send the parameter, got %q", gotRetainUntil)
 	}
 }

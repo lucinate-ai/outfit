@@ -17,6 +17,11 @@ export const vllm: RunnerSpec = {
   // directory, so there is nothing to filter out.
   seedSelection: () => ({ include: ['*'] }),
 
+  // vLLM serves a whole checkpoint and has no companion-file flags of its own,
+  // so a companion named for a vLLM deployment is seeded but unused rather
+  // than rejected — see the companionArgs contract in spec.ts.
+  companionArgs: () => [],
+
   daemonBoot: (cfg, modelDir, port) => `# Python dev headers: Triton JIT-compiles a CUDA stub against Python.h on the
 # first model load (Qwen3.6's linear-attention path); baked into recipe 2.0.3+,
 # this is a safety net for instances off an older AMI and a no-op once present.

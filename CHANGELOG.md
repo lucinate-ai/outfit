@@ -6,32 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.24.2] - 2026-08-21
+### Fixed
+- fix(remote): pass outfitVersion when bootstrapping a release build
+
+## [1.24.1] - 2026-08-21
+### Changed
+- docs: correct remote log path
+- refactor: migrate the CLI to cobra and viper
+
+### Fixed
+- fix(remote): relay daemon version through the stats Lambda
+
+## [1.24.0] - 2026-08-20
 ### Added
-- feat(remote): rework model weight seeding into a supervised job — a streaming
-  seeder on a stock Amazon Linux instance (no bake), CloudWatch progress and
-  outcome records, and an `outfit remote seed start|status|ls|stop` CLI
+- feat(remote): add keep subcommand and start --keep flag
+- feat(remote): tiered idle shutdown and remote pause
 
 ### Changed
-- feat(remote)!: weights are judged complete by a `_seed.json` manifest rather
-  than a per-runner sentinel file. Prefixes seeded before this change carry no
-  manifest and will be seeded once more; see `remote/README.md` for why no
-  backfill is offered
-- feat(remote)!: a deploy that starts a seed now returns `seedId` in place of
-  `seedInstanceId`, and `remote/scripts/seed-model.mjs` is removed in favour of
-  `outfit remote seed start --force`
-- feat(remote): a llama.cpp quant matching more than one file now fails the seed
-  instead of silently taking the first, which shipped one shard of a split quant
+- build(deps): bump the go-dependencies group with 8 updates
+- docs(openspec): archive start-heartbeat-in-flight and sync its spec
+- docs(openspec): archive tiered-idle-shutdown and graceful-instance-stop changes
 
-### Security
-- fix(remote): the Hugging Face token is no longer disclosed in seed boot logs.
-  The previous seed script fetched it into a shell variable under `set -x`, and
-  bash's xtrace expands assignments from command substitution, so the value was
-  written to `/var/log/cloud-init-output.log` and the EC2 console output.
-  **Rotate any token used with an earlier seed.**
-- fix(remote): a failed seed now always terminates its instance. The previous
-  script ran under `set -e`, which aborted before its closing `shutdown`, so a
-  failed seed kept billing until someone noticed
+### Fixed
+- fix(remote): report in-flight start attempts to the heartbeat
+
+## [1.23.0] - 2026-08-17
+### Added
+- feat(remote): carry companion weights and add deploy --reseed
+- feat: add --loopback shorthand to outfit daemon
+- feat: allow an Outfit path, alias, PRESET, and REMOTE to be a URL
+- feat: configure parallelism in Outfit files
 
 ## [1.22.0] - 2026-08-15
 ### Added

@@ -10,7 +10,7 @@
       "idleThresholdMinutes": 15,
       "imageVolumeGb": 80,
       "instanceType": "g6e.xlarge",
-      "llamacppRelease": "b10107",
+      "llamacppRelease": "b10435",
       "maxRuntimeMinutes": 240,
       "nvidiaDriverPackage": "nvidia-driver-570-server-open",
       "region": "us-east-1",

@@ -5,10 +5,11 @@ provider selection — exactly as if you had run the equivalent
 [`outfit add`](add.md). Everything else in your agent's config is preserved.
 
 ```sh
-outfit apply                 # reads ./Outfit in the current directory
-outfit apply path/to/Outfit  # a full path to the file
-outfit apply path/to/dir     # a directory holding an Outfit
-outfit apply qwen3.6-27b     # a name registered with `outfit alias`
+outfit apply                              # reads ./Outfit in the current directory
+outfit apply path/to/Outfit               # a full path to the file
+outfit apply path/to/dir                  # a directory holding an Outfit
+outfit apply qwen3.6-27b                  # a name registered with `outfit alias`
+outfit apply https://example.com/Outfit   # a URL, fetched instead of read from disk
 ```
 
 Add `--harness pi` (or set `OUTFIT_HARNESS`) to apply it to Pi instead of
@@ -28,8 +29,10 @@ opencode. After applying, just run your coding agent — or do both at once with
 - With no argument, `apply` uses the alias `OUTFIT_ALIAS` names, and failing
   that a file named `Outfit` in the current directory — see
   [`outfit alias`](alias.md#naming-one-for-the-whole-shell).
+- A URL ending in `/` is treated like a directory — `Outfit` is appended. See
+  [Fetching an Outfit from a URL](../outfit-file.md#fetching-an-outfit-from-a-url).
 - An Outfit's `PRESET` line is for [`outfit serve`](serve.md); `apply` ignores
-  it.
+  it — never fetched, even when it's a URL.
 - An Outfit with a `REMOTE` line and no `BASEURL` takes the endpoint's address
   from that [remote config](remote.md)'s `base_url`, which its deployment
   writes. A `BASEURL` in the Outfit wins over it, and a remote config that

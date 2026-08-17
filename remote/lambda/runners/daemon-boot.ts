@@ -30,6 +30,10 @@ export function daemonDeployConfig(
       modelId,
       quant: '',
       contextSize: cfg.contextSize,
+      // JSON.stringify drops an undefined property entirely, so an unset
+      // parallel is simply absent from the JSON the daemon reads — matching
+      // Go's `omitempty` on the other end of this same field.
+      parallel: cfg.parallel,
       servedModelName: cfg.servedModelName,
       serveArgs: ['--host', '0.0.0.0', '--port', String(port), ...extraServeArgs, ...cfg.serveArgs],
     },

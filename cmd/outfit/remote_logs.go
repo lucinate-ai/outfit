@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/remote"
+	"github.com/spf13/cobra"
 )
 
 // Seam: a package variable so tests drive the command without AWS.
@@ -33,8 +33,7 @@ const logsFollowOverlap = 10 * time.Second
 // that failed and an instance that has since terminated are both still
 // readable — which is when logs are wanted most, and exactly when status and
 // metrics have nothing left to report.
-func cmdRemoteLogs(args []string) error {
-	fs := flag.NewFlagSet("remote logs", flag.ContinueOnError)
+func remoteLogsCmd() *cobra.Command {
 	var (
 		source   string
 		since    time.Duration
@@ -43,23 +42,37 @@ func cmdRemoteLogs(args []string) error {
 		follow   bool
 		format   string
 	)
+	const followUsage = "keep printing new events as they arrive"
+	c := &cobra.Command{
+		Use:               "logs",
+		Short:             "tail the instance's logs",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteLogs(args, source, since, limit, instance, follow, format)
+		},
+	}
+	fs := c.Flags()
 	fs.StringVar(&source, "source", remote.LogSourceEngine,
 		"which log to read: engine (default), boot or all")
 	fs.DurationVar(&since, "since", time.Hour, "how far back to look, as a duration (30m, 2h)")
 	fs.IntVar(&limit, "limit", 200, "maximum events to print, keeping the most recent")
 	fs.StringVar(&instance, "instance", "", "restrict output to one instance id")
-	const followUsage = "keep printing new events as they arrive"
-	fs.BoolVar(&follow, "follow", false, followUsage)
-	fs.BoolVar(&follow, "f", false, followUsage+" (shorthand)")
+	fs.BoolVarP(&follow, "follow", "f", false, followUsage)
 	fs.StringVar(&format, "format", "text", "output format: text (default) or json")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	return c
+}
+
+// runRemoteLogs is the body of `outfit remote logs`.
+func runRemoteLogs(args []string, source string, since time.Duration, limit int, instance string, follow bool, format string) error {
 	if err := validateLogsFlags(source, format, since, limit); err != nil {
 		return err
 	}
 
-	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	cfg, err := resolveRemoteConfig(outfitArg(args))
 	if err != nil {
 		return err
 	}

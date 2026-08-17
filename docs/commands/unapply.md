@@ -5,10 +5,11 @@ config — the inverse of [`outfit apply`](apply.md), just as
 [`remove`](remove.md) is to [`add`](add.md).
 
 ```sh
-outfit unapply                 # reads ./Outfit in the current directory
-outfit unapply path/to/Outfit  # a full path to the file
-outfit unapply path/to/dir     # a directory holding an Outfit
-outfit unapply qwen3.6-27b     # a name registered with `outfit alias`
+outfit unapply                              # reads ./Outfit in the current directory
+outfit unapply path/to/Outfit               # a full path to the file
+outfit unapply path/to/dir                  # a directory holding an Outfit
+outfit unapply qwen3.6-27b                  # a name registered with `outfit alias`
+outfit unapply https://example.com/Outfit   # a URL, fetched instead of read from disk
 ```
 
 ## Flags

@@ -32,6 +32,7 @@ const LLAMACPP: DeployConfig = {
   contextSize: 131072,
   servedModelName: 'qwen3.6-27b',
   serveArgs: [],
+  companions: {},
 };
 
 const VLLM: DeployConfig = {
@@ -52,7 +53,15 @@ describe('the seed job spec', () => {
       include: ['*UD-Q6_K_XL*.gguf'],
       exclude: ['*mmproj*', '*projector*'],
       expectSingle: 'model.gguf',
+      companions: [],
     });
+  });
+
+  it('carries named companions in the job selection', () => {
+    const withDrafter = { ...LLAMACPP, companions: { draft: 'dflash-kquant.gguf' } };
+    expect(buildSeedJob(withDrafter, INFRA, '').selection.companions).toEqual([
+      { storeAs: 'draft.gguf', file: 'dflash-kquant.gguf' },
+    ]);
   });
 
   it('names the Hugging Face secret by ARN and never carries its value', () => {

@@ -68,4 +68,10 @@ export interface StatsResult {
   lastActiveAt?: string;
   /** Seconds since `lastActiveAt`. Absent when that is, and absent at zero. */
   idleSeconds?: number;
+  /**
+   * The outfit binary's build-time version string, relayed verbatim from the
+   * daemon's /v1/status. Absent when the daemon was unreachable or predates
+   * the field — the formatters simply omit the line.
+   */
+  version?: string;
 }

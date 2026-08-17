@@ -8,22 +8,37 @@ what to serve from an Outfit: the `outfit remote` command group.
 ### Requirement: Remote command group
 
 The system SHALL provide a `remote` command group with the subcommands
-`bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, and `metrics`. `start`,
-`stop`, `status`, `metrics` and `deploy` each take an optional Outfit path:
+`bootstrap`, `start`, `stop`, `restart`, `status`, `deploy`, `ls`, `metrics`,
+and `keep`. `start`, `stop`, `restart`, `status`, `metrics` and `deploy` each
+take an optional Outfit path:
 `start` SHALL boot the endpoint and block until it is serving, then perform a
 quick TCP probe of the inference endpoint — if the probe fails, a warning is
 printed to stderr explaining the network mismatch (see the Remote Start Probe
 specification) — and finally print the base URL and API key as shell exports;
+`start` SHALL also accept a `--keep DURATION` flag that sets the instance
+retention deadline to `now + DURATION`, preventing the idle sweep from
+terminating it before that time (see the Remote Keep specification);
 `stop` SHALL stop it immediately rather than waiting for its idle timer;
+`restart` SHALL stop the endpoint in the manner of a pause — without
+terminating it, so its boot disk, its weights and its stable address are
+preserved — and SHALL immediately start it again, blocking until it is serving
+and reporting progress as `start` does (see the Reporting a start in progress
+specification); `restart` SHALL accept a `--force` flag with a `-F` short form
+that, when set, performs the stop without first asking the engine to shut down
+(see the Endpoint Lifecycle specification for forced stops);
 `status` SHALL report instance state and endpoint health without side effects
-and SHALL NOT perform any TCP probe; `metrics` SHALL report instance state,
-token usage, resource consumption, and GPU information for a running instance;
-`deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered
-remote environments (see the Remote Environments specification). `bootstrap`
-SHALL stand up the account-level AWS control plane (once per account)
-by obtaining and driving the CDK project, and takes its own flags rather than
-an Outfit path (see the Endpoint Provisioning specification). An unrecognised
-subcommand SHALL fail naming the accepted ones.
+and SHALL NOT perform any TCP probe, and SHALL include the `Retain-Until`
+deadline when the instance has an active retention tag;
+`keep` SHALL set the `Retain-Until` tag on the environment's instance for the
+given duration, without starting or stopping the instance (see the Remote Keep
+specification); `metrics` SHALL report instance state, token usage, resource
+consumption, and GPU information for a running instance; `deploy` SHALL set
+what the endpoint serves. `ls` SHALL list the registered remote environments
+(see the Remote Environments specification). `bootstrap` SHALL stand up the
+account-level AWS control plane (once per account) by obtaining and driving the
+CDK project, and takes its own flags rather than an Outfit path (see the
+Endpoint Provisioning specification). An unrecognised subcommand SHALL fail
+naming the accepted ones.
 
 #### Scenario: Starting the endpoint
 
@@ -37,17 +52,54 @@ subcommand SHALL fail naming the accepted ones.
 - **THEN** a warning is printed to stderr with a remediation command, and the
   command still exits 0
 
+#### Scenario: Starting with a keep flag
+
+- **WHEN** the user runs `outfit remote start --keep 4h` and the endpoint reports ready
+- **THEN** the base URL and API key are printed as `export` lines, and the
+  instance retention deadline is set to 4 hours from now
+
 #### Scenario: Waiting through a cold start
 
 - **WHEN** the endpoint reports that it is still starting
 - **THEN** the command waits and retries until it is ready or the timeout
   passes, rather than failing on the first attempt
 
+#### Scenario: Restarting the endpoint
+
+- **WHEN** the user runs `outfit remote restart` for a running environment and
+  the endpoint reports ready again
+- **THEN** the instance was stopped and re-woken without being terminated, the
+  command blocked until the model was serving again, and the environment's
+  address is the one its configuration records
+
+#### Scenario: Forcing a restart skips the engine stop
+
+- **WHEN** the user runs `outfit remote restart --force` (or `-F`)
+- **THEN** the instance is stopped without the engine being asked to shut down
+  first, and the command then blocks until the model is serving again
+
+#### Scenario: Restarting a stopped endpoint starts it
+
+- **WHEN** the user runs `outfit remote restart` for an environment whose instance is already stopped
+- **THEN** the instance is re-woken rather than replaced, and the command blocks
+  until the model is serving again, as with a plain start
+
+#### Scenario: A failed re-wake says how to recover
+
+- **WHEN** the stop half of a restart has taken effect but the wake fails
+- **THEN** the command fails saying the instance is stopped and that
+  `outfit remote start` will bring it back
+
 #### Scenario: Listing environments
 
 - **WHEN** the user runs `outfit remote ls`
 - **THEN** the registered environments are listed rather than any endpoint being
   contacted
+
+#### Scenario: Setting a keep deadline
+
+- **WHEN** the user runs `outfit remote keep 2h`
+- **THEN** the instance retention tag is set and the deadline is reported
 
 #### Scenario: Metrics reports instance figures
 
@@ -64,7 +116,7 @@ subcommand SHALL fail naming the accepted ones.
 
 - **WHEN** the user runs `outfit remote frobnicate`
 - **THEN** the command fails listing the accepted subcommands, which include
-  `bootstrap` and `metrics`
+  `bootstrap`, `metrics`, and `keep`
 
 ### Requirement: Reporting a start in progress
 
@@ -75,14 +127,18 @@ SHALL report how long it took once ready. Progress SHALL be written to standard
 error and the resulting exports to standard output, so the command's output can
 be evaluated directly while a person watching still sees progress.
 
-The periodic progress line SHALL reflect the endpoint's most recently reported
-state so it does not misdescribe what is happening. When the latest poll reports
-that no capacity is available anywhere — so no instance is booting — the line
-SHALL say it is waiting for capacity rather than that the instance is starting.
-When the latest poll reports that an instance is booting, or before any poll has
-returned, the line SHALL say it is starting. Each per-poll retry notice
-(reporting the state and the wait before the next attempt) SHALL continue to be
-reported as it happens, independently of the periodic line.
+The periodic progress line SHALL reflect the situation the start is actually in
+so it does not misdescribe what is happening. When the most recent reply
+reported that no capacity is available anywhere — so no instance is booting —
+and no newer attempt is in flight, the line SHALL say it is waiting for
+capacity rather than that the instance is starting. Once a newer attempt has
+been issued and has not yet returned, that no-capacity reply no longer
+describes the situation — a refusal comes back within seconds of trying each
+zone, whereas a successful attempt holds its request while the instance boots —
+so the line SHALL say it is starting. Before any attempt has returned, the
+line SHALL also say it is starting. Each per-poll retry notice (reporting the
+state and the wait before the next attempt) SHALL continue to be reported as it
+happens, independently of the periodic line.
 
 #### Scenario: A cold start is not silent
 
@@ -92,15 +148,23 @@ reported as it happens, independently of the periodic line.
 
 #### Scenario: Waiting for capacity is not reported as booting
 
-- **WHEN** the most recent poll reports no capacity in any zone
+- **WHEN** the most recent reply reports no capacity in any zone and no newer
+  attempt is in flight
 - **THEN** the periodic progress line says it is waiting for capacity, not that
   the instance is still starting
 
 #### Scenario: Booting is reported as starting
 
-- **WHEN** the most recent poll reports the instance is booting, or no poll has
-  returned yet
+- **WHEN** the most recent reply reports the instance is booting, or no attempt
+  has returned yet
 - **THEN** the periodic progress line says it is still starting
+
+#### Scenario: Booting after a capacity wait is not reported as waiting
+
+- **WHEN** the most recent reply reported no capacity in any zone and the
+  client has since issued another attempt that finds capacity and is booting
+- **THEN** the periodic progress line says it is starting, not that it is still
+  waiting for capacity
 
 #### Scenario: Only the result is on standard output
 
@@ -134,18 +198,24 @@ URL, a stop URL, an optional deploy URL, and a region. That configuration MAY
 also name the endpoint's own base URL; it SHALL be optional, since no control
 call needs it, and a configuration without it SHALL remain valid. An Outfit's
 `REMOTE` instruction SHALL select that configuration: a bare name selects the
-named environment from the per-user registry, and a path selects a file resolved
-relative to the Outfit when not absolute (see the Remote Environments
-specification). When no Outfit names one, the `default` environment SHALL be
-used, so the command works outside any project. Environment variables SHALL
-override individual values, and the region SHALL fall back to the standard AWS
-region variable and then to the region named in the URL. A missing or incomplete
-configuration SHALL fail saying where to put it.
+named environment from the per-user registry (always local; see the Remote
+Environments specification), and a path or URL selects a configuration
+resolved relative to the Outfit's own source when not itself absolute — a
+local directory join when the Outfit was read from disk, URL-relative
+resolution when the Outfit was fetched from a URL — and fetched over HTTP when
+it resolves to a URL. Fetching a remote `REMOTE` configuration SHALL happen
+only at the point a `remote` subcommand, or `outfit apply`'s base-URL
+fallback, actually resolves it. When no Outfit names one, the `default`
+environment SHALL be used, so the command works outside any project.
+Environment variables SHALL override individual values, and the region SHALL
+fall back to the standard AWS region variable and then to the region named in
+the URL. A missing or incomplete configuration SHALL fail saying where to put
+it.
 
 #### Scenario: Outfit names the configuration
 
-- **WHEN** an Outfit sets `REMOTE ./remote.json` and a `remote` subcommand runs
-  with that Outfit
+- **WHEN** an Outfit sets `REMOTE ./remote.json` and a `remote` subcommand
+  runs with that Outfit
 - **THEN** the URLs come from that file, resolved beside the Outfit
 
 #### Scenario: Outfit names an environment
@@ -171,6 +241,34 @@ configuration SHALL fail saying where to put it.
   URL, and a `remote` subcommand runs
 - **THEN** the subcommand works as it always has, since the endpoint reports its
   own address in the replies to `start` and `status`
+
+#### Scenario: A remote configuration fetched over HTTP
+
+- **WHEN** an Outfit sets `REMOTE https://example.com/team/remote.json`
+- **THEN** a `remote` subcommand fetches that URL for the control
+  configuration
+
+#### Scenario: A REMOTE relative to a URL-sourced Outfit
+
+- **WHEN** an Outfit fetched from `https://example.com/team/Outfit` sets
+  `REMOTE ./remote.json`
+- **THEN** the configuration resolves to
+  `https://example.com/team/remote.json` and is fetched
+
+#### Scenario: A remote REMOTE is fetched only by commands that resolve one
+
+- **WHEN** `outfit serve` runs against an Outfit whose `REMOTE` is a URL
+- **THEN** the `REMOTE` URL is never fetched — `serve` has no use for a
+  remote endpoint's control configuration
+
+#### Scenario: Applying names the environment even with an explicit BASEURL
+
+- **WHEN** an Outfit with a URL-form `REMOTE` and its own `BASEURL`
+  instruction is applied with `outfit apply`
+- **THEN** the `REMOTE` URL is still fetched once, to name the harness
+  provider after the deployment's environment (the same read a local-path
+  `REMOTE` already triggers) — only the redundant base-URL lookup is skipped,
+  since `BASEURL` already supplies it
 
 ### Requirement: Authenticated control requests
 

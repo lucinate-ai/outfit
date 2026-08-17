@@ -1,0 +1,7 @@
+# Served locally by llama.cpp, meant to be published behind a URL and
+# fetched with `outfit apply`/`outfit alias` rather than cloned.
+# ALIAS names the model in opencode and selects the preset section below.
+PROVIDER llamacpp
+ALIAS    qwen3.6-27b
+CONTEXT  32768            # match the server's --ctx-size
+PRESET   ./preset.ini     # resolved against wherever this Outfit is fetched from

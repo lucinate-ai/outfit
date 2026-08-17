@@ -1,0 +1,44 @@
+## MODIFIED Requirements
+
+### Requirement: Remote commands load the Outfit's local environment
+
+The `remote` control commands that resolve an Outfit — `deploy`, `start`,
+`stop`, `status`, and `stats` — SHALL,
+before resolving remote configuration or performing any AWS or control-plane
+work, load environment variables into the process environment from two sources
+tied to the resolved Outfit: the `.env` file beside that Outfit, and the Outfit's
+own `ENV` instructions. The loaded values SHALL be visible to everything the
+command does afterwards — the AWS credential chain, the region resolution, and
+the `OUTFIT_REMOTE_*` overrides. When a command resolves no Outfit (no path
+argument and no `./Outfit`), there is nothing adjacent to load and the command
+SHALL proceed on the process environment alone. When the resolved Outfit was
+fetched from a URL, there is likewise no local `.env` beside it to load — a
+URL has no local directory — and the command SHALL proceed on the Outfit's own
+`ENV` instructions and the process environment alone, exactly as the
+no-Outfit-resolved case does.
+
+#### Scenario: A .env beside the Outfit reaches the control calls
+
+- **WHEN** `outfit remote status ./Outfit` runs and a `.env` beside that Outfit
+  sets `OUTFIT_REMOTE_START_URL`, unset in the process environment
+- **THEN** the command uses that value when it contacts the control endpoint
+
+#### Scenario: Every control command loads the local environment
+
+- **WHEN** any of `deploy`, `start`, `stop`, `status`, or `stats` resolves an
+  Outfit
+- **THEN** that Outfit's adjacent `.env` and its `ENV` instructions are loaded
+  before the command performs any AWS or control-plane work
+
+#### Scenario: No Outfit, nothing to load
+
+- **WHEN** a `remote` command runs with no Outfit resolved and falls back to the
+  per-user configuration
+- **THEN** no adjacent `.env` is read and the command proceeds on the process
+  environment alone
+
+#### Scenario: A URL-sourced Outfit has no adjacent .env
+
+- **WHEN** a `remote` command resolves an Outfit fetched from a URL
+- **THEN** no `.env` read is attempted, and only that Outfit's own `ENV`
+  instructions and the process environment are applied

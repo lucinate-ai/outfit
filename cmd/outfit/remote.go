@@ -3,14 +3,16 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -19,56 +21,50 @@ import (
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/outfitsrc"
 	"github.com/lucinate-ai/outfit/internal/preset"
 	"github.com/lucinate-ai/outfit/internal/remote"
+	"github.com/spf13/cobra"
 )
 
 // cmdRemote dispatches the remote subcommands, which control the
 // scale-to-zero GPU inference instance defined in this repo's remote/:
-// start boots it and prints the endpoint exports, stop shuts it down
+// start boots it and prints the endpoint exports, pause stops it without
+// terminating it (the sweep terminates stopped instances after their
+// retention, and a later start re-wakes them), stop shuts it down
 // immediately (its stop Lambda also runs on a schedule to auto-stop on
-// idle), status reports instance state and endpoint health, and deploy sets
-// what the instance will serve from the Outfit itself. Each subcommand takes
-// an optional Outfit path; see resolveRemoteConfig for how the remote config
-// is found.
-func cmdRemote(args []string) error {
+// idle), status reports instance state and endpoint health, keep sets the
+// retention deadline to prevent the sweep from terminating the instance
+// early, and deploy sets what the instance will serve from the Outfit itself.
+// Each subcommand takes an optional Outfit path; see resolveRemoteConfig for
+// how the remote config is found.
+// cmdRemote reports the usage when no (named) subcommand is given, and rejects
+// the ones that are not named — the subcommands themselves are real commands
+// in the tree, so only the unknown and the bare cases reach here.
+// remoteParentFallback reports the usage when no (named) subcommand is given,
+// and rejects the ones that are not named — the subcommands themselves are real
+// commands in the tree, so only the unknown and the bare cases reach here.
+func remoteParentFallback(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|seed|env|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|restart|stop|status|metrics|logs|deploy|seed|env|ls|keep> [path]")
 	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "bootstrap":
-		return cmdRemoteBootstrap(rest)
-	case "start":
-		return cmdRemoteStart(rest)
-	case "stop":
-		return cmdRemoteStop(rest)
-	case "status":
-		return cmdRemoteStatus(rest)
-	case "metrics":
-		return cmdRemoteMetrics(rest)
-	case "logs":
-		return cmdRemoteLogs(rest)
-	case "deploy":
-		return cmdRemoteDeploy(rest)
-	case "seed":
-		return cmdRemoteSeed(rest)
-	case "env":
-		return cmdRemoteEnv(rest)
-	case "ls":
-		return cmdRemoteList(rest)
-	default:
-		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, logs, deploy, seed, env or ls)", sub)
-	}
+	return fmt.Errorf(
+		"unknown remote subcommand %q (expected bootstrap, start, pause, restart, stop, status, metrics, logs, deploy, seed, env, ls or keep)", args[0])
+}
+
+// cmdRemote runs the remote subcommands through the tree — the seam the suite
+// calls directly.
+func cmdRemote(args []string) error {
+	return execCmd(remoteCmd(), args)
 }
 
 // applyOutfitEnv makes the remote commands respect the Outfit's local
 // environment. The AWS SDK's credential chain reads the process environment
-// directly, and the OUTFIT_REMOTE_*/AWS_REGION lookups read os.Getenv, so the
-// values have to be present in the environment itself — a lookup closure would
-// not reach the SDK. It therefore mutates this process's environment, in two
-// passes that give the precedence ENV > process environment > .env:
+// directly, and the OUTFIT_REMOTE_*/AWS_REGION lookups (Viper's AutomaticEnv
+// included) ultimately do the same, so the values have to be present in the
+// environment itself — a lookup closure would not reach the SDK. It therefore
+// mutates this process's environment, in two passes that give the precedence
+// ENV > process environment > .env:
 //
 //  1. the .env beside the Outfit fills only gaps — a variable already set in
 //     the environment wins, so a deliberately exported credential is not shadowed;
@@ -76,16 +72,22 @@ func cmdRemote(args []string) error {
 //
 // ENV (and .env) apply only to this local process; they are never sent to the
 // deployed instance — deployConfigFor builds the deploy payload from Outfit
-// fields alone. dir is the Outfit's own directory, where its .env lives.
-func applyOutfitEnv(sel outfit.Selection, dir string) error {
-	vars, err := opencode.ParseEnvFile(filepath.Join(dir, ".env"))
-	if err != nil {
-		return err
-	}
-	for key, value := range vars {
-		if os.Getenv(key) == "" {
-			if err := os.Setenv(key, value); err != nil {
-				return err
+// fields alone. outfitPath is the Outfit's own path; its directory is where
+// its .env lives. A URL-sourced Outfit has no local directory to look beside,
+// so its .env read is skipped entirely — not attempted against a nonsense
+// path — leaving the Outfit's own ENV instructions and the process
+// environment as the two remaining sources.
+func applyOutfitEnv(sel outfit.Selection, outfitPath string) error {
+	if !outfitsrc.IsURL(outfitPath) {
+		vars, err := opencode.ParseEnvFile(filepath.Join(filepath.Dir(outfitPath), ".env"))
+		if err != nil {
+			return err
+		}
+		for key, value := range vars {
+			if os.Getenv(key) == "" {
+				if err := os.Setenv(key, value); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -103,8 +105,9 @@ func applyOutfitEnv(sel outfit.Selection, dir string) error {
 // argument, ./Outfit is consulted when present; the per-user config
 // (~/.config/outfit/remote.json) is the fallback, so `outfit remote` still
 // works outside any project. A relative REMOTE resolves against the Outfit's
-// directory, so an Outfit and its remote config travel together — the same
-// rule PRESET uses.
+// own source — a local directory when the Outfit was read from disk,
+// URL-relative resolution when it was fetched from a URL — the same rule
+// PRESET uses.
 func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 	if outfitArg != "" {
 		sel, outfitPath, err := readOutfit("remote", outfitArg)
@@ -114,14 +117,10 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 		if sel.Remote == "" {
 			return remote.Config{}, fmt.Errorf("%s has no REMOTE instruction", outfitPath)
 		}
-		if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+		if err := applyOutfitEnv(sel, outfitPath); err != nil {
 			return remote.Config{}, err
 		}
-		path, err := resolveRemotePath(sel.Remote, filepath.Dir(outfitPath))
-		if err != nil {
-			return remote.Config{}, err
-		}
-		return remote.LoadConfigFile(path, os.Getenv)
+		return resolveRemoteConfigForOutfit(sel.Remote, outfitPath)
 	}
 	if defaultOutfitNamed() {
 		sel, outfitPath, err := readOutfit("remote", "")
@@ -129,29 +128,27 @@ func resolveRemoteConfig(outfitArg string) (remote.Config, error) {
 			return remote.Config{}, err
 		}
 		if sel.Remote != "" {
-			if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+			if err := applyOutfitEnv(sel, outfitPath); err != nil {
 				return remote.Config{}, err
 			}
-			path, err := resolveRemotePath(sel.Remote, filepath.Dir(outfitPath))
-			if err != nil {
-				return remote.Config{}, err
-			}
-			return remote.LoadConfigFile(path, os.Getenv)
+			return resolveRemoteConfigForOutfit(sel.Remote, outfitPath)
 		}
 	}
-	return remote.LoadDefault(os.Getenv)
+	return remote.LoadDefault(viperGetenv())
 }
 
-// resolveRemotePath turns an Outfit's REMOTE value into the config file to read.
-// A bare name selects an environment from the per-user registry; a path is
-// resolved as a file, relative to the Outfit's directory when not absolute —
-// the same rule PRESET uses. Both the control commands and apply's base-URL
-// lookup go through here, so the two never diverge.
-func resolveRemotePath(remoteValue, outfitDir string) (string, error) {
+// resolveRemotePath turns an Outfit's REMOTE value into the config to read. A
+// bare name selects an environment from the per-user registry (always local);
+// a path or URL resolves against the Outfit's own source — outfitPath, the
+// Outfit's own file (not its directory), so a relative REMOTE resolves
+// correctly whether the Outfit came from local disk or a URL. Both the
+// control commands and apply's base-URL lookup go through here, so the two
+// never diverge.
+func resolveRemotePath(remoteValue, outfitPath string) (string, error) {
 	if remote.IsEnvName(remoteValue) {
 		return remote.EnvConfigPath(remoteValue)
 	}
-	return remoteConfigPath(remoteValue, outfitDir), nil
+	return outfitsrc.Resolve(outfitPath, remoteValue)
 }
 
 // defaultOutfitNamed reports whether there is a default Outfit for readOutfit
@@ -160,7 +157,10 @@ func resolveRemotePath(remoteValue, outfitDir string) (string, error) {
 // naming an alias that is unregistered or dangling fails there rather than
 // falling silently back to the per-user config.
 func defaultOutfitNamed() bool {
-	return os.Getenv(outfitAliasEnv) != "" || defaultOutfitExists()
+	// Same Viper read as readOutfit's empty-path branch: the gate and the
+	// reader must count the same default, or a variable-named Outfit is read
+	// by apply and skipped here.
+	return cliViper.GetString("alias") != "" || defaultOutfitExists()
 }
 
 // defaultOutfitExists reports whether the working directory holds a file
@@ -181,22 +181,25 @@ func defaultOutfitExists() bool {
 	return false
 }
 
-func remoteConfigPath(remoteValue, outfitDir string) string {
-	if filepath.IsAbs(remoteValue) {
-		return remoteValue
-	}
-	return filepath.Join(outfitDir, remoteValue)
-}
-
 // remoteConfig reads the remote config an Outfit's REMOTE names — a registry
-// environment or a file, per resolveRemotePath. A config that is absent yields
-// the zero Config rather than an error, since an Outfit may name a remote config
-// before the deployment that writes it exists; only a real read or parse failure
-// is reported.
-func remoteConfig(remoteValue, outfitDir string) (remote.Config, error) {
-	path, err := resolveRemotePath(remoteValue, outfitDir)
+// environment or a file/URL, per resolveRemotePath. A config that is absent
+// yields the zero Config rather than an error, since an Outfit may name a
+// remote config before the deployment that writes it exists; only a real
+// read, fetch, or parse failure is reported.
+func remoteConfig(remoteValue, outfitPath string) (remote.Config, error) {
+	path, err := resolveRemotePath(remoteValue, outfitPath)
 	if err != nil {
 		return remote.Config{}, err
+	}
+	if outfitsrc.IsURL(path) {
+		data, err := outfitsrc.Fetch(path)
+		if err != nil {
+			if errors.Is(err, outfitsrc.ErrNotFound) {
+				return remote.Config{}, nil
+			}
+			return remote.Config{}, err
+		}
+		return remote.LoadConfigBytes(data, path, viperGetenv())
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -217,8 +220,8 @@ func remoteConfig(remoteValue, outfitDir string) (remote.Config, error) {
 // lives there rather than in the hand-written Outfit — but only as a fallback:
 // an Outfit that states its own BASEURL never asks. A config that is absent, or
 // that predates base_url, yields "" rather than an error.
-func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
-	cfg, err := remoteConfig(remoteValue, outfitDir)
+func remoteBaseURL(remoteValue, outfitPath string) (string, error) {
+	cfg, err := remoteConfig(remoteValue, outfitPath)
 	if err != nil {
 		return "", err
 	}
@@ -230,14 +233,14 @@ func remoteBaseURL(remoteValue, outfitDir string) (string, error) {
 // remote.json it names. It yields "" when there is no REMOTE, or when a
 // path-form REMOTE names a config that is absent or records no environment — in
 // which case the caller keeps the PROVIDER value as the name.
-func remoteEnvName(remoteValue, outfitDir string) (string, error) {
+func remoteEnvName(remoteValue, outfitPath string) (string, error) {
 	if remoteValue == "" {
 		return "", nil
 	}
 	if remote.IsEnvName(remoteValue) {
 		return remoteValue, nil
 	}
-	cfg, err := remoteConfig(remoteValue, outfitDir)
+	cfg, err := remoteConfig(remoteValue, outfitPath)
 	if err != nil {
 		return "", err
 	}
@@ -245,30 +248,39 @@ func remoteEnvName(remoteValue, outfitDir string) (string, error) {
 }
 
 // resolveRemoteConfigForOutfit resolves the remote config for an Outfit's
-// REMOTE value, given the Outfit's directory. Unlike resolveRemoteConfig it
+// REMOTE value, given the Outfit's own path. Unlike resolveRemoteConfig it
 // does not consult the working directory or the per-user fallback — the REMOTE
 // is already known from the parsed Outfit, so it goes straight to resolving
-// that path.
-func resolveRemoteConfigForOutfit(remoteValue, outfitDir string) (remote.Config, error) {
-	path, err := resolveRemotePath(remoteValue, outfitDir)
+// that path, fetching over HTTP when it resolves to a URL.
+func resolveRemoteConfigForOutfit(remoteValue, outfitPath string) (remote.Config, error) {
+	path, err := resolveRemotePath(remoteValue, outfitPath)
 	if err != nil {
 		return remote.Config{}, err
 	}
-	return remote.LoadConfigFile(path, os.Getenv)
+	if outfitsrc.IsURL(path) {
+		data, err := outfitsrc.Fetch(path)
+		if err != nil {
+			return remote.Config{}, err
+		}
+		return remote.LoadConfigBytes(data, path, viperGetenv())
+	}
+	return remote.LoadConfigFile(path, viperGetenv())
 }
 
 // outfitArg returns the optional positional Outfit path after the flags.
-func outfitArg(fs *flag.FlagSet) string {
-	if rest := fs.Args(); len(rest) > 0 {
-		return rest[0]
+// outfitArg is the first positional argument of a remote subcommand — the
+// Outfit path — or "" when none was given.
+func outfitArg(args []string) string {
+	if len(args) > 0 {
+		return args[0]
 	}
 	return ""
 }
 
 // heartbeatEvery is how often a start that is still waiting says so. The start
 // endpoint blocks until the model is serving, which on a cold start is minutes,
-// so without this the command looks hung.
-const heartbeatEvery = 30 * time.Second
+// so without this the command looks hung. A variable so tests can shorten it.
+var heartbeatEvery = 30 * time.Second
 
 // startProgress reports what a slow start is doing. Everything it writes goes
 // to stderr, so `outfit remote start | grep '^export '` still yields just the
@@ -353,12 +365,26 @@ func printRemoteEnv(resp *remote.Response) {
 	fmt.Printf("export %s=%s\n", remoteAPIKeyEnv, resp.APIKey)
 }
 
-func cmdRemoteEnv(args []string) error {
-	fs := flag.NewFlagSet("remote env", flag.ContinueOnError)
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
+func remoteEnvCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "env",
+		Short: "print the running endpoint's env vars",
+		Long: `returns the running endpoint's environment variables without
+starting it.`,
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteEnv(args)
+		},
 	}
-	cfg, err := resolveRemoteConfig(outfitArg(fs))
+}
+
+// runRemoteEnv is the body of `outfit remote env`.
+func runRemoteEnv(args []string) error {
+	cfg, err := resolveRemoteConfig(outfitArg(args))
 	if err != nil {
 		return err
 	}
@@ -370,74 +396,50 @@ func cmdRemoteEnv(args []string) error {
 	return nil
 }
 
-// sortFlagsBeforeArgs moves flag arguments (starting with -) before positional
-// arguments, so Go's flag package parses them regardless of order. The stdlib
-// flag package stops at the first non-flag argument, so flags after a positional
-// arg are silently ignored.
-//
-// fs is consulted so a flag written in the separated form (--fleet path) keeps
-// its value: without it, the value is left behind with the positionals and the
-// next token — often the positional itself — is bound to the flag instead.
-// Boolean flags never consume a following token, so they are moved alone.
-func sortFlagsBeforeArgs(fs *flag.FlagSet, args []string) []string {
-	flags, pos := []string{}, []string{}
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if !strings.HasPrefix(a, "-") || a == "-" {
-			pos = append(pos, a)
-			continue
-		}
-		flags = append(flags, a)
-		// "--" ends flag parsing; everything after it is positional.
-		if a == "--" {
-			pos = append(pos, args[i+1:]...)
-			break
-		}
-		// An inline value (--flag=value) is already self-contained.
-		if strings.Contains(a, "=") {
-			continue
-		}
-		if i+1 < len(args) && flagTakesValue(fs, a) {
-			i++
-			flags = append(flags, args[i])
-		}
-	}
-	return append(flags, pos...)
-}
-
-// flagTakesValue reports whether the named flag consumes the following
-// argument. Unknown flags are assumed not to: guessing wrong would swallow a
-// positional, and the flag package reports the unknown flag anyway.
-func flagTakesValue(fs *flag.FlagSet, arg string) bool {
-	if fs == nil {
-		return false
-	}
-	name := strings.TrimLeft(arg, "-")
-	f := fs.Lookup(name)
-	if f == nil {
-		return false
-	}
-	// The flag package treats a flag whose value implements IsBoolFlag as
-	// standalone (-v), so only non-boolean flags take the next argument.
-	bf, ok := f.Value.(interface{ IsBoolFlag() bool })
-	return !ok || !bf.IsBoolFlag()
-}
-
-func cmdRemoteStart(args []string) error {
-	fs := flag.NewFlagSet("remote start", flag.ContinueOnError)
+func remoteStartCmd() *cobra.Command {
 	var timeout time.Duration
 	const timeoutUsage = "overall time to wait for the endpoint"
-	fs.DurationVar(&timeout, "timeout", 15*time.Minute, timeoutUsage)
-	fs.DurationVar(&timeout, "t", 15*time.Minute, timeoutUsage+" (shorthand)")
 	var printEnv bool
-	fs.BoolVar(&printEnv, "env", false, "print export lines to stdout for eval")
-	fs.BoolVar(&printEnv, "e", false, "print export lines to stdout for eval (shorthand)")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
+	var keepD string
+	c := &cobra.Command{
+		Use:   "start",
+		Short: "boot the instance and print its endpoint",
+		Long: `boots the instance and, with --env/-e, prints the exports your
+agent needs.`,
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteStart(args, timeout, printEnv, keepD)
+		},
 	}
-	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	fs := c.Flags()
+	fs.DurationVarP(&timeout, "timeout", "t", 15*time.Minute, timeoutUsage)
+	fs.BoolVarP(&printEnv, "env", "e", false, "print export lines to stdout for eval")
+	fs.StringVar(&keepD, "keep", "", "retain instance until now + DURATION (e.g. 4h, 60m), preventing the idle sweep from stopping it")
+	return c
+}
+
+// runRemoteStart is the body of `outfit remote start`.
+func runRemoteStart(args []string, timeout time.Duration, printEnv bool, keepD string) error {
+	cfg, err := resolveRemoteConfig(outfitArg(args))
 	if err != nil {
 		return err
+	}
+
+	var retainUntil *time.Time
+	if keepD != "" {
+		d, err := time.ParseDuration(keepD)
+		if err != nil {
+			return fmt.Errorf("invalid --keep duration %q: %w", keepD, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("--keep duration must be positive, got %q", keepD)
+		}
+		t := time.Now().Add(d)
+		retainUntil = &t
 	}
 
 	progress := newStartProgress(heartbeatEvery)
@@ -447,7 +449,7 @@ func cmdRemoteStart(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState)
+	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState, retainUntil)
 	if err != nil {
 		return err
 	}
@@ -467,6 +469,14 @@ func cmdRemoteStart(args []string) error {
 		fmt.Fprintf(os.Stderr, "Re-admit this machine with:\n  outfit remote deploy --overwrite --allowed-cidr %s\n", cidr)
 	}
 
+	if retainUntil != nil || resp.RetainUntil != "" {
+		retainStr := resp.RetainUntil
+		if retainStr == "" && retainUntil != nil {
+			retainStr = retainUntil.Format(time.RFC3339)
+		}
+		progress.line(fmt.Sprintf("retain until: %s", retainStr))
+	}
+
 	if printEnv {
 		envCtx, envCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		envResp, err := remote.Env(envCtx, cfg)
@@ -483,11 +493,23 @@ func cmdRemoteStart(args []string) error {
 // URL and region, marking any whose remote.json is missing or unreadable. It
 // contacts no endpoint. Environments are registered under
 // ~/.config/outfit/remotes/<name>/ (by `outfit remote bootstrap`, or by hand).
-func cmdRemoteList(args []string) error {
-	fs := flag.NewFlagSet("remote ls", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
-		return err
+func remoteListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "ls",
+		Short:             "list the registered environments",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: noPositionals,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			return runRemoteList()
+		},
 	}
+}
+
+// runRemoteList is the body of `outfit remote ls`.
+func runRemoteList() error {
 	envs, err := remote.ListEnvironments()
 	if err != nil {
 		return err
@@ -510,12 +532,174 @@ func cmdRemoteList(args []string) error {
 	return nil
 }
 
-func cmdRemoteStop(args []string) error {
-	fs := flag.NewFlagSet("remote stop", flag.ContinueOnError)
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
+func remoteKeepCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "keep",
+		Short:             "defer the instance's idle termination",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: keepSlot,
+		RunE: func(c *cobra.Command, rest []string) error {
+			resolve(c)
+			return runRemoteKeep(rest)
+		},
+	}
+}
+
+// runRemoteKeep is the body of `outfit remote keep`.
+func runRemoteKeep(rest []string) error {
+	if len(rest) == 0 {
+		return fmt.Errorf("usage: outfit remote keep <duration> [path]")
+	}
+	durationStr := rest[0]
+	d, err := time.ParseDuration(durationStr)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", durationStr, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("duration must be positive, got %q", durationStr)
+	}
+	// The Outfit path is the second positional, after the duration.
+	outfitPath := ""
+	if len(rest) > 1 {
+		outfitPath = rest[1]
+	}
+	cfg, err := resolveRemoteConfig(outfitPath)
+	if err != nil {
 		return err
 	}
-	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	retainUntil := time.Now().Add(d)
+	_, err = remote.Keep(context.Background(), cfg, retainUntil)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("retain until: %s (in %s)\n", retainUntil.Format(time.RFC3339), d)
+	return nil
+}
+
+func remotePauseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "pause",
+		Short:             "stop the instance without terminating it",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemotePause(args)
+		},
+	}
+}
+
+// runRemotePause is the body of `outfit remote pause`.
+func runRemotePause(args []string) error {
+	cfg, err := resolveRemoteConfig(outfitArg(args))
+	if err != nil {
+		return err
+	}
+	resp, err := remote.Pause(context.Background(), cfg, false)
+	if err != nil {
+		return err
+	}
+	// State is "stopping" (EC2 has not finished) or "stopped" (it already
+	// was); either way the instance is re-wakeable, and the control plane's
+	// sweep terminates it once the stop retention passes.
+	fmt.Printf("state: %s\n", resp.State)
+	fmt.Println("the endpoint can be re-woken with `outfit remote start`, or terminated now with `outfit remote stop`")
+	return nil
+}
+
+func remoteRestartCmd() *cobra.Command {
+	var force bool
+	var timeout time.Duration
+	const timeoutUsage = "overall time to wait for the endpoint"
+	c := &cobra.Command{
+		Use:   "restart",
+		Short: "stop the instance and bring it back",
+		Long: `stops the instance without terminating it, then wakes it and blocks
+until the model serves again. The boot disk and its weights survive, and the
+endpoint's address is unchanged. With --force the graceful engine stop is
+skipped: for when the engine or its daemon will not answer it.`,
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteRestart(args, force, timeout)
+		},
+	}
+	fs := c.Flags()
+	fs.BoolVarP(&force, "force", "F", false, "skip the graceful engine stop")
+	fs.DurationVarP(&timeout, "timeout", "t", 15*time.Minute, timeoutUsage)
+	return c
+}
+
+// runRemoteRestart is the body of `outfit remote restart`. It stops the
+// instance in the pause manner — without terminating it, so the boot disk and
+// weights survive and the address does not change — and reuses the wake's own
+// deadline and retry handling to block until the model serves again.
+func runRemoteRestart(args []string, force bool, timeout time.Duration) error {
+	cfg, err := resolveRemoteConfig(outfitArg(args))
+	if err != nil {
+		return err
+	}
+
+	progress := newStartProgress(heartbeatEvery)
+	defer progress.close()
+
+	// A lenient status call up front: its reply only feeds a progress line
+	// saying where the instance is now (running, or already stopped / no
+	// instance). It gates nothing — the stop Lambda is correct for every
+	// state — so a failed check just means we do not know the starting point.
+	if status, err := remote.Status(context.Background(), cfg); err == nil {
+		switch status.State {
+		case "stopped", "undeployed":
+			progress.line(fmt.Sprintf("the instance is already %s; waking it", status.State))
+		default:
+			progress.line(fmt.Sprintf("the instance is %s; stopping it, then waking it", status.State))
+		}
+	}
+
+	stopPhase := "stopping the instance, then waking it"
+	if force {
+		stopPhase = "stopping the instance (the graceful engine stop is skipped), then waking it"
+	}
+	progress.line(stopPhase)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	resp, err := remote.Restart(ctx, cfg, force, progress.line, progress.setState)
+	if err != nil {
+		return err
+	}
+	progress.close()
+	progress.line(fmt.Sprintf("ready after %s", progress.elapsed()))
+	fmt.Printf("base url: %s\n", resp.BaseURL)
+	return nil
+}
+
+func remoteStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "stop",
+		Short:             "shut the instance down",
+		Long:              `shuts the instance down rather than waiting for the idle timer.`,
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteStop(args)
+		},
+	}
+}
+
+// runRemoteStop is the body of `outfit remote stop`.
+func runRemoteStop(args []string) error {
+	cfg, err := resolveRemoteConfig(outfitArg(args))
 	if err != nil {
 		return err
 	}
@@ -527,12 +711,24 @@ func cmdRemoteStop(args []string) error {
 	return nil
 }
 
-func cmdRemoteStatus(args []string) error {
-	fs := flag.NewFlagSet("remote status", flag.ContinueOnError)
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
+func remoteStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "status",
+		Short:             "report the instance's state",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteStatus(args)
+		},
 	}
-	cfg, err := resolveRemoteConfig(outfitArg(fs))
+}
+
+// runRemoteStatus is the body of `outfit remote status`.
+func runRemoteStatus(args []string) error {
+	cfg, err := resolveRemoteConfig(outfitArg(args))
 	if err != nil {
 		return err
 	}
@@ -540,23 +736,37 @@ func cmdRemoteStatus(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("state: %s\n", resp.State)
+	// The shared facts — state, since-last-work, version — come from the same
+	// source `fleet status` reads, so the two status views cannot word them
+	// differently. This view keeps its own extra facts (health, base URL) and
+	// its key-value layout. The version is only in the stats reply, which
+	// reads the daemon over SSM: attempt it only when the instance is running,
+	// since the daemon will not answer when it is stopped.
+	fact := statusFact{
+		State:        resp.State,
+		LastActiveAt: resp.LastActiveAt,
+		IdleSeconds:  resp.IdleSeconds,
+	}
+	if resp.State == "running" || resp.State == "ready" {
+		if stats, err := remote.Stats(context.Background(), cfg); err == nil {
+			fact.Version = stats.Version
+		}
+	}
+	fmt.Printf("state: %s\n", fact.State)
 	if resp.Healthy != nil {
 		fmt.Printf("healthy: %t\n", *resp.Healthy)
 	}
-	// Version comes from the stats Lambda, which reads the daemon over SSM.
-	// Only attempt it when the instance is running — the daemon won't answer
-	// when the instance is stopped, so the version is naturally unavailable.
-	if resp.State == "running" || resp.State == "ready" {
-		if stats, err := remote.Stats(context.Background(), cfg); err == nil && stats.Version != "" {
-			fmt.Printf("version: %s\n", stats.Version)
-		}
+	if fact.Version != "" {
+		fmt.Printf("version: %s\n", fact.Version)
 	}
 	if resp.BaseURL != "" {
 		fmt.Printf("base_url: %s\n", resp.BaseURL)
 	}
-	if text := lastActiveText(resp.LastActiveAt, resp.IdleSeconds); text != "" {
+	if text := lastActiveText(fact.LastActiveAt, fact.IdleSeconds); text != "" {
 		fmt.Printf("last active: %s\n", text)
+	}
+	if resp.RetainUntil != "" {
+		fmt.Printf("retain until: %s\n", resp.RetainUntil)
 	}
 	return nil
 }
@@ -566,25 +776,38 @@ func cmdRemoteStatus(args []string) error {
 // default is a key-value table. With --cost, it looks up the on-demand price
 // for the instance type from the AWS Price List API. With --watch it polls
 // every 60 seconds until interrupted.
-func cmdRemoteMetrics(args []string) error {
-	fs := flag.NewFlagSet("remote metrics", flag.ContinueOnError)
+func remoteMetricsCmd() *cobra.Command {
 	var (
 		withCost bool
 		format   string
 		watch    bool
 	)
+	c := &cobra.Command{
+		Use:               "metrics",
+		Short:             "sample the instance's metrics",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteMetrics(args, withCost, format, watch)
+		},
+	}
+	fs := c.Flags()
 	fs.BoolVar(&withCost, "cost", false, "include cost estimate from AWS Price List API")
 	fs.StringVar(&format, "format", "bar", "output format: bar (default), table or json")
-	fs.BoolVar(&watch, "watch", false, "poll metrics every 60 seconds")
-	fs.BoolVar(&watch, "w", false, "shorthand for --watch")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	fs.BoolVarP(&watch, "watch", "w", false, "poll metrics every 60 seconds")
+	return c
+}
+
+// runRemoteMetrics is the body of `outfit remote metrics`.
+func runRemoteMetrics(args []string, withCost bool, format string, watch bool) error {
 	if format != "table" && format != "json" && format != "bar" {
 		return fmt.Errorf("--format must be \"table\", \"bar\", or \"json\", got %q", format)
 	}
 
-	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	cfg, err := resolveRemoteConfig(outfitArg(args))
 	if err != nil {
 		return err
 	}
@@ -860,6 +1083,25 @@ var cloudOwnedFlags = map[string]bool{
 	"hf-repo": true, "hf-file": true, "hf-token": true,
 	"api-key": true, "api-key-file": true,
 	"ctx-size": true, "alias": true, "metrics": true,
+	// Companion weights: the cloud syncs these from S3 and names them at its
+	// own paths, so the preset's local paths must not travel. Only the
+	// location is cloud-owned — how the engine is asked to use a drafter
+	// (--spec-type) stays the user's, exactly as it is for a local run.
+	"spec-draft-model": true, "mmproj": true,
+	// Parallelism: outfit computes each runner's own flag from
+	// DeployConfig.Parallel, exactly as it computes ctx-size — a preset's
+	// raw value would otherwise survive in serveArgs and double-define the
+	// flag alongside the computed one.
+	"parallel": true, "max-num-seqs": true, "max-concurrent-requests": true,
+}
+
+// companionRoleForFlag maps a preset flag naming a companion weight to the
+// deploy-config role the cloud knows it by. Keyed by canonical name, so every
+// spelling the preset dialect accepts (`md`, `model-draft`, `mm`) resolves
+// here too.
+var companionRoleForFlag = map[string]string{
+	"spec-draft-model": "draft",
+	"mmproj":           "mmproj",
 }
 
 // isCloudOwned reports whether the cloud sets this preset key itself.
@@ -867,15 +1109,38 @@ func isCloudOwned(key string) bool {
 	return cloudOwnedFlags[preset.CanonicalKey(key)]
 }
 
+// parallelPresetKey names the preset key holding a runner's slot count, in
+// that engine's own vocabulary — the same split the *ServeParams functions
+// make when they render it. It is what a deploy reads back out of a preset,
+// so the value survives cloudOwnedFlags dropping it from the passthrough args.
+// A runner with no parallelism key yields "", which reads as "not set".
+func parallelPresetKey(runner string) string {
+	switch runner {
+	case "llamacpp":
+		return "parallel" // also matches the np alias, via CanonicalKey
+	case "vllm":
+		return "max-num-seqs"
+	case "omlx":
+		return "max-concurrent-requests"
+	default:
+		return ""
+	}
+}
+
 // isNodeOwned reports whether a fleet node's daemon sets this preset key
-// itself. It is the cloud's set minus the bind: a node is a machine the
-// operator owns, so where its engine listens is their choice to make. Dropping
-// it left a woken engine on llama.cpp's loopback default however the preset was
-// written — reachable from nobody else in the fleet, which is the whole point
-// of a fleet.
+// itself. It is the cloud's set minus the bind and the companion paths: a node
+// is a machine the operator owns, so where its engine listens is their choice
+// to make. Dropping the bind left a woken engine on llama.cpp's loopback
+// default however the preset was written — reachable from nobody else in the
+// fleet, which is the whole point of a fleet.
+//
+// The companion paths go the same way, for the same reason. The cloud owns them
+// because it seeds the weights from Hugging Face and puts them where it likes;
+// a node has the files already, at the path its preset names, so dropping them
+// would lose the drafter with nothing to replace it.
 func isNodeOwned(key string) bool {
 	switch preset.CanonicalKey(key) {
-	case "host", "port":
+	case "host", "port", "spec-draft-model", "mmproj":
 		return false
 	}
 	return isCloudOwned(key)
@@ -902,7 +1167,11 @@ func dropOwned(owned func(string) bool, params []preset.Param) []preset.Param {
 // it is provisioned. deployConfigWithoutContext is the same derivation for a
 // caller where that is not true.
 func deployConfigFor(sel outfit.Selection, outfitPath string) (remote.DeployConfig, error) {
-	return deployConfig(sel, outfitPath, deployTarget{requireContext: true, owns: isCloudOwned})
+	return deployConfig(sel, outfitPath, deployTarget{
+		requireContext: true,
+		seedsWeights:   true,
+		owns:           isCloudOwned,
+	})
 }
 
 // deployConfigForNode derives the same config for a machine that already
@@ -916,9 +1185,11 @@ func deployConfigForNode(sel outfit.Selection, outfitPath string) (remote.Deploy
 }
 
 // deployTarget is what the derivation cannot decide for itself: whether a
-// context size is required, and which preset flags the destination assigns.
+// context size is required, which preset flags the destination assigns, and
+// whether it fetches the weights itself (and so needs companions named).
 type deployTarget struct {
 	requireContext bool
+	seedsWeights   bool
 	owns           func(key string) bool
 }
 
@@ -938,8 +1209,11 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 	// (commonly ngl and jinja) are not lost.
 	var global, params []preset.Param
 	if sel.Preset != "" {
-		presetPath := resolvePresetPath(sel.Preset, outfitPath)
-		data, err := os.ReadFile(presetPath)
+		presetPath, err := resolvePresetPath(sel.Preset, outfitPath)
+		if err != nil {
+			return dc, err
+		}
+		data, err := outfitsrc.Fetch(presetPath)
 		if err != nil {
 			return dc, fmt.Errorf("reading preset %s: %w", presetPath, err)
 		}
@@ -985,6 +1259,25 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 		dc.ContextSize = n
 	}
 
+	// Parallel falls back to the preset's own parallelism key the same way
+	// context falls back to ctx-size, since that value is about to be dropped
+	// from serveArgs below (it is cloud-owned) — capturing it here is what
+	// keeps it from being silently lost rather than re-emitted as the
+	// deployment's own computed flag. The key is the runner's own spelling:
+	// reading only llama.cpp's would drop a vLLM preset's max-num-seqs on the
+	// floor, since dropOwned removes it either way.
+	parallel := sel.Parallel
+	if key := parallelPresetKey(dc.Runner); parallel == "" && key != "" {
+		parallel = presetValue(key, global, params)
+	}
+	if parallel != "" {
+		n, err := parseParallel(parallel)
+		if err != nil {
+			return dc, err
+		}
+		dc.Parallel = n
+	}
+
 	// The served name is what a coding agent asks for. ALIAS is the friendly
 	// name; without one the repo id is served under its own name.
 	dc.ServedModelName = sel.Alias
@@ -992,11 +1285,40 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 		dc.ServedModelName = dc.ModelID
 	}
 
+	// Companion weights are read from the same preset keys that drive a local
+	// serve, so one preset still works both ways. Only where the destination
+	// fetches the weights itself: it pulls them from the model's own repo, so
+	// only the filename travels and the local path the user downloaded to is
+	// meaningless there. A node already has its files, and keeps its own path.
+	if target.seedsWeights {
+		dc.Companions = companionsFrom(global, params)
+	}
+
 	dc.ServeArgs = preset.Flags(dropOwned(target.owns, global), dropOwned(target.owns, params))
 	if dc.ServeArgs == nil {
 		dc.ServeArgs = []string{}
 	}
 	return dc, nil
+}
+
+// companionsFrom collects the companion weights a preset names, as role ->
+// filename. The value is reduced to its base name: a companion ships in the
+// model's own repo, so the basename is what the seed asks Hugging Face for.
+func companionsFrom(layers ...[]preset.Param) map[string]string {
+	companions := map[string]string{}
+	for _, layer := range layers {
+		for _, p := range layer {
+			role, ok := companionRoleForFlag[preset.CanonicalKey(p.Key)]
+			if !ok || strings.TrimSpace(p.Value) == "" {
+				continue
+			}
+			companions[role] = filepath.Base(strings.TrimSpace(p.Value))
+		}
+	}
+	if len(companions) == 0 {
+		return nil
+	}
+	return companions
 }
 
 // presetValue returns a preset param's value across layers, or "" when it is
@@ -1027,27 +1349,44 @@ var (
 // Tests override this to avoid sleeping 60 seconds.
 var metricsWatchInterval = 60 * time.Second
 
-func cmdRemoteDeploy(args []string) error {
-	fs := flag.NewFlagSet("remote deploy", flag.ContinueOnError)
+func remoteDeployCmd() *cobra.Command {
 	var (
 		dryRun      bool
 		overwrite   bool
+		reseed      bool
 		allowedCidr string
 		region      string
 	)
-	fs.BoolVar(&dryRun, "dry-run", false, "print the config that would be deployed, without sending it")
-	fs.BoolVar(&dryRun, "n", false, "print the config without sending it (shorthand)")
+	c := &cobra.Command{
+		Use:   "deploy",
+		Short: "set what the instance serves, from the Outfit",
+		Long: `creates the environment the Outfit's REMOTE names — its own
+address, API key and allowed CIDR — and says what it serves (PROVIDER picks
+the engine, just as it does for serve).`,
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteDeploy(args, dryRun, overwrite, reseed, allowedCidr, region)
+		},
+	}
+	fs := c.Flags()
+	fs.BoolVarP(&dryRun, "dry-run", "n", false, "print the config that would be deployed, without sending it")
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
+	fs.BoolVar(&reseed, "reseed", false, "re-fetch the weights even if they are already in S3 (starts a ~20-minute seed)")
 	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
 	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	return c
+}
 
+// runRemoteDeploy is the body of `outfit remote deploy`.
+func runRemoteDeploy(args []string, dryRun, overwrite, reseed bool, allowedCidr, region string) error {
 	// deploy reads the Outfit for what to serve, so unlike the other
 	// subcommands it always needs one — the per-user remote config alone is not
 	// enough.
-	sel, outfitPath, err := readOutfit("outfit remote deploy <file>", outfitArg(fs))
+	sel, outfitPath, err := readOutfit("outfit remote deploy <file>", outfitArg(args))
 	if err != nil {
 		return err
 	}
@@ -1055,7 +1394,7 @@ func cmdRemoteDeploy(args []string) error {
 	// lines) before any AWS work, so the credentials the deploy signs with, the
 	// region, and the OUTFIT_REMOTE_* overrides all see it. ENV stays local — it
 	// never enters dc, so nothing here reaches the deployed instance.
-	if err := applyOutfitEnv(sel, filepath.Dir(outfitPath)); err != nil {
+	if err := applyOutfitEnv(sel, outfitPath); err != nil {
 		return err
 	}
 	dc, err := deployConfigFor(sel, outfitPath)
@@ -1084,9 +1423,22 @@ func cmdRemoteDeploy(args []string) error {
 	}
 	fmt.Println()
 	fmt.Printf("  context: %d\n", dc.ContextSize)
+	if dc.Parallel > 0 {
+		fmt.Printf("  parallel: %d\n", dc.Parallel)
+	}
 	fmt.Printf("  served:  %s\n", dc.ServedModelName)
+	// Companions are easy to get wrong quietly — a renamed file yields no
+	// drafter and a slower endpoint with no error — so show what was picked up.
+	for _, role := range slices.Sorted(maps.Keys(dc.Companions)) {
+		fmt.Printf("  %-8s %s\n", role+":", dc.Companions[role])
+	}
 	if len(dc.ServeArgs) > 0 {
 		fmt.Printf("  args:    %s\n", strings.Join(dc.ServeArgs, " "))
+	}
+	// Worth stating: a re-seed costs a ~20-minute instance and re-downloads the
+	// weights, so --reseed --dry-run must not look like a plain deploy.
+	if reseed {
+		fmt.Println("  reseed:  yes — the weights will be re-fetched even if already in S3")
 	}
 	if dryRun {
 		return nil
@@ -1140,7 +1492,7 @@ func cmdRemoteDeploy(args []string) error {
 		fmt.Printf("  ingress: %s (your public IP; override with --allowed-cidr)\n", allowedCidr)
 	}
 
-	resp, err := remoteDeployFn(ctx, cfg, dc, allowedCidr)
+	resp, err := remoteDeployFn(ctx, cfg, dc, allowedCidr, reseed)
 	if err != nil {
 		return err
 	}
@@ -1191,3 +1543,17 @@ func detectPublicCIDR(ctx context.Context) (string, error) {
 	}
 	return cidr, nil
 }
+
+// Test seams: the suite calls these the way the tree does — each runs its
+// command through execCmd rather than parsing a private FlagSet.
+func cmdRemoteBootstrap(args []string) error { return execCmd(remoteBootstrapCmd(), args) }
+func cmdRemoteStart(args []string) error     { return execCmd(remoteStartCmd(), args) }
+func cmdRemotePause(args []string) error     { return execCmd(remotePauseCmd(), args) }
+func cmdRemoteRestart(args []string) error   { return execCmd(remoteRestartCmd(), args) }
+func cmdRemoteStop(args []string) error      { return execCmd(remoteStopCmd(), args) }
+func cmdRemoteStatus(args []string) error    { return execCmd(remoteStatusCmd(), args) }
+func cmdRemoteMetrics(args []string) error   { return execCmd(remoteMetricsCmd(), args) }
+func cmdRemoteDeploy(args []string) error    { return execCmd(remoteDeployCmd(), args) }
+func cmdRemoteEnv(args []string) error       { return execCmd(remoteEnvCmd(), args) }
+func cmdRemoteList(args []string) error      { return execCmd(remoteListCmd(), args) }
+func cmdRemoteKeep(args []string) error      { return execCmd(remoteKeepCmd(), args) }

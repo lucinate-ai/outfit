@@ -6,9 +6,12 @@
 #   outfit remote deploy  # create the environment REMOTE names + set what it
 #                         # serves (this file + preset); registers its
 #                         # remote.json under ~/.config/outfit/remotes/
-#   outfit remote start   # boot the instance; prints the OPENAI_API_KEY export
+#   outfit remote start   # boot (or re-wake a stopped) the instance; prints
+#                         # the OPENAI_API_KEY export
 #   outfit apply          # point your coding agent at the endpoint
-#   outfit remote stop    # stop now instead of waiting for the idle timer
+#   outfit remote pause   # stop now (kept for a re-wake) instead of waiting
+#                         # for the idle timer
+#   outfit remote stop    # terminate now instead of waiting for the idle timer
 #
 # PROVIDER names the inference engine, so this file is what chooses llama.cpp
 # over vLLM: `outfit remote deploy` asks the cloud for that engine, and the same

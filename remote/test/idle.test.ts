@@ -137,4 +137,35 @@ describe('decideIdle', () => {
     );
     expect(decision.action).toBe('stop');
   });
+
+  it('terminates a stopped instance after retention', () => {
+    const decision = decideIdle(input({
+      instanceState: 'stopped',
+      stoppedSince: new Date('2026-07-24T09:58:00Z'), // 122 min > 120 retention
+      stopRetentionMinutes: 120,
+      metrics: { ok: true, idleSeconds: 0 },
+    }));
+    expect(decision.action).toBe('terminate');
+    expect(decision.reason).toContain('stopped for');
+  });
+
+  it('waits exactly at the retention boundary', () => {
+    const decision = decideIdle(input({
+      instanceState: 'stopped',
+      stoppedSince: new Date('2026-07-24T10:00:00Z'), // exactly 120 min
+      stopRetentionMinutes: 120,
+      metrics: { ok: true, idleSeconds: 0 },
+    }));
+    expect(decision.action).toBe('wait');
+  });
+
+  it('waits for a stopped instance within retention', () => {
+    const decision = decideIdle(input({
+      instanceState: 'stopped',
+      stoppedSince: new Date('2026-07-24T11:30:00Z'),
+      stopRetentionMinutes: 120,
+      metrics: { ok: true, idleSeconds: 0 },
+    }));
+    expect(decision.action).toBe('wait');
+  });
 });
