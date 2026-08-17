@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.23.0] - 2026-08-17
+### Added
+- feat(remote): carry companion weights and add deploy --reseed
+- feat: add --loopback shorthand to outfit daemon
+- feat: allow an Outfit path, alias, PRESET, and REMOTE to be a URL
+- feat: configure parallelism in Outfit files
+
 ## [1.22.0] - 2026-08-15
 ### Added
 - feat(examples): add Qwen3.8-27B on llama.cpp, deployable to AWS (#96)
