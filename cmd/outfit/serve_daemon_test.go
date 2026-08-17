@@ -203,12 +203,16 @@ func TestDaemonAPIAddr(t *testing.T) {
 
 // TestCmdDaemon_LoopbackConflictsWithExplicitAddr covers the rule through the
 // real flag parsing, so the -l spelling and an --api-addr typed to the
-// default's own value are both counted as explicit.
+// default's own value are both counted as explicit. The conflict is detected
+// by fs.Visit, which is order-independent — the last case types the address
+// first, pinning that a sequential rewrite can't make the rule depend on
+// flag position.
 func TestCmdDaemon_LoopbackConflictsWithExplicitAddr(t *testing.T) {
 	for _, args := range [][]string{
 		{"--loopback", "--api-addr", "127.0.0.1:0"},
 		{"--loopback", "--api-addr", daemon.DefaultAPIAddr},
 		{"-l", "--api-addr", daemon.DefaultAPIAddr},
+		{"--api-addr", "127.0.0.1:0", "--loopback"},
 	} {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		t.Setenv(daemon.TokenEnvVar, "")
