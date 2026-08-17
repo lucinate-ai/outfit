@@ -17,8 +17,14 @@ import (
 // stubSeedSeams points the control-plane discovery at a test server, with the
 // seed URL configured unless seedURL is empty — which is how the
 // not-configured path is exercised.
+//
+// It pins the AWS credential chain too. The seed subcommands load an AWS config
+// before reaching the (stubbed) discovery, so without this they resolve
+// credentials for real: that quietly succeeds on a developer machine and fails
+// on a CI runner with no IMDS, which is exactly how this arrived broken.
 func stubSeedSeams(t *testing.T, serverURL, seedURL string) {
 	t.Helper()
+	stubAWSEnv(t)
 	orig := deployDiscoverFn
 	t.Cleanup(func() { deployDiscoverFn = orig })
 	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.ControlPlane, error) {
