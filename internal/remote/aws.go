@@ -79,6 +79,13 @@ func DiscoverControlPlane(ctx context.Context, cfg aws.Config, stackName string)
 			outputs[aws.ToString(o.OutputKey)] = aws.ToString(o.OutputValue)
 		}
 	}
+	return controlPlaneFromOutputs(outputs, stackName)
+}
+
+// controlPlaneFromOutputs maps a stack's outputs onto a ControlPlane. Split
+// from the CloudFormation call so the mapping — the part that silently drops a
+// URL if a key is forgotten — is testable without AWS.
+func controlPlaneFromOutputs(outputs map[string]string, stackName string) (ControlPlane, error) {
 	layer := ControlPlane{
 		Config: Config{
 			StartURL:  outputs["StartUrl"],
@@ -86,10 +93,14 @@ func DiscoverControlPlane(ctx context.Context, cfg aws.Config, stackName string)
 			DeployURL: outputs["DeployUrl"],
 			StatsURL:  outputs["StatsUrl"],
 			EnvURL:    outputs["EnvUrl"],
+			SeedURL:   outputs["SeedUrl"],
 			Region:    outputs["Region"],
 		},
 		WeightsBucket: outputs["WeightsBucket"],
 	}
+	// Only the three the other subcommands cannot work without are required.
+	// SeedUrl and EnvUrl are absent from a control plane deployed before they
+	// existed; the subcommands that need them say so themselves.
 	if layer.Config.StartURL == "" || layer.Config.StopURL == "" || layer.Config.DeployURL == "" {
 		return ControlPlane{}, fmt.Errorf(
 			"stack %q is missing its control-URL outputs — re-run `outfit remote bootstrap` to update it",

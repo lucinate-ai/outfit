@@ -149,6 +149,44 @@ func TestRemoteSeed_StatusReportsAFailedSeed(t *testing.T) {
 	}
 }
 
+func TestRemoteSeed_StatusShowsTheFileOnlyWhileItIsStillWorking(t *testing.T) {
+	// While transferring, the current file is what you want to see.
+	server, _ := seedServer(t, 200,
+		`{"seedId":"vllm--m","state":"transferring","currentFile":"model-00009.safetensors","filesTotal":17,"filesDone":8,"bytesTotal":2048,"bytesDone":1024,"progressPercent":50}`)
+	stubSeedSeams(t, server.URL, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteSeed([]string{"status", "vllm--m"}); err != nil {
+			t.Fatalf("seed status: %v", err)
+		}
+	})
+	if !strings.Contains(out, "model-00009.safetensors") {
+		t.Errorf("a running seed should show its current file, got:\n%s", out)
+	}
+	if !strings.Contains(out, "8/17 files") || !strings.Contains(out, "1.0 KiB of 2.0 KiB") {
+		t.Errorf("progress should show files and bytes, got:\n%s", out)
+	}
+}
+
+func TestRemoteSeed_StatusHidesTheFileOnceFinished(t *testing.T) {
+	// Once terminal, the last file it happened to touch is noise.
+	server, _ := seedServer(t, 200,
+		`{"seedId":"vllm--m","state":"succeeded","currentFile":"model-00017.safetensors","durationSeconds":312}`)
+	stubSeedSeams(t, server.URL, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteSeed([]string{"status", "vllm--m"}); err != nil {
+			t.Fatalf("seed status: %v", err)
+		}
+	})
+	if strings.Contains(out, "model-00017.safetensors") {
+		t.Errorf("a finished seed should not show a current file, got:\n%s", out)
+	}
+	if !strings.Contains(out, "312s") {
+		t.Errorf("a finished seed should report how long it took, got:\n%s", out)
+	}
+}
+
 func TestRemoteSeed_StatusRejectsAnUnknownSeed(t *testing.T) {
 	server, _ := seedServer(t, 404, `{"seedId":"nope","state":"unknown","error":"no seed known"}`)
 	stubSeedSeams(t, server.URL, server.URL)

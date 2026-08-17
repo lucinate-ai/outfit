@@ -73,14 +73,35 @@ async function instanceId(): Promise<string> {
   }
 }
 
-export async function runSeed(job: SeedJob, reporter: Reporter, s3: S3Client): Promise<void> {
+/**
+ * Seams for the tests: the network-facing halves of the run, so the
+ * orchestration — what is reported, in what order, and when the manifest is
+ * written — can be exercised without Hugging Face or S3.
+ */
+export interface RunDeps {
+  planTransfer?: typeof planTransfer;
+  transferFile?: typeof transferFile;
+  writeManifest?: typeof writeManifest;
+  readToken?: (job: SeedJob) => Promise<string>;
+}
+
+export async function runSeed(
+  job: SeedJob,
+  reporter: Reporter,
+  s3: S3Client,
+  deps: RunDeps = {},
+): Promise<void> {
+  const plan_ = deps.planTransfer ?? planTransfer;
+  const transfer_ = deps.transferFile ?? transferFile;
+  const writeManifest_ = deps.writeManifest ?? writeManifest;
+
   reporter.emit('resolving', { Message: `resolving ${job.modelId}` }, { [SEED_METRICS.started]: 1 });
 
-  const token = await readToken(job);
+  const token = await (deps.readToken ?? readToken)(job);
 
   // The metadata pass can take a while on a large repository, and silence here
   // would look like a stall to the sweep — so it reports before any bytes move.
-  const plan = await planTransfer(job.modelId, job.revision, job.selection, token);
+  const plan = await plan_(job.modelId, job.revision, job.selection, token);
   reporter.emit('resolving', {
     Message: `${plan.files.length} file(s), ${plan.totalBytes} bytes at ${plan.revision}`,
     Revision: plan.revision,
@@ -119,7 +140,7 @@ export async function runSeed(job: SeedJob, reporter: Reporter, s3: S3Client): P
     };
     report(true);
 
-    const result = await transferFile(
+    const result = await transfer_(
       file,
       {
         bucket: job.bucket,
@@ -154,7 +175,7 @@ export async function runSeed(job: SeedJob, reporter: Reporter, s3: S3Client): P
 
   // Only now, with every file transferred and verified, is the manifest written.
   reporter.emit('finalising', { Message: 'writing the manifest', Revision: plan.revision });
-  await writeManifest(s3, job, buildManifest(job, plan.revision, transferred));
+  await writeManifest_(s3, job, buildManifest(job, plan.revision, transferred));
 
   reporter.terminal('succeeded', {
     Revision: plan.revision,
