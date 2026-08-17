@@ -178,6 +178,7 @@ See [HTTP Control API](../http-api.md) for details, or
 | `POST /v1/start` | Start the engine (optional deploy-config body, optionally carrying the engine's API key; 409 while one runs) |
 | `POST /v1/stop` | Stop the engine (idempotent; never ends the daemon) |
 | `GET /v1/metrics` | Engine token counters plus host GPU/CPU/RAM |
+| `GET /v1/logs` | A slice of the engine's captured output, by offset |
 | `PUT /v1/deploy-config` | Set what the *next* start serves |
 
 Requests carry `Authorization: Bearer <token>`. The token comes from one of
