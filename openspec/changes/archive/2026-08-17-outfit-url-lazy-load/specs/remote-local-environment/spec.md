@@ -1,14 +1,4 @@
-# Remote Local Environment Specification
-
-## Purpose
-
-Define how the `remote` control commands load the local environment tied to a
-resolved Outfit — the adjacent `.env` file and the Outfit's own `ENV`
-instructions — so that AWS credentials, region resolution, and
-`OUTFIT_REMOTE_*` overrides see those values, while keeping them local to the
-device invoking `outfit`.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Remote commands load the Outfit's local environment
 
@@ -52,43 +42,3 @@ no-Outfit-resolved case does.
 - **WHEN** a `remote` command resolves an Outfit fetched from a URL
 - **THEN** no `.env` read is attempted, and only that Outfit's own `ENV`
   instructions and the process environment are applied
-
-### Requirement: Precedence of local environment sources
-
-When the same variable is set in more than one source, the value SHALL be chosen
-with the precedence, highest to lowest: the Outfit's `ENV` instruction, then a
-variable already present in the process environment, then the `.env` beside the
-Outfit. A variable already set in the process environment SHALL therefore win
-over the `.env`, which only fills gaps; an `ENV` instruction SHALL override both.
-
-#### Scenario: The process environment wins over .env
-
-- **WHEN** a variable is set both in the process environment and in the `.env`
-  beside the Outfit
-- **THEN** the process environment's value is used and the `.env` value is
-  ignored
-
-#### Scenario: .env fills a gap
-
-- **WHEN** a variable is set in the `.env` beside the Outfit and is unset in the
-  process environment
-- **THEN** the `.env` value is used
-
-#### Scenario: ENV overrides both
-
-- **WHEN** a variable is set by an Outfit `ENV` instruction and also in the
-  process environment and/or the `.env`
-- **THEN** the `ENV` value is used, overriding both
-
-### Requirement: ENV is local-only
-
-Variables established from the Outfit's `ENV` instructions (and its adjacent
-`.env`) SHALL affect only the local device invoking `outfit`. They SHALL NOT be
-included in the deploy payload sent to the instance, nor otherwise transmitted to
-the deployed instance.
-
-#### Scenario: Deploy does not forward ENV to the instance
-
-- **WHEN** `outfit remote deploy` runs for an Outfit that declares `ENV` variables
-- **THEN** the configuration sent to the deploy endpoint contains none of those
-  variables — they shape only the local command's own environment

@@ -20,9 +20,10 @@ Four words carry the whole tool:
   [`outfit list`](commands/list.md).
 - **Outfit file** — a small, declarative file (like a `Dockerfile`, but for
   your agent's model) that captures one selection so you can commit it and
-  apply it anywhere. See [The `Outfit` file](outfit-file.md).
-- **Alias** — a short name you register for an Outfit file, usable wherever a
-  path goes. See [`outfit alias`](commands/alias.md).
+  apply it anywhere — local or fetched straight from a URL. See
+  [The `Outfit` file](outfit-file.md).
+- **Alias** — a short name you register for an Outfit file or URL, usable
+  wherever a path goes. See [`outfit alias`](commands/alias.md).
 
 ## Guides
 

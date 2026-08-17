@@ -28,9 +28,10 @@ same work [`outfit apply`](apply.md) does — so one command dresses the agent
 and launches it:
 
 ```sh
-outfit harness -O                        # apply ./Outfit, then launch
-outfit harness --outfit=path/to/Outfit   # ...or a specific one
-outfit harness --outfit=path/to/dir      # ...or a directory holding an Outfit
+outfit harness -O                                  # apply ./Outfit, then launch
+outfit harness --outfit=path/to/Outfit             # ...or a specific one
+outfit harness --outfit=path/to/dir                # ...or a directory holding an Outfit
+outfit harness --outfit=https://example.com/Outfit # ...or a URL, fetched instead of read
 ```
 
 Given bare, `--outfit` defaults to `./Outfit` like `apply` does; when you name

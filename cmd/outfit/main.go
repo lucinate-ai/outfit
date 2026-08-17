@@ -73,6 +73,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/lucinate"
 	"github.com/lucinate-ai/outfit/internal/opencode"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/outfitsrc"
 	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
@@ -294,16 +295,28 @@ func cmdAdd(args []string) error {
 	return applySelection(sel, h, "", opencode.EnvResolver(""))
 }
 
+// envFileDir returns the local directory a `.env` beside outfitPath would
+// live in, for opencode.EnvResolver — or "" when outfitPath is empty (no
+// Outfit in play) or a URL, since a URL-sourced Outfit has no local directory
+// to look beside.
+func envFileDir(outfitPath string) string {
+	if outfitPath == "" || outfitsrc.IsURL(outfitPath) {
+		return ""
+	}
+	return filepath.Dir(outfitPath)
+}
+
 // applySelection writes a single provider selection into the active harness's
 // config. It is the shared core of `add` and `apply`: both resolve a selection
 // (from flags or an Outfit file) and hand it here.
-// envDir is the directory of the Outfit the selection came from, which is where
-// a `.env` holding its API key belongs; it is empty when no Outfit is involved
-// (an `outfit add` from flags), leaving only the process environment.
-// resolve looks up API key variables — normally opencode.EnvResolver(envDir),
+// outfitPath is the Outfit the selection came from — its own path, not a
+// pre-computed directory, so a relative REMOTE resolves correctly whether the
+// Outfit is local or URL-sourced (see resolveRemotePath); it is empty when no
+// Outfit is involved (an `outfit add` from flags). resolve looks up API key
+// variables — normally opencode.EnvResolver of the Outfit's local directory,
 // but `outfit harness` widens it with the key it fetched from a remote
 // endpoint, which it is about to put in the launched agent's environment.
-func applySelection(sel outfit.Selection, h harness.Harness, envDir string, resolve func(string) string) error {
+func applySelection(sel outfit.Selection, h harness.Harness, outfitPath string, resolve func(string) string) error {
 	if sel.Model == "" && sel.Alias == "" {
 		return fmt.Errorf("a provider selection needs a model or an alias")
 	}
@@ -324,7 +337,7 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string, reso
 	// several engines-of-the-same-kind overwriting one. The name comes from
 	// removeSelection too, so apply and unapply stay symmetric.
 	if sel.Remote != "" {
-		env, err := remoteEnvName(sel.Remote, envDir)
+		env, err := remoteEnvName(sel.Remote, outfitPath)
 		if err != nil {
 			return err
 		}
@@ -344,7 +357,7 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string, reso
 	// The harness reports the base URL it wrote, so this needs no announcement
 	// of its own beyond naming where it came from.
 	if sel.BaseURL == "" && sel.Remote != "" {
-		baseURL, err := remoteBaseURL(sel.Remote, envDir)
+		baseURL, err := remoteBaseURL(sel.Remote, outfitPath)
 		if err != nil {
 			return err
 		}
@@ -401,10 +414,14 @@ func applySelection(sel outfit.Selection, h harness.Harness, envDir string, reso
 // path names a directory, the default Outfit file inside it is used, so a
 // caller can pass either the file itself or the directory that holds it. path
 // may also be a name registered with `outfit alias`, which is what gives every
-// Outfit command the same shorthand. usage shows the caller's own way of naming
-// a path (subcommands take it positionally, `harness` takes it as a flag) in
-// the not-found hint. It returns the parsed selection alongside the resolved
-// path, which callers use to locate files referenced relative to the Outfit.
+// Outfit command the same shorthand, or an http(s) URL, fetched instead of
+// read from local disk — a URL ending in "/" gets outfit.DefaultFile appended,
+// the URL equivalent of the directory case. usage shows the caller's own way
+// of naming a path (subcommands take it positionally, `harness` takes it as a
+// flag) in the not-found hint. It returns the parsed selection alongside the
+// resolved path, which callers use to locate files referenced relative to the
+// Outfit — via outfitsrc, so a relative reference resolves against a URL the
+// same way it resolves against a local directory.
 //
 // With no path at all, OUTFIT_ALIAS names the Outfit before ./Outfit is tried,
 // so one export dresses a whole shell. It ranks below an explicit argument and
@@ -438,16 +455,31 @@ func readOutfit(usage, path string) (outfit.Selection, string, error) {
 		fmt.Fprintf(os.Stderr, "Using alias %q (%s)\n\n", path, aliased)
 		path = aliased
 	}
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		path = filepath.Join(path, outfit.DefaultFile)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) && path == outfit.DefaultFile {
-			return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path or an alias: %s; or set %s; see `outfit alias --list`)", outfit.DefaultFile, usage, outfitAliasEnv)
+
+	var data []byte
+	if outfitsrc.IsURL(path) {
+		if strings.HasSuffix(path, "/") {
+			path += outfit.DefaultFile
 		}
-		return outfit.Selection{}, path, fmt.Errorf("reading %s: %w", path, err)
+		fetched, err := outfitsrc.Fetch(path)
+		if err != nil {
+			return outfit.Selection{}, path, err
+		}
+		data = fetched
+	} else {
+		if info, err := os.Stat(path); err == nil && info.IsDir() {
+			path = filepath.Join(path, outfit.DefaultFile)
+		}
+		read, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) && path == outfit.DefaultFile {
+				return outfit.Selection{}, path, fmt.Errorf("no %s found in the current directory (pass a path or an alias: %s; or set %s; see `outfit alias --list`)", outfit.DefaultFile, usage, outfitAliasEnv)
+			}
+			return outfit.Selection{}, path, fmt.Errorf("reading %s: %w", path, err)
+		}
+		data = read
 	}
+
 	sel, err := outfit.Parse(data)
 	if err != nil {
 		return outfit.Selection{}, path, fmt.Errorf("%s: %w", path, err)
@@ -486,8 +518,14 @@ func outfitFromEnv() (string, string, error) {
 	if !ok {
 		return "", "", fmt.Errorf("%s names %q, which is not a registered alias — see `outfit alias --list`, or unset %s", outfitAliasEnv, name, outfitAliasEnv)
 	}
-	if _, err := os.Stat(path); err != nil {
-		return "", "", fmt.Errorf("%s names %q, which points at %s, which is gone — re-point it with `outfit alias -n %s <path>`, or drop it with `outfit unalias %s`", outfitAliasEnv, name, path, name, name)
+	// A URL target is not probed here: that would mean a network call on
+	// every command that resolves no explicit path, just to confirm what a
+	// real fetch will report anyway. A stale URL surfaces its own error when
+	// something actually reads it.
+	if !outfitsrc.IsURL(path) {
+		if _, err := os.Stat(path); err != nil {
+			return "", "", fmt.Errorf("%s names %q, which points at %s, which is gone — re-point it with `outfit alias -n %s <path>`, or drop it with `outfit unalias %s`", outfitAliasEnv, name, path, name, name)
+		}
 	}
 	return name, path, nil
 }
@@ -522,8 +560,13 @@ func resolveAlias(arg string) (string, bool, error) {
 		fmt.Printf("Note: %q names both a path here and a registered alias; using the path.\n\n", arg)
 		return "", false, nil
 	}
-	if _, err := os.Stat(path); err != nil {
-		return "", false, fmt.Errorf("alias %q points at %s, which is gone — re-point it with `outfit alias -n %s <path>`, or drop it with `outfit unalias %s`", arg, path, arg, arg)
+	// A URL target is not probed here — see the matching note in
+	// outfitFromEnv. A stale URL surfaces its own error when something
+	// actually fetches it, rather than costing every resolution a network call.
+	if !outfitsrc.IsURL(path) {
+		if _, err := os.Stat(path); err != nil {
+			return "", false, fmt.Errorf("alias %q points at %s, which is gone — re-point it with `outfit alias -n %s <path>`, or drop it with `outfit unalias %s`", arg, path, arg, arg)
+		}
 	}
 	return path, true, nil
 }
@@ -561,8 +604,7 @@ func cmdApply(args []string) error {
 	if output != "" {
 		sel.Output = output
 	}
-	envDir := filepath.Dir(outfitPath)
-	return applySelection(sel, h, envDir, opencode.EnvResolver(envDir))
+	return applySelection(sel, h, outfitPath, opencode.EnvResolver(envFileDir(outfitPath)))
 }
 
 // cmdUnapply reads an Outfit file and removes what it selects — the inverse of
@@ -592,7 +634,7 @@ func cmdUnapply(args []string) error {
 		return err
 	}
 	sel.Providers = providers
-	return removeSelection(sel, h, filepath.Dir(outfitPath))
+	return removeSelection(sel, h, outfitPath)
 }
 
 // cmdAlias registers an Outfit under a short name, so it can be used anywhere a
@@ -652,10 +694,16 @@ func cmdAlias(args []string) error {
 	}
 	// Store an absolute path so the alias resolves from any working directory,
 	// and the Outfit file rather than its directory so a relative PRESET still
-	// resolves against the Outfit's own directory under `serve`.
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return err
+	// resolves against the Outfit's own directory under `serve`. A URL is
+	// already absolute in the sense that matters — it resolves the same from
+	// any working directory — so it is stored verbatim.
+	abs := path
+	if !outfitsrc.IsURL(path) {
+		var err error
+		abs, err = filepath.Abs(path)
+		if err != nil {
+			return err
+		}
 	}
 
 	var previous string
@@ -759,8 +807,12 @@ func writeAliases(b *strings.Builder, header bool) error {
 	for _, name := range names {
 		path, _ := f.Alias(name)
 		line := fmt.Sprintf("  %-*s  %s", width, name, path)
-		if _, err := os.Stat(path); err != nil {
-			line += " (missing)"
+		// A URL target is printed as-is: listing makes no network call, so
+		// its liveness is never checked either way, only a local target's is.
+		if !outfitsrc.IsURL(path) {
+			if _, err := os.Stat(path); err != nil {
+				line += " (missing)"
+			}
 		}
 		b.WriteString(line + "\n")
 	}
@@ -893,11 +945,11 @@ func cmdRemove(args []string) error {
 // selection (from flags or an Outfit file) and hand it here. It is the inverse
 // of applySelection, so it names the provider the same way — for a remote Outfit
 // that is the environment name, not the PROVIDER value — to remove exactly what
-// apply wrote. envDir is the Outfit's directory, needed to read a path-form
+// apply wrote. outfitPath is the Outfit's own path, needed to read a path-form
 // REMOTE's environment; it is empty for a flag-based remove.
-func removeSelection(sel outfit.Selection, h harness.Harness, envDir string) error {
+func removeSelection(sel outfit.Selection, h harness.Harness, outfitPath string) error {
 	if sel.Remote != "" {
-		env, err := remoteEnvName(sel.Remote, envDir)
+		env, err := remoteEnvName(sel.Remote, outfitPath)
 		if err != nil {
 			return err
 		}
@@ -1330,7 +1382,7 @@ func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, re
 	// As for apply, --providers overrides the catalogue the selection resolves
 	// against (an Outfit never names one).
 	sel.Providers = providers
-	envDir := filepath.Dir(path)
+	envDir := envFileDir(path)
 	localResolve := opencode.EnvResolver(envDir)
 	// Routing runs before the apply, and before anything is printed about
 	// applying, for the reason the remote fetch does: a launch that cannot find
@@ -1347,7 +1399,7 @@ func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, re
 	fmt.Printf("Applying %s\n\n", path)
 	// Before the apply, so a launch that cannot authenticate stops without
 	// having rewritten the harness config.
-	remoteResp, err := fetchRemoteEnv(sel, envDir, localResolve)
+	remoteResp, err := fetchRemoteEnv(sel, path, localResolve)
 	if err != nil {
 		return outfit.Selection{}, "", nil, nil, err
 	}
@@ -1355,7 +1407,7 @@ func applyBeforeLaunch(f outfitPathFlag, providers string, h harness.Harness, re
 	if choice != nil && choice.APIKey != "" {
 		resolve = fleetLaunchResolver(resolve, choice.APIKey)
 	}
-	if err := applySelection(sel, h, envDir, resolve); err != nil {
+	if err := applySelection(sel, h, path, resolve); err != nil {
 		return outfit.Selection{}, "", nil, nil, err
 	}
 	fmt.Println()
@@ -1393,13 +1445,13 @@ const remoteEnvTimeout = 30 * time.Second
 // request — so the command stops and says what to do about it. When the key is
 // already to hand (exported, in the `.env` beside the Outfit, or set by an ENV
 // instruction) the fetch was only a convenience, so it warns and carries on.
-func fetchRemoteEnv(sel outfit.Selection, envDir string, resolve func(string) string) (*remote.Response, error) {
+func fetchRemoteEnv(sel outfit.Selection, outfitPath string, resolve func(string) string) (*remote.Response, error) {
 	if sel.Remote == "" {
 		return nil, nil
 	}
 	// The call crosses the network, and a cold control plane is not instant.
 	fmt.Fprintf(os.Stderr, "Fetching the endpoint's environment from %s...\n", sel.Remote)
-	cfg, err := resolveRemoteConfigForOutfit(sel.Remote, envDir)
+	cfg, err := resolveRemoteConfigForOutfit(sel.Remote, outfitPath)
 	if err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), remoteEnvTimeout)
 		defer cancel()

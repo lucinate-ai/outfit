@@ -13,13 +13,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/contextsize"
 	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/lucinate-ai/outfit/internal/outfitsrc"
 	"github.com/lucinate-ai/outfit/internal/preset"
 )
 
@@ -246,8 +246,11 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 	}
 	var argv []string
 	if sel.Preset != "" {
-		presetPath := resolvePresetPath(sel.Preset, outfitPath)
-		data, err := os.ReadFile(presetPath)
+		presetPath, err := resolvePresetPath(sel.Preset, outfitPath)
+		if err != nil {
+			return nil, err
+		}
+		data, err := outfitsrc.Fetch(presetPath)
 		if err != nil {
 			return nil, fmt.Errorf("reading preset %s: %w", presetPath, err)
 		}
@@ -280,14 +283,12 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 	return argv, nil
 }
 
-// resolvePresetPath resolves an Outfit's PRESET value: a relative one is taken
-// against the Outfit's own directory, so an Outfit and its preset travel
-// together (the same rule REMOTE uses).
-func resolvePresetPath(presetValue, outfitPath string) string {
-	if filepath.IsAbs(presetValue) {
-		return presetValue
-	}
-	return filepath.Join(filepath.Dir(outfitPath), presetValue)
+// resolvePresetPath resolves an Outfit's PRESET value against the Outfit's
+// own source: a relative one resolves against the Outfit's local directory,
+// or against its URL when the Outfit was fetched from one, so an Outfit and
+// its preset travel together either way (the same rule REMOTE uses).
+func resolvePresetPath(presetValue, outfitPath string) (string, error) {
+	return outfitsrc.Resolve(outfitPath, presetValue)
 }
 
 // vllmServeParams turns the vLLM settings an Outfit states into preset

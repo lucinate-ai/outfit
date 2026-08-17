@@ -86,11 +86,15 @@ the deployment that owns it. A `BASEURL` in the Outfit wins if you set one.
 Either name it from the Outfit, so a project carries its own endpoint:
 
 ```dockerfile
-REMOTE ./remote.json         # a path: resolved next to the Outfit, like PRESET
-REMOTE qwen3.6-27b-prod      # a bare name: an environment in the registry
+REMOTE ./remote.json                       # a path: resolved next to the Outfit, like PRESET
+REMOTE https://example.com/team/remote.json  # a URL, fetched instead of read from disk
+REMOTE qwen3.6-27b-prod                    # a bare name: an environment in the registry
 ```
 
-A bare name (no slash, no `.json`) selects a **named environment** from the
+A relative path resolves against the Outfit's own URL too, when the Outfit
+itself was fetched from one — and is fetched only when a command here actually
+needs it, never merely because the Outfit was read. A bare name (no slash, no
+`.json`) selects a **named environment** from the
 per-user registry at `~/.config/outfit/remotes/<name>/remote.json`. This keeps
 deployment state per-user and per-instance: two projects name two environments
 without clobbering, and only the name — not the URLs — lives in the committed
@@ -255,9 +259,9 @@ something to reach for by habit.
 
 ## Notes
 
-- Every subcommand takes an optional Outfit path, or a
-  [registered alias](alias.md). Given none, it uses the alias `OUTFIT_ALIAS`
-  names, and failing that `./Outfit`.
+- Every subcommand takes an optional Outfit path, a
+  [registered alias](alias.md), or a URL. Given none, it uses the alias
+  `OUTFIT_ALIAS` names, and failing that `./Outfit`.
 - `deploy` always needs an Outfit — it's the thing being deployed. The others
   fall back to your per-user config.
 - `deploy_url` is optional: a config written before `deploy` existed still
