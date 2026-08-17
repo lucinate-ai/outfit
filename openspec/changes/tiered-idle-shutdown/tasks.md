@@ -32,3 +32,9 @@
 
 - [ ] 6.1 Run `pnpm test` for remote/ Lambda tests
 - [ ] 6.2 Validate spec changes with `openspec validate --change tiered-idle-shutdown`
+
+## 7. Pause command
+
+- [ ] 7.1 Add `pause` subcommand handling in `cmd/outfit/remote.go` for `outfit remote pause`
+- [ ] 7.2 Extend stop Lambda to accept pause mode and call `stopInstance` instead of `terminateInstance`
+- [ ] 7.3 Add tests for pause vs stop semantics and status reporting

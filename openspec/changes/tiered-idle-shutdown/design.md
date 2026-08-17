@@ -7,6 +7,7 @@ The remote control plane currently terminates an EC2 instance as soon as the idl
 **Goals:**
 - Preserve instance boot disk and weights by stopping before terminating.
 - Allow `outfit remote start` to re-wake a stopped instance in seconds.
+- Provide explicit `outfit remote pause` for user-initiated stop without termination.
 - Retain existing idle detection semantics, grace period, max runtime and retain-until override.
 - Keep the shared idle sweep for all environments.
 
@@ -32,6 +33,10 @@ The remote control plane currently terminates an EC2 instance as soon as the idl
 **Termination of stopped instances**
 - The idle sweep will process both running and stopped instances. For running, use existing `decideIdle`. For stopped, if `stoppedSince` > `STOP_RETENTION_MINUTES` and retain-until not in future, call `terminateInstance`.
 - Alternative: a separate timer. Rejected to keep single sweep.
+
+**Pause command handling**
+- `outfit remote pause` invokes the stop Lambda in pause mode, calling EC2 `stopInstances` instead of `terminateInstance`. Manual `outfit remote stop` remains immediate termination.
+- Alternative: a separate pause Lambda. Rejected to keep control plane surface minimal and reuse auth/validation.
 
 ## Risks / Trade-offs
 

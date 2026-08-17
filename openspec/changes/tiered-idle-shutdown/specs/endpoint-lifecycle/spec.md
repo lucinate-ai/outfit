@@ -42,3 +42,19 @@ A failed reading SHALL be treated as no activity rather than as activity, so a w
 
 - **WHEN** a start request is made for an environment whose instance is stopped
 - **THEN** the existing instance is started, not replaced, and the environment's URL remains unchanged
+
+## ADDED Requirements
+
+### Requirement: Explicit pause
+
+A user-initiated pause SHALL stop the instance without terminating it, preserving boot disk and weights for fast re-wake. The instance SHALL remain stoppable and re-wakable via start, and retain-until overrides SHALL still apply.
+
+#### Scenario: Pause stops without terminating
+
+- **WHEN** user runs `outfit remote pause` for a running environment
+- **THEN** the instance is stopped, not terminated, and the environment's URL is retained
+
+#### Scenario: Pause is distinct from stop
+
+- **WHEN** user runs `outfit remote stop`
+- **THEN** the instance is terminated immediately

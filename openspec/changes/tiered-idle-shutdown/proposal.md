@@ -6,6 +6,7 @@ Remote inference instances are currently terminated immediately when idle. Termi
 
 - Idle idle check now performs a two-stage shutdown: stop the EC2 instance for fast re-wake, then terminate after a further idle period.
 - `outfit remote start` must be able to re-wake a stopped instance instead of launching a new one.
+- `outfit remote pause` explicitly stops an instance for fast re-wake without termination.
 - Manual `outfit remote stop` remains immediate termination for explicit user intent.
 - New configuration parameters control the stop-after-idle threshold and the terminate-after-stop threshold.
 - The control plane idle sweep tracks instance state to apply the tiered policy.
@@ -22,5 +23,5 @@ Remote inference instances are currently terminated immediately when idle. Termi
 
 - Affected code: `remote/lambda/shared/idle.ts`, `remote/lambda/stop/index.ts`, `remote/lambda/start/index.ts`, `remote/lambda/shared/aws.ts` (stopInstance API).
 - Affected spec: `openspec/specs/endpoint-lifecycle/spec.md`.
-- Affected CLI behavior: `outfit remote start` will start stopped instances; `outfit remote status` will report stopped state.
+- Affected CLI behavior: `outfit remote start` will start stopped instances; `outfit remote pause` will stop without terminating; `outfit remote status` will report stopped state.
 - No changes to outfit Go code required for the control plane behavior, but remote deployment outputs may need new env vars.
