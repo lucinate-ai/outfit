@@ -171,6 +171,12 @@
 
 - [x] 11.1 `pnpm build`, `pnpm test`, `pnpm synth` in `remote/`; `go test ./...
   -cover` and `gofmt` at the repo root.
+> **11.2–11.7 need a real AWS account** and were not run here. Everything they
+> cover is exercised by unit tests against fakes — the boot script's ordering and
+> content, the transfer's retry and staging paths, the status join's every cell,
+> the reap decisions, the sweep's isolation from the daemon scrape — but none of
+> that substitutes for a seed that actually boots. Run them before merging.
+
 - [ ] 11.2 End-to-end in a real account: seed a vLLM checkpoint and a llama.cpp
   GGUF; confirm the manifest, the instance's self-termination, and status
   progressing through phases to succeeded.
