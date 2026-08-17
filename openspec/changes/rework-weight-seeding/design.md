@@ -100,12 +100,30 @@ then unlinking. Bounded disk, streaming by default, never stuck. This is the
 concrete answer to "don't make the pull brittle" — robustness is a fallback path,
 not an argument against streaming.
 
-**This design has one load-bearing assumption**: that `fileDownloadInfo` exposes a
-resolvable link and that the CDN behind it honours `Range`. It is
-CloudFront-fronted object storage, so it should, but Xet-backed repositories add a
-resolve indirection. A spike confirms this before the transfer is built; if it
-fails, the fallback design is whole-file streams with per-file retry — still no
-disk, coarser blast radius, no change to any spec.
+**Spiked and confirmed** (task 1.1/1.3, against `openai-community/gpt2`, which is
+Xet-backed, so the indirection that was the main risk is covered):
+
+- A ranged `GET` on the `resolve` endpoint returns `206` with a correct
+  `content-range: bytes 0-99/548105171`, and repeated requests for the same
+  window return byte-identical data. `accept-ranges: bytes` is present on both
+  the `resolve` response and the CDN target it redirects to.
+- `x-linked-etag` on the `resolve` response carries the file's **sha256**, and
+  `x-linked-size` its true size — so the integrity check has a source of truth.
+  Note that the *CDN* response's own `etag` is the Xet content hash, **not** the
+  sha256; the checksum must be taken from the `resolve` response, not from the
+  redirect target.
+- `x-repo-commit` on the same response carries the resolved commit sha, which is
+  what the manifest records as the revision. No separate resolve call is needed.
+
+**The spike also changed a decision.** The redirect target is a signed URL with an
+`Expires` roughly one hour out — the same order as `maxSeedMinutes`, so a cached
+link could expire mid-transfer on a slow seed. Rather than track expiry and
+re-sign, each part's `GET` is issued **against the `resolve` endpoint and allowed
+to redirect**, so every part gets a freshly signed URL. The cost is one extra
+302 (982 bytes) per 64 MiB part, which is nothing; the benefit is that URL expiry
+stops being a failure mode the code has to model at all. A `403` on a part is
+still retried, which covers the case where a signature expires between the
+redirect and the read.
 
 ### Status is Embedded Metric Format, read as logs and as metrics
 
@@ -183,8 +201,20 @@ loses. A tag filter (`cloud-vm-llm:seed-id`) is checked first for the common cas
 and to answer `seed ls`, but correctness under concurrency rests on the token, not
 the check.
 
-`generation` is what makes a deliberate re-seed possible inside the dedupe window,
-and stops a completed seed's token from swallowing a legitimate later attempt.
+`generation` is what makes a deliberate re-seed possible inside the dedupe window.
+**Implementation refined this**: `generation` for an ordinary start must be a
+*constant*, not a timestamp. A bucketed timestamp fails precisely where the
+mechanism is needed — two calls a second apart either side of a bucket boundary
+get different tokens and launch two instances, which is the race the token exists
+to close.
+
+A constant then raises the converse problem the risk list already named: EC2's
+24-hour window would also deduplicate a legitimately new attempt, handing back a
+terminated instance to a seed retried four hours after it failed. That is resolved
+by *detecting* rather than predicting it — `launchSeedInstance` inspects the state
+of whatever instance the call returns and, if it is not alive, retries once with a
+fresh generation. Detection is reliable; prediction is not. A deliberate re-seed
+skips straight to a fresh generation.
 
 Rejected: a DynamoDB table for seed jobs. It would be the conventional answer and
 it is genuinely unnecessary — EC2 tags say what is running, CloudWatch says what it
@@ -206,11 +236,17 @@ Pinned, with no version-probing fallback chain: if the package is absent the see
 fails at boot in seconds with a legible dnf error, which is a far better failure
 than a silent drop to an older runtime and a confusing error ten minutes in. The
 seeder additionally asserts its own minimum version at startup and records the
-version it ran on in the manifest. **Which `nodejs*` packages AL2023 publishes is
-unverified** — the LTS lines 18, 20 and 22 have all landed, so 24 is likely but not
-confirmed; a task checks it and pins 22 if 24 is not yet published. The seeder needs
-only `fetch`, web streams and `node:crypto`, all present since 18, so landing on 22
-costs nothing functional.
+version it ran on in the manifest.
+
+**Spiked and confirmed** (task 1.2, reading the AL2023 `core` aarch64 repository
+metadata directly): `nodejs24` is published at 24.11.0, alongside `nodejs22`
+(22.14.0) and `nodejs20` (20.10.0). `amazon-cloudwatch-agent` (1.247358.0) is in
+the same repository. So `nodejs24` is what gets pinned.
+
+The spike also justifies the pin rather than weakening it: the *unversioned*
+`nodejs` package in that repository is **18.12.1**. Installing `nodejs` — the
+obvious thing to write — would silently land two LTS lines behind the version the
+seeder is developed against.
 
 The seeder bundle rides as a CDK S3 asset, esbuild'd at synth time in the stack
 code — the same thing `NodejsFunction` does internally, so there is no ordering
@@ -367,14 +403,17 @@ seed, and a seed failure is often noticed the day after.
 
 ## Risks / Trade-offs
 
-- **`Range` on the Hugging Face CDN is load-bearing and unverified.** If ranged
-  requests are not honoured on the resolved link, the part-level retry design
-  collapses to whole-file streaming. Mitigated by spiking it first; the fallback
-  satisfies every spec requirement with a coarser retry granularity, so no spec
-  changes if it fails.
-- **`nodejs24` may not exist in AL2023's repositories.** A task verifies it before
-  the boot script is written; pinning 22 is a one-word change and costs nothing
-  functional.
+- ~~`Range` on the Hugging Face CDN is load-bearing and unverified.~~
+  **Resolved by spike**: `206` with correct `content-range`, on a Xet-backed repo,
+  with the sha256 available from `x-linked-etag`. The residual risk is that this is
+  undocumented behaviour of a third party's CDN rather than a contract, so it could
+  change; the disk-staging fallback is what bounds that, and a wholesale
+  withdrawal of range support would degrade every part to its fallback rather than
+  break the seed.
+- ~~`nodejs24` may not exist in AL2023's repositories.~~ **Resolved by spike**:
+  published at 24.11.0. Residual risk is that a future AL2023 release retires it
+  while the pin remains, which fails the seed at boot with a legible dnf error —
+  the intended failure mode, not a silent one.
 - **Hand-rolled byte movement replaces a well-worn library path.** Using
   `fileDownloadInfo` for metadata but moving bytes with our own ranged `fetch`
   means `huggingface_hub`'s retry and resume logic is ours to own. This is the

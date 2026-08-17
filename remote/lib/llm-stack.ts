@@ -8,10 +8,15 @@ import {
   aws_lambda_nodejs as nodejs,
   aws_logs as logs,
   aws_s3 as s3,
+  aws_s3_assets as s3assets,
   aws_secretsmanager as secretsmanager,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import { buildSync } from 'esbuild';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import { SEED_LOG_GROUP } from '../lambda/shared/seed/contract';
 import { logGroupEnvVar, type Runner, RUNNERS } from '../lambda/shared/deploy-config';
 import {
   AMI_ROLE_TAG_KEY,
@@ -29,6 +34,35 @@ export interface LlmStackProps extends cdk.StackProps {
 // a second tag (cloud-vm-llm:env), applied at launch.
 const TAG_KEY = 'cloud-vm-llm';
 const TAG_VALUE = 'endpoint';
+/** Seed instances carry the same key with this value, so the two sweeps never overlap. */
+const SEED_TAG_VALUE = 'seed';
+
+/**
+ * Bundle the seeder to a single file and hand back the directory to publish.
+ *
+ * Done at synth time, in the stack, for the same reason `NodejsFunction` does
+ * it internally: it removes any ordering hazard between a `pnpm build` step and
+ * `cdk deploy`, and ties the published bundle to the stack version that
+ * references it. The instance then fetches one file with the AWS CLI it already
+ * has, so nothing needs baking into an image.
+ */
+function bundleSeeder(): string {
+  const outdir = fs.mkdtempSync(path.join(os.tmpdir(), 'seeder-bundle-'));
+  buildSync({
+    entryPoints: [path.join(__dirname, '..', 'seeder', 'src', 'index.ts')],
+    outfile: path.join(outdir, 'seed.mjs'),
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node20',
+    // The AWS SDK is bundled rather than assumed: AL2023 ships the AWS CLI, not
+    // the JavaScript SDK, and the point of this design is that nothing is baked.
+    banner: {
+      js: "import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);",
+    },
+  });
+  return outdir;
+}
 
 /**
  * The account-level control plane — deployed once by `outfit remote bootstrap`,
@@ -117,6 +151,20 @@ export class LlmStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // Seed records: progress, outcomes, and the diagnosis of a failed seed
+    // after its instance is gone. Kept longer than the engine logs (see
+    // config.ts) because they are this account's record of what is in its
+    // weights bucket and why.
+    const seedLogGroup = new logs.LogGroup(this, 'SeedLogGroup', {
+      logGroupName: SEED_LOG_GROUP,
+      retention: cfg.seedLogRetentionDays as logs.RetentionDays,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // The seeder program, bundled at synth and published for the instance to
+    // fetch. Replaces the boot-script-as-TypeScript-string the seed used to be.
+    const seederAsset = new s3assets.Asset(this, 'SeederBundle', { path: bundleSeeder() });
+
     // Role assumed by every environment's runtime instance — SSM (for the
     // Lambdas' health/idle checks), read its environment's API-key secret,
     // and read the weights.
@@ -162,7 +210,75 @@ export class LlmStack extends cdk.Stack {
     });
     weightsBucket.grantReadWrite(seedRole, 'models/*');
     hfSecret?.grantRead(seedRole);
+    // Fetch the seeder bundle, and ship records into the seed group only.
+    seederAsset.grantRead(seedRole);
+    seedRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+        resources: [seedLogGroup.logGroupArn, `${seedLogGroup.logGroupArn}:*`],
+      }),
+    );
     const seedProfile = new iam.InstanceProfile(this, 'SeedProfile', { role: seedRole });
+
+    /** Everything a Lambda needs to launch and supervise seeds. */
+    const seedEnv = {
+      WEIGHTS_BUCKET: weightsBucket.bucketName,
+      SEED_INSTANCE_TYPE: cfg.seedInstanceType,
+      SEED_SUBNET_ID: vpc.publicSubnets[0].subnetId,
+      SEED_SECURITY_GROUP_ID: seedSg.securityGroupId,
+      SEED_INSTANCE_PROFILE_ARN: seedProfile.instanceProfileArn,
+      HF_TOKEN_SECRET_ARN: hfSecret?.secretArn ?? '',
+      SEEDER_BUCKET: seederAsset.s3BucketName,
+      SEEDER_KEY: seederAsset.s3ObjectKey,
+      // The boot script renders this into `shutdown -h +N` and the sweep reads
+      // the same value, so the two caps cannot drift apart.
+      MAX_SEED_MINUTES: String(cfg.maxSeedMinutes),
+    };
+
+    /** Launching a seed instance: run it, tag it, and pass it the seed role. */
+    const seedLaunchStatements = () => [
+      new iam.PolicyStatement({ actions: ['ec2:RunInstances'], resources: ['*'] }),
+      new iam.PolicyStatement({
+        actions: ['ec2:CreateTags'],
+        resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
+        conditions: { StringEquals: { 'ec2:CreateAction': 'RunInstances' } },
+      }),
+      // Only the seed role, and only to EC2, so this cannot be used to hand a
+      // caller a more privileged role.
+      new iam.PolicyStatement({
+        actions: ['iam:PassRole'],
+        resources: [seedRole.roleArn],
+        conditions: { StringEquals: { 'iam:PassedToService': 'ec2.amazonaws.com' } },
+      }),
+      // The stock AL2023 image id lives in an AWS-owned public parameter.
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameter'],
+        resources: [
+          `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}::parameter/aws/service/ami-amazon-linux-latest/*`,
+        ],
+      }),
+    ];
+
+    /** Reading and writing seed records. */
+    const seedLogStatements = () => [
+      new iam.PolicyStatement({
+        actions: [
+          'logs:DescribeLogStreams',
+          'logs:GetLogEvents',
+          'logs:CreateLogStream',
+          'logs:PutLogEvents',
+        ],
+        resources: [seedLogGroup.logGroupArn, `${seedLogGroup.logGroupArn}:*`],
+      }),
+    ];
+
+    /** Terminating a seed — tag-scoped, so these credentials cannot reach an inference box. */
+    const seedTerminateStatement = () =>
+      new iam.PolicyStatement({
+        actions: ['ec2:TerminateInstances'],
+        resources: ['*'],
+        conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: SEED_TAG_VALUE } },
+      });
 
     const runShellScriptDocArn = `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}::document/AWS-RunShellScript`;
 
@@ -292,6 +408,9 @@ export class LlmStack extends cdk.Stack {
         IDLE_THRESHOLD_MINUTES: String(cfg.idleThresholdMinutes),
         GRACE_PERIOD_MINUTES: String(cfg.gracePeriodMinutes),
         MAX_RUNTIME_MINUTES: String(cfg.maxRuntimeMinutes),
+        // The sweep's seed pass, layer three of the termination guarantee.
+        MAX_SEED_MINUTES: String(cfg.maxSeedMinutes),
+        SEED_STALL_MINUTES: String(cfg.seedStallMinutes),
       },
     });
     stopFn.addToRolePolicy(
@@ -304,6 +423,9 @@ export class LlmStack extends cdk.Stack {
     stopFn.addToRolePolicy(describeStatement);
     sendCommandStatements().forEach((s) => stopFn.addToRolePolicy(s));
     stopFn.addToRolePolicy(readEnvParamsStatement);
+    // The seed pass: reap stalled or over-age seeds and record why.
+    stopFn.addToRolePolicy(seedTerminateStatement());
+    seedLogStatements().forEach((s) => stopFn.addToRolePolicy(s));
 
     // The control plane `outfit remote deploy` calls: it creates the named
     // environment's resources (EIP, security group, API key, SSM state) if
@@ -322,16 +444,9 @@ export class LlmStack extends cdk.Stack {
         ENGINE_PORT: String(cfg.enginePort),
         VPC_ID: vpc.vpcId,
         // Seeding: the Lambda launches the disposable download instance itself
-        // when the posted config names weights that are not in S3 yet.
-        WEIGHTS_BUCKET: weightsBucket.bucketName,
-        SEED_INSTANCE_TYPE: cfg.builderInstanceType,
-        SEED_SUBNET_ID: vpc.publicSubnets[0].subnetId,
-        SEED_SECURITY_GROUP_ID: seedSg.securityGroupId,
-        SEED_INSTANCE_PROFILE_ARN: seedProfile.instanceProfileArn,
-        HF_TOKEN_SECRET_ARN: hfSecret?.secretArn ?? '',
-        AMI_ROLE_TAG_KEY,
-        AMI_ROLE_TAG_VALUE,
-        AMI_RUNNER_TAG_KEY,
+        // when the posted config names weights that are not in S3 yet, and
+        // returns the seed id so the caller can follow it.
+        ...seedEnv,
       },
     });
     deployFn.addToRolePolicy(envParamsStatement);
@@ -344,33 +459,51 @@ export class LlmStack extends cdk.Stack {
       new iam.PolicyStatement({
         actions: [
           'ec2:DescribeImages',
+          'ec2:DescribeInstances',
           'ec2:DescribeAddresses',
           'ec2:DescribeSecurityGroups',
-          'ec2:RunInstances',
           'ec2:AllocateAddress',
           'ec2:CreateSecurityGroup',
           'ec2:AuthorizeSecurityGroupIngress',
           'ec2:RevokeSecurityGroupIngress',
-          'ec2:CreateTags',
         ],
         resources: ['*'],
       }),
     );
+    seedLaunchStatements().forEach((s) => deployFn.addToRolePolicy(s));
     deployFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['secretsmanager:CreateSecret', 'secretsmanager:DescribeSecret'],
         resources: [envSecretArn],
       }),
     );
-    // Only the seed role, and only to EC2 — so this cannot be used to hand the
-    // Lambda's caller a more privileged role.
-    deployFn.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['iam:PassRole'],
-        resources: [seedRole.roleArn],
-        conditions: { StringEquals: { 'iam:PassedToService': 'ec2.amazonaws.com' } },
-      }),
+
+    // The seed control surface: start, status, list and stop. Separate from
+    // DeployFn because a progress poll should not re-enter a function whose job
+    // is to mutate environment state, and because seeds are account-wide —
+    // nothing here takes an environment.
+    const seedFn = new nodejs.NodejsFunction(this, 'SeedFn', {
+      description: 'Starts, reports on, lists and stops model weight seeds',
+      entry: path.join(__dirname, '..', 'lambda', 'seed', 'index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 256,
+      environment: {
+        TAG_KEY,
+        ...seedEnv,
+        MAX_CONCURRENT_SEEDS: String(cfg.maxConcurrentSeeds),
+      },
+    });
+    seedLaunchStatements().forEach((s) => seedFn.addToRolePolicy(s));
+    seedLogStatements().forEach((s) => seedFn.addToRolePolicy(s));
+    seedFn.addToRolePolicy(seedTerminateStatement());
+    seedFn.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['ec2:DescribeInstances'], resources: ['*'] }),
     );
+    // Read-only on the weights: only to check whether the manifest is there.
+    weightsBucket.grantRead(seedFn, 'models/*');
 
     const statsFn = new nodejs.NodejsFunction(this, 'StatsFn', {
       description: 'Returns instance metrics: token usage, GPU, CPU, RAM',
@@ -399,6 +532,7 @@ export class LlmStack extends cdk.Stack {
     const stopUrl = stopFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
     const deployUrl = deployFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
     const statsUrl = statsFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
+    const seedUrl = seedFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
     // Env Lambda — returns the API key and base URL for a running endpoint.
     // Minimal perms: read the environment's EIP and API key; no EC2 write.
@@ -446,12 +580,12 @@ export class LlmStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'DeployUrl', { value: deployUrl.url });
     new cdk.CfnOutput(this, 'StatsUrl', { value: statsUrl.url });
     new cdk.CfnOutput(this, 'EnvUrl', { value: envUrl.url });
+    new cdk.CfnOutput(this, 'SeedUrl', { value: seedUrl.url });
     new cdk.CfnOutput(this, 'Region', { value: this.region });
     new cdk.CfnOutput(this, 'WeightsBucket', { value: weightsBucket.bucketName });
     new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
-    // Consumed by `pnpm seed-model` to launch the disposable seed instance.
     new cdk.CfnOutput(this, 'SeedInstanceProfileArn', { value: seedProfile.instanceProfileArn });
-    new cdk.CfnOutput(this, 'SeedInstanceType', { value: cfg.builderInstanceType });
+    new cdk.CfnOutput(this, 'SeedInstanceType', { value: cfg.seedInstanceType });
     new cdk.CfnOutput(this, 'SeedSubnetId', { value: vpc.publicSubnets[0].subnetId });
     new cdk.CfnOutput(this, 'SeedSecurityGroupId', { value: seedSg.securityGroupId });
     new cdk.CfnOutput(this, 'HfTokenSecretArn', { value: hfSecret?.secretArn ?? '' });
@@ -459,7 +593,7 @@ export class LlmStack extends cdk.Stack {
     // environment's address is its own EIP, allocated at `outfit remote
     // deploy` and returned by it.
     new cdk.CfnOutput(this, 'OutfitRemoteConfig', {
-      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","env_url":"${envUrl.url}","region":"${this.region}"}`,
+      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","env_url":"${envUrl.url}","seed_url":"${seedUrl.url}","region":"${this.region}"}`,
     });
   }
 }

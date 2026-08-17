@@ -141,10 +141,10 @@ describe('LlmStack (control plane)', () => {
     expect(groups[0].Properties.SecurityGroupIngress).toBeUndefined();
   });
 
-  it('creates the start, stop, deploy, stats and env Lambdas with IAM-authenticated function URLs', () => {
-    template.resourceCountIs('AWS::Lambda::Function', 5);
+  it('creates the start, stop, deploy, stats, env and seed Lambdas with IAM-authenticated function URLs', () => {
+    template.resourceCountIs('AWS::Lambda::Function', 6);
     const urls = template.findResources('AWS::Lambda::Url');
-    expect(Object.keys(urls)).toHaveLength(5);
+    expect(Object.keys(urls)).toHaveLength(6);
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).toBe('AWS_IAM');
     }
@@ -164,8 +164,11 @@ describe('LlmStack (control plane)', () => {
       'SEED_SUBNET_ID',
       'SEED_SECURITY_GROUP_ID',
       'SEED_INSTANCE_PROFILE_ARN',
-      'AMI_ROLE_TAG_KEY',
-      'AMI_RUNNER_TAG_KEY',
+      // The seeder bundle and the shared lifetime cap replace the AMI tag
+      // lookup: the seed runs on a stock image, so there is no AMI to find.
+      'SEEDER_BUCKET',
+      'SEEDER_KEY',
+      'MAX_SEED_MINUTES',
     ]) {
       expect(env).toHaveProperty(key);
     }
@@ -260,18 +263,73 @@ describe('LlmStack (control plane)', () => {
     sharedTemplate({ hfToken: 'hf_abc' }).resourceCountIs('AWS::SecretsManager::Secret', 1);
   });
 
-  it('pre-creates per-engine and boot log groups with the configured retention', () => {
-    template.resourceCountIs('AWS::Logs::LogGroup', 3);
+  it('pre-creates per-engine, boot and seed log groups with the configured retention', () => {
+    template.resourceCountIs('AWS::Logs::LogGroup', 4);
     for (const name of ['/cloud-vm-llm/llamacpp', '/cloud-vm-llm/vllm', '/cloud-vm-llm/boot']) {
       template.hasResourceProperties('AWS::Logs::LogGroup', {
         LogGroupName: name,
         RetentionInDays: 1,
       });
     }
+    // Seed records are kept longer than engine logs: they are the account's
+    // record of what is in its weights bucket, and a failure is often noticed
+    // the following day.
+    template.hasResourceProperties('AWS::Logs::LogGroup', {
+      LogGroupName: '/cloud-vm-llm/seed',
+      RetentionInDays: 3,
+    });
     // Ephemeral logs — the groups are destroyed with the stack, not retained.
     for (const g of Object.values(template.findResources('AWS::Logs::LogGroup'))) {
       expect(g.DeletionPolicy).toBe('Delete');
     }
+  });
+
+  it('gives the seed Lambda its own function, cap and concurrency bound', () => {
+    const fns = template.findResources('AWS::Lambda::Function');
+    const seed = Object.values(fns).find((f) =>
+      String(f.Properties.Description).includes('model weight seeds'),
+    );
+    expect(seed).toBeDefined();
+    const env = seed!.Properties.Environment.Variables;
+    expect(env.MAX_CONCURRENT_SEEDS).toBe('3');
+    expect(env.MAX_SEED_MINUTES).toBe('60');
+    expect(env.SEED_INSTANCE_TYPE).toBe('c7g.large');
+    // Seeds are account-wide, so the seed Lambda takes no environment.
+    expect(env).not.toHaveProperty('ENVIRONMENT');
+  });
+
+  it('gives the sweep the same lifetime cap the boot script is rendered with', () => {
+    // Two layers of the termination guarantee read one config value, so they
+    // cannot drift apart.
+    const fns = template.findResources('AWS::Lambda::Function');
+    const stop = Object.values(fns).find((f) =>
+      String(f.Properties.Description).includes('Terminates environment instances'),
+    );
+    expect(stop!.Properties.Environment.Variables.MAX_SEED_MINUTES).toBe('60');
+    expect(stop!.Properties.Environment.Variables.SEED_STALL_MINUTES).toBe('10');
+  });
+
+  it('publishes the seeder bundle so the instance needs no baked image', () => {
+    // The seed runs on a stock AL2023 image; the program it runs is an asset.
+    const seedFnRole = Object.values(template.findResources('AWS::IAM::Policy')).filter((p) =>
+      JSON.stringify(p.Properties.PolicyDocument).includes('ami-amazon-linux-latest'),
+    );
+    expect(seedFnRole.length).toBeGreaterThan(0);
+  });
+
+  it('tag-scopes seed termination separately from endpoint termination', () => {
+    // The two sweeps act on disjoint populations; neither Lambda's credentials
+    // can terminate the other's instances.
+    const statements = allPolicyStatements(template).filter((s) =>
+      [s.Action].flat().includes('ec2:TerminateInstances'),
+    );
+    const tagValues = statements.map(
+      (s) => s.Condition?.StringEquals?.['ec2:ResourceTag/cloud-vm-llm'],
+    );
+    expect(tagValues).toContain('endpoint');
+    expect(tagValues).toContain('seed');
+    // Never unscoped.
+    expect(tagValues.every((v) => v === 'endpoint' || v === 'seed')).toBe(true);
   });
 
   it('honours a logRetentionDays override', () => {

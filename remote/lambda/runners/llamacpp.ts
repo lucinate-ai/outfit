@@ -13,26 +13,21 @@ export const llamacpp: RunnerSpec = {
   // llama-server is pointed at the single synced GGUF.
   syncedModelPath,
 
-  weightsSentinel: (weightsPrefix) => `${weightsPrefix}model.gguf`,
-
-  // One GGUF (MTP is embedded in it), normalised to model.gguf so the runtime
-  // need not guess the filename; mmproj/projector files are excluded.
-  seedDownload: (cfg) =>
-    `export QUANT='${cfg.quant}'
-mkdir -p /tmp/dl
-/opt/llm/venv/bin/python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['MODEL_ID'], allow_patterns=['*'+os.environ['QUANT']+'*'], local_dir='/tmp/dl', token=(os.environ.get('HF_TOKEN') or None))"
-mapfile -t GGUFS < <(find /tmp/dl -type f -name '*.gguf' ! -iname '*mmproj*' | sort)
-test "\${#GGUFS[@]}" -ge 1
-cp "\${GGUFS[0]}" /opt/llm/model/model.gguf
-[ "\${#GGUFS[@]}" -gt 1 ] && echo "WARNING: \${#GGUFS[@]} gguf files for $QUANT; used the first (split quant not handled)" >&2 || true
-`,
+  // One GGUF (MTP is embedded in it), stored as model.gguf so the runtime need
+  // not guess the filename; mmproj/projector companions are excluded.
+  //
+  // expectSingle makes an ambiguous match FAIL the seed. The old boot script
+  // warned and took the first of N, which silently shipped one shard of a split
+  // quant as though it were the whole model.
+  seedSelection: (cfg) => ({
+    include: [`*${cfg.quant}*.gguf`],
+    exclude: ['*mmproj*', '*projector*'],
+    expectSingle: 'model.gguf',
+  }),
 
   daemonBoot: (cfg, modelDir, port) => `mkdir -p /etc/llm
 printf '%s' "$API_KEY" >/etc/llm/api-key
 chmod 600 /etc/llm/api-key
 
 ${daemonBoot(daemonDeployConfig(cfg, syncedModelPath(modelDir), port, ['--api-key-file', '/etc/llm/api-key']), '')}`,
-
-  // The llama.cpp AMI has no Python venv; the seed runs elsewhere.
-  seedTooling: false,
 };

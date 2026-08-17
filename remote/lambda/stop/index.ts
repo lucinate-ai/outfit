@@ -14,12 +14,17 @@ import { deployConfigParam, ENV_TAG_KEY, environmentFrom } from '../shared/envir
 import { DAEMON_STATUS_CMD, parseDaemonStatus } from '../shared/daemon';
 import { decideIdle, idleFromDaemonStatus, type MetricsResult } from '../shared/idle';
 import { jsonResponse } from '../shared/http';
+import { SEED_ID_TAG_KEY, SEED_TAG_VALUE } from '../shared/seed/identity';
+import { decideSeedReap } from '../shared/seed/reap';
+import { latestStream, writeTerminalRecord } from '../shared/seed/status';
 
 const TAG_KEY = requireEnv('TAG_KEY');
 const TAG_VALUE = requireEnv('TAG_VALUE');
 const IDLE_THRESHOLD_MINUTES = Number(requireEnv('IDLE_THRESHOLD_MINUTES'));
 const GRACE_PERIOD_MINUTES = Number(requireEnv('GRACE_PERIOD_MINUTES'));
 const MAX_RUNTIME_MINUTES = Number(requireEnv('MAX_RUNTIME_MINUTES'));
+const MAX_SEED_MINUTES = Number(requireEnv('MAX_SEED_MINUTES'));
+const SEED_STALL_MINUTES = Number(requireEnv('SEED_STALL_MINUTES'));
 
 
 type StopEvent = ScheduledEvent | LambdaFunctionURLEvent;
@@ -30,7 +35,12 @@ export function isScheduledEvent(event: StopEvent): event is ScheduledEvent {
 
 export async function handler(event: StopEvent): Promise<LambdaFunctionURLResult | void> {
   if (isScheduledEvent(event)) {
+    // Two passes over two disjoint populations, keyed on different tag values
+    // and judged by different signals. A seed runs no outfit daemon, so it must
+    // never reach the daemon scrape below; an inference instance has no seed
+    // records, so it must never be judged by their absence.
     await idleSweep();
+    await seedSweep();
     return;
   }
   return manualStop(event);
@@ -136,6 +146,49 @@ async function idleCheck(instance: InstanceInfo): Promise<void> {
 
   if (decision.action === 'stop') {
     await terminateInstance(instance.instanceId);
+  }
+}
+
+/**
+ * The seed pass. Disjoint from the idle sweep by tag value, so the two never
+ * see each other's instances.
+ */
+export async function seedSweep(): Promise<void> {
+  const instances = await findManagedInstances(TAG_KEY, SEED_TAG_VALUE);
+  if (instances.length === 0) {
+    console.log(JSON.stringify({ mode: 'seed', action: 'noop', state: 'none' }));
+    return;
+  }
+  for (const instance of instances) {
+    const seedId = instance.tags?.[SEED_ID_TAG_KEY] ?? '';
+    try {
+      // Liveness comes from the seed's own records — one DescribeLogStreams,
+      // which returns the last event timestamp without reading any log data.
+      const stream = seedId ? await latestStream(seedId) : null;
+      const decision = decideSeedReap({
+        now: new Date(),
+        launchTime: instance.launchTime,
+        lastReportAt: stream?.lastEventTimestamp
+          ? new Date(stream.lastEventTimestamp)
+          : undefined,
+        maxSeedMinutes: MAX_SEED_MINUTES,
+        stallMinutes: SEED_STALL_MINUTES,
+        retainUntil: instance.retainUntil,
+      });
+      console.log(
+        JSON.stringify({ mode: 'seed', seedId, decision: decision.action, reason: decision.reason }),
+      );
+      if (decision.action === 'reap') {
+        await terminateInstance(instance.instanceId);
+        // Say the last word on the seed's behalf. Without this, status would
+        // keep reporting whatever the seed was doing when it stopped talking.
+        if (seedId) {
+          await writeTerminalRecord(seedId, instance.instanceId, 'failed', decision.reason);
+        }
+      }
+    } catch (err) {
+      console.log(JSON.stringify({ mode: 'seed', seedId, error: errorName(err) }));
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 /**
  * vLLM's runner spec: whole-checkpoint weights served from the model
- * directory, the API key delivered by env file (wired into the daemon unit
- * via EnvironmentFile), and the venv that makes its AMI the seed's host.
+ * directory, and the API key delivered by env file (wired into the daemon unit
+ * via EnvironmentFile).
  */
 
 import { daemonBoot, daemonDeployConfig } from './daemon-boot';
@@ -13,14 +13,9 @@ export const vllm: RunnerSpec = {
   // vLLM serves the whole synced checkpoint directory.
   syncedModelPath,
 
-  // config.json is part of every checkpoint and synced last-ish; its presence
-  // under the prefix marks a complete seed.
-  weightsSentinel: (weightsPrefix) => `${weightsPrefix}config.json`,
-
-  // The whole safetensors checkpoint, straight into the model dir.
-  seedDownload: () =>
-    `/opt/llm/venv/bin/python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['MODEL_ID'], local_dir='/opt/llm/model', token=(os.environ.get('HF_TOKEN') or None))"
-`,
+  // The whole checkpoint. vLLM loads config, tokeniser and weights from the
+  // directory, so there is nothing to filter out.
+  seedSelection: () => ({ include: ['*'] }),
 
   daemonBoot: (cfg, modelDir, port) => `# Python dev headers: Triton JIT-compiles a CUDA stub against Python.h on the
 # first model load (Qwen3.6's linear-attention path); baked into recipe 2.0.3+,
@@ -38,7 +33,4 @@ VLLM_USE_FLASHINFER_SAMPLER=0
 ENVFILE
 
 ${daemonBoot(daemonDeployConfig(cfg, syncedModelPath(modelDir), port, ['--gpu-memory-utilization', '0.92']), 'EnvironmentFile=/etc/vllm.env\n')}`,
-
-  // The vLLM AMI carries the Python venv with huggingface_hub.
-  seedTooling: true,
 };

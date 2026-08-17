@@ -11,24 +11,12 @@ import {
   findEnvSecurityGroup,
 } from '../shared/environments';
 import { jsonResponse } from '../shared/http';
-import { launchSeedInstance, weightsPresent, type SeedEnv } from '../shared/seed';
+import { weightsPresent } from '../shared/seed';
+import { buildSeedJob, launchSeedInstance, seedInfraFromEnv } from '../shared/seed/launch';
 
 const WEIGHTS_BUCKET = requireEnv('WEIGHTS_BUCKET');
 const VPC_ID = requireEnv('VPC_ID');
 const PORT = Number(requireEnv('ENGINE_PORT'));
-
-const SEED_ENV: SeedEnv = {
-  region: requireEnv('AWS_REGION'),
-  bucket: WEIGHTS_BUCKET,
-  instanceType: requireEnv('SEED_INSTANCE_TYPE'),
-  subnetId: requireEnv('SEED_SUBNET_ID'),
-  securityGroupId: requireEnv('SEED_SECURITY_GROUP_ID'),
-  instanceProfileArn: requireEnv('SEED_INSTANCE_PROFILE_ARN'),
-  hfSecretArn: process.env.HF_TOKEN_SECRET_ARN ?? '',
-  amiRoleTagKey: requireEnv('AMI_ROLE_TAG_KEY'),
-  amiRoleTagValue: requireEnv('AMI_ROLE_TAG_VALUE'),
-  amiRunnerTagKey: requireEnv('AMI_RUNNER_TAG_KEY'),
-};
 
 // Matches the Go client's validation: an IPv4 CIDR like 203.0.113.7/32.
 const CIDR = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/;
@@ -94,10 +82,15 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
   // even be launched, the environment (and any current working config) is left
   // alone rather than half-created.
   let seeding = false;
-  let seedInstanceId: string | undefined;
+  let seedId: string | undefined;
   try {
     if (!(await weightsPresent(WEIGHTS_BUCKET, config))) {
-      seedInstanceId = await launchSeedInstance(config, SEED_ENV);
+      const infra = seedInfraFromEnv();
+      // The seed id, not the instance id: the instance is an implementation
+      // detail that changes if the seed is relaunched, while the id is stable
+      // and is what `outfit remote seed status` takes.
+      const launched = await launchSeedInstance(buildSeedJob(config, infra, ''), infra);
+      seedId = launched.seedId;
       seeding = true;
     }
   } catch (err) {
@@ -139,7 +132,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
       quant: config.quant,
       weightsPrefix: config.weightsPrefix,
       seeding,
-      seedInstanceId,
+      seedId,
     }),
   );
   return jsonResponse(200, {
@@ -151,10 +144,12 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     contextSize: config.contextSize,
     weightsPrefix: config.weightsPrefix,
     seeding,
-    ...(seedInstanceId ? { seedInstanceId } : {}),
-    // A wake before the seed finishes would sync an incomplete prefix.
+    ...(seedId ? { seedId } : {}),
+    // A wake before the seed finishes would sync an incomplete prefix, so the
+    // reply names the command that says when it is done rather than quoting an
+    // estimate and leaving the operator to guess.
     ...(seeding
-      ? { message: 'seeding the weights (~15-20 min); wait for it to finish before starting' }
+      ? { message: `seeding the weights — follow it with \`outfit remote seed status ${seedId}\`` }
       : {}),
   });
 }

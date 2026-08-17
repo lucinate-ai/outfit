@@ -8,6 +8,7 @@
  */
 
 import type { DeployConfig } from '../shared/deploy-config';
+import type { SeedSelection } from '../shared/seed/contract';
 
 export interface RunnerSpec {
   /**
@@ -17,28 +18,19 @@ export interface RunnerSpec {
    */
   syncedModelPath(modelDir: string): string;
   /**
-   * The S3 key (under the weights prefix) whose presence marks a complete
-   * seed. A bare list-under-the-prefix would also match the debris of a
-   * failed or in-flight seed, so a per-runner sentinel is checked instead —
-   * it is written last, by the seed's S3 sync.
+   * Which of the model repository's files this runner needs, as a declarative
+   * selection the seeder applies. Deliberately not a boot-script fragment:
+   * the seeder is runner-agnostic, so adding a runner never means writing
+   * shell, and the selection is unit-testable without rendering a script.
+   *
+   * Completeness of a seed is NOT a per-runner question — it is the manifest
+   * (`_seed.json`), written last by the seeder — so there is no sentinel here.
    */
-  weightsSentinel(weightsPrefix: string): string;
-  /**
-   * Seed boot-script fragment that downloads this runner's weights from
-   * Hugging Face into /opt/llm/model, using the $MODEL_ID/$HF_TOKEN
-   * environment the seed header exports.
-   */
-  seedDownload(cfg: DeployConfig): string;
+  seedSelection(cfg: DeployConfig): SeedSelection;
   /**
    * Inference boot-script fragment: the runner's key delivery (env file or
    * key file), then the shared daemon boot that hands the engine to
    * `outfit daemon`.
    */
   daemonBoot(cfg: DeployConfig, modelDir: string, port: number): string;
-  /**
-   * Whether this runner's AMI carries the Python venv (huggingface_hub) the
-   * seed job runs on. The seed launches the first runner that does,
-   * whatever runner the weights are for.
-   */
-  seedTooling: boolean;
 }

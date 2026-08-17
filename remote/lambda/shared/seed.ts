@@ -1,110 +1,61 @@
 /**
- * Seeding the weights into S3. The deploy Lambda calls this when a config names
- * a model whose weights are not in the bucket yet: a disposable instance
- * downloads them from Hugging Face, syncs them to S3, then terminates itself.
+ * Whether a model's weights are already in the bucket.
  *
- * The seed runs on the AMI of the first runner whose spec has seedTooling —
- * the image carrying a Python venv with huggingface_hub — regardless of the
- * target runner; the job only needs that plus the AWS CLI.
+ * Presence is judged by the manifest the seeder writes as its final step, once
+ * every file has transferred and verified. It replaces the per-runner sentinel
+ * this module used to check — a weights file assumed to be written last by
+ * `aws s3 sync`. That was an assumption about sync ordering rather than a
+ * guarantee, so a truncated sync that happened to land the sentinel read as
+ * complete for ever; and it said nothing about *what* was in the prefix.
+ *
+ * Launching a seed lives in seed/launch.ts; this module is only the question
+ * the deploy path asks before deciding whether to launch one.
  */
 
-import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { runnerSpec } from '../runners';
-import { errorName, findLatestAmi, runInstance } from './aws';
-import { type DeployConfig, type Runner, RUNNERS } from './deploy-config';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { errorName } from './aws';
+import type { DeployConfig } from './deploy-config';
+import { manifestKey, type SeedManifest } from './seed/contract';
 
 const s3 = new S3Client({});
 
-/**
- * The file whose presence means "these weights are complete" — the runner
- * spec's sentinel, written last by the S3 sync.
- */
-function sentinelKey(runner: Runner, weightsPrefix: string): string {
-  return runnerSpec(runner).weightsSentinel(weightsPrefix);
+function isMissing(err: unknown): boolean {
+  const name = errorName(err);
+  return name === 'NoSuchKey' || name === 'NotFound' || name === '404';
 }
 
-/** Whether the weights for this config are already seeded. */
-export async function weightsPresent(bucket: string, cfg: DeployConfig): Promise<boolean> {
-  const Key = sentinelKey(cfg.runner, cfg.weightsPrefix);
+/**
+ * Read a prefix's manifest, or null when there is none. A manifest that will
+ * not parse is treated as absent rather than as an error: a half-written or
+ * hand-edited object should cause a re-seed, not wedge every deploy.
+ */
+export async function readManifest(
+  bucket: string,
+  weightsPrefix: string,
+): Promise<SeedManifest | null> {
   try {
-    await s3.send(new HeadObjectCommand({ Bucket: bucket, Key }));
-    return true;
+    const result = await s3.send(
+      new GetObjectCommand({ Bucket: bucket, Key: manifestKey(weightsPrefix) }),
+    );
+    const body = await result.Body?.transformToString();
+    if (!body) {
+      return null;
+    }
+    const parsed = JSON.parse(body) as SeedManifest;
+    return parsed.modelId && Array.isArray(parsed.files) ? parsed : null;
   } catch (err) {
-    const name = errorName(err);
-    if (name === 'NotFound' || name === 'NoSuchKey' || name === '404') {
-      return false;
+    if (isMissing(err)) {
+      return null;
     }
     throw err;
   }
 }
 
-export interface SeedEnv {
-  region: string;
-  bucket: string;
-  instanceType: string;
-  subnetId: string;
-  securityGroupId: string;
-  instanceProfileArn: string;
-  /** Empty when no Hugging Face token is configured (public repos only). */
-  hfSecretArn: string;
-  amiRoleTagKey: string;
-  amiRoleTagValue: string;
-  amiRunnerTagKey: string;
-}
-
 /**
- * The seed instance's user-data. Kept pure so it can be unit tested: shell
- * quoting bugs here surface as a silent seed failure 20 minutes later.
+ * Whether the weights for this config are seeded. Weights files present without
+ * a manifest count as absent: nothing recorded that they are complete, or which
+ * revision they came from.
  */
-export function buildSeedUserData(cfg: DeployConfig, env: SeedEnv): string {
-  const header = `#!/bin/bash
-set -euxo pipefail
-HF_TOKEN=""
-${
-  env.hfSecretArn
-    ? `HF_TOKEN=$(aws secretsmanager get-secret-value --secret-id '${env.hfSecretArn}' --region '${env.region}' --query SecretString --output text)`
-    : ''
-}
-export HF_TOKEN
-export MODEL_ID='${cfg.modelId}'
-mkdir -p /opt/llm/model
-`;
-
-  // How the weights are fetched is the runner's business — one GGUF vs a
-  // whole checkpoint — so the download fragment comes from its spec.
-  const download = runnerSpec(cfg.runner).seedDownload(cfg);
-
-  // The sync is last, so the sentinel only appears once the download succeeded
-  // (set -e aborts before it otherwise) and the box shuts down either way.
-  return `${header}${download}aws s3 sync /opt/llm/model/ 's3://${env.bucket}/${cfg.weightsPrefix}' --region '${env.region}'
-shutdown -h now
-`;
-}
-
-/**
- * Launch the seed instance. Returns its id, or throws if no AMI is baked yet.
- */
-export async function launchSeedInstance(cfg: DeployConfig, env: SeedEnv): Promise<string> {
-  const roleFilter = { Name: `tag:${env.amiRoleTagKey}`, Values: [env.amiRoleTagValue] };
-  // Prefer an AMI whose runner carries the seed tooling (the Python venv);
-  // fall back to any runtime AMI for images baked before the runner tag
-  // existed.
-  const seedRunner = RUNNERS.find((r) => runnerSpec(r).seedTooling);
-  const imageId =
-    (seedRunner
-      ? await findLatestAmi([roleFilter, { Name: `tag:${env.amiRunnerTagKey}`, Values: [seedRunner] }])
-      : null) ?? (await findLatestAmi([roleFilter]));
-  if (!imageId) {
-    throw new Error(`no baked runtime AMI found — run \`pnpm bake ${seedRunner ?? RUNNERS[0]}\` first`);
-  }
-  return runInstance({
-    imageId,
-    instanceType: env.instanceType,
-    subnetId: env.subnetId,
-    securityGroupId: env.securityGroupId,
-    instanceProfileArn: env.instanceProfileArn,
-    userData: buildSeedUserData(cfg, env),
-    tags: { Name: 'cloud-vm-llm-seed' },
-    terminateOnShutdown: true,
-  });
+export async function weightsPresent(bucket: string, cfg: DeployConfig): Promise<boolean> {
+  return (await readManifest(bucket, cfg.weightsPrefix)) !== null;
 }

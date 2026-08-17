@@ -67,6 +67,18 @@ export interface InstanceInfo {
   retainUntil?: Date;
   /** The environment the instance belongs to (its cloud-vm-llm:env tag). */
   environment?: string;
+  /** All of the instance's tags, for callers that key on their own (e.g. seeds). */
+  tags?: Record<string, string>;
+}
+
+/** Read one SSM parameter's value — used for AWS's public AMI parameters. */
+export async function getParameterValue(name: string): Promise<string> {
+  const result = await ssm.send(new GetParameterCommand({ Name: name }));
+  const value = result.Parameter?.Value;
+  if (!value) {
+    throw new Error(`SSM parameter ${name} has no value`);
+  }
+  return value;
 }
 
 /** Describe a specific instance by id (used to poll a just-launched one). */
@@ -115,6 +127,11 @@ export async function findManagedInstances(
       launchTime: instance.LaunchTime,
       retainUntil: parseRetainUntil(instance.Tags),
       environment: instance.Tags?.find((t) => t.Key === 'cloud-vm-llm:env')?.Value,
+      tags: Object.fromEntries(
+        (instance.Tags ?? [])
+          .filter((t): t is { Key: string; Value: string } => !!t.Key && t.Value !== undefined)
+          .map((t) => [t.Key, t.Value]),
+      ),
     }));
 }
 
@@ -158,6 +175,13 @@ export interface LaunchSpec {
    * seed instance disposes of itself once the weights are in S3.
    */
   terminateOnShutdown?: boolean;
+  /**
+   * Override the idempotency token. The seed path passes a token derived from
+   * the seed's identity so that two concurrent starts for the same weights
+   * converge on one instance; everything else wants the random default, which
+   * only guards against a retried call launching twice.
+   */
+  clientToken?: string;
 }
 
 /**
@@ -176,7 +200,7 @@ export async function runInstance(spec: LaunchSpec): Promise<string> {
     // launched (but whose response was lost) launches a *second* instance — or
     // hits the vCPU limit the first one just consumed. The token makes a retry
     // return the same instance instead.
-    ClientToken: randomUUID(),
+    ClientToken: spec.clientToken ?? randomUUID(),
     SubnetId: spec.subnetId,
     SecurityGroupIds: [spec.securityGroupId],
     IamInstanceProfile: { Arn: spec.instanceProfileArn },
