@@ -234,7 +234,14 @@ different `REMOTE` gets its own environment, side by side.
 outfit remote deploy --dry-run       # see what would be sent
 outfit remote deploy path/to/Outfit  # deploy a different one
 outfit remote deploy --overwrite     # redeploy over the existing environment
+outfit remote deploy --reseed        # re-fetch weights already in S3
 ```
+
+Deploy fetches the weights only when they are not in S3 already. `--reseed`
+fetches them regardless — for a repo whose files changed under the same name,
+or a seed you want to run again. It starts the same ~20-minute seed instance a
+first deploy does, and re-downloads the weights, so it is opt-in rather than
+something to reach for by habit.
 
 ## Flags
 
@@ -242,6 +249,7 @@ outfit remote deploy --overwrite     # redeploy over the existing environment
 | ---- | ------- |
 | `--timeout` | How long `start` waits for the endpoint (default 15m) |
 | `-n`, `--dry-run` | `deploy` only: print what would be sent, without sending it |
+| `--reseed` | `deploy` only: re-fetch the weights even if they are already in S3 |
 
 `logs` has its own set — see [reading the logs](#reading-the-logs).
 

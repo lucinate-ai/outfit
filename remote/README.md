@@ -161,7 +161,7 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `instanceType` | `g6e.xlarge` | Runtime GPU type, 1× L40S 48 GB, ~$1.86/hr |
 | `builderInstanceType` | `m5.xlarge` | Cheap non-GPU type used to bake the AMI and to seed |
 | `imageVolumeGb` | `80` | AMI root — fits the OS + engine + the model synced at boot |
-| `llamacppRelease` | `b10107` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
+| `llamacppRelease` | `b10435` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
 | `vllmVersion` | `0.26.0` | vLLM version installed into that AMI's venv (`uv pip install`) |
 | `nvidiaDriverPackage` | `nvidia-driver-570-server-open` | Driver installed in both AMIs |
 | `idleThresholdMinutes` | `15` | Terminate after this long without requests |
@@ -203,6 +203,30 @@ Cutting back to vLLM means an Outfit with `PROVIDER vllm` and the FP8 repo as
 its `MODEL` — both AMIs stay baked, so it is a deploy, not a rebuild. The start
 Lambda launches the AMI matching the engine the environment's deploy-config
 names, so nothing else has to agree.
+
+#### Companion weights
+
+A model published with extra files beside its weights — a speculative-decoding
+drafter, a perception encoder — can carry them too. The deploy-config names
+them by **role**, and `outfit remote deploy` fills that in from the preset keys
+that already drive a local serve:
+
+| Preset key | Role | Synced to | Engine flag |
+|---|---|---|---|
+| `spec-draft-model` (`md`) | `draft` | `draft.gguf` | `--spec-draft-model` |
+| `mmproj` (`mm`) | `mmproj` | `mmproj.gguf` | `--mmproj` |
+
+Only the **filename** travels: a companion ships in the model's own repo, so
+the preset's local path is dropped and the seed fetches that name from Hugging
+Face. The deployment then names the file at its own synced path, so nothing
+depends on where you keep it locally.
+
+How the engine *uses* a companion is still yours — `--spec-type draft-dflash`
+stays in the preset and passes through untouched.
+
+Adding a companion to a model already in S3 re-seeds it: presence is judged
+over the whole expected set, so the instance can never start pointing at a
+companion that was never synced.
 
 ### First boot
 
@@ -321,8 +345,10 @@ coding a day lands around $90/month. Full breakdown in
   first deploy.
 - **Force a fresh AMI** (same config): just `pnpm bake <runner>` — the runtime
   launches the newest tagged AMI.
-- **Force a re-seed** of weights already in S3: `pnpm seed-model <env>` (the
-  deploy Lambda only seeds what is missing).
+- **Force a re-seed** of weights already in S3:
+  `outfit remote deploy --reseed` (the deploy Lambda otherwise seeds only what
+  is missing). It re-fetches the weights the Outfit names and costs a
+  ~20-minute seed instance, so it is never the default.
 
 ### Diagnostics
 

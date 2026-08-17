@@ -1,0 +1,31 @@
+# Muse-Glimmer-30B served by llama.cpp, targeting Meta's K-Quant-Dynamic build
+# (the ~32GB-VRAM tier; 19.65 GB on disk). Text-only, with DFlash speculative
+# decoding — see preset.ini.
+# ALIAS names the model in opencode and selects the preset section below.
+PROVIDER llamacpp
+ALIAS    muse-glimmer-30b
+CONTEXT  524288             # llama-server's TOTAL --ctx-size, divided across the
+                             # preset's `np = 4` slots — so one request gets the
+                             # model's full trained 131072. CONTEXT always
+                             # overrides the preset's ctx-size, so it must be the
+                             # total, not the per-slot figure.
+                             #
+                             # Caveat: opencode is told 524288 as well, though a
+                             # single request can only use 131072. outfit has one
+                             # CONTEXT and these differ by `np`, so they cannot
+                             # both be right. For a single agent with a window
+                             # that is literally true, set `np = 1` here and
+                             # CONTEXT 131072.
+PRESET   ./preset.ini       # `outfit serve` builds the llama-server command from this
+# BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default local host/port
+
+# No MODEL line on purpose. Meta's GGUF filenames don't follow the standard
+# quant-scheme naming, so `-hf repo:kquant-dynamic` does NOT resolve — the repo
+# and file are set separately in the preset (hf + hff). See README.md.
+#
+# For `outfit remote deploy` you DO need a MODEL line, because the cloud seed
+# globs filenames rather than resolving a tag:
+#   MODEL  meta-models/Muse-Glimmer-30B-GGUF:kquant-dynamic
+#   REMOTE muse-glimmer-30b
+# Adding MODEL breaks the local `outfit serve` path above — read the "Deploying
+# to the cloud" section of README.md before you do.

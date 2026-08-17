@@ -23,6 +23,7 @@ const LLAMACPP: DeployConfig = {
   contextSize: 131072,
   servedModelName: 'qwen3.6-27b',
   serveArgs: [],
+  companions: {},
 };
 
 const VLLM: DeployConfig = {
@@ -33,6 +34,7 @@ const VLLM: DeployConfig = {
   contextSize: 32768,
   servedModelName: 'Qwen/Qwen3.6-27B-FP8',
   serveArgs: [],
+  companions: {},
 };
 
 describe('buildSeedUserData', () => {
@@ -43,6 +45,43 @@ describe('buildSeedUserData', () => {
     expect(script).toContain('/opt/llm/model/model.gguf');
     // mmproj/projector files would otherwise be picked up as "the" GGUF.
     expect(script).toContain('mmproj');
+  });
+
+  it('fetches a named companion by exact filename and normalises it', () => {
+    const script = buildSeedUserData(
+      { ...LLAMACPP, companions: { draft: 'dflash-kquant.gguf' } },
+      ENV,
+    );
+    // The quant glob cannot reach a drafter — `*kquant-dynamic*` does not
+    // match `dflash-kquant.gguf` — so it must be its own allow_patterns entry.
+    expect(script).toContain("'dflash-kquant.gguf'");
+    expect(script).toContain('/opt/llm/model/draft.gguf');
+    // Excluded from the main-GGUF pick, or it could be served as the model.
+    expect(script).toContain("! -name 'dflash-kquant.gguf'");
+    // A missing companion fails the seed with a named cause.
+    expect(script).toContain('not found in $MODEL_ID');
+  });
+
+  it('still excludes projectors from the main GGUF when none is named', () => {
+    // A projector is never the main model, and where the quant glob matches
+    // one it sorts before the real weights.
+    expect(buildSeedUserData(LLAMACPP, ENV)).toContain("! -iname '*mmproj*'");
+  });
+
+  it('emits no companion handling when none are named', () => {
+    const script = buildSeedUserData(LLAMACPP, ENV);
+    expect(script).not.toContain('draft.gguf');
+    expect(script).not.toContain('COMPANION=');
+  });
+
+  it('orders companions deterministically', () => {
+    const both = { draft: 'dflash-kquant.gguf', mmproj: 'mmproj-kquant.gguf' };
+    expect(buildSeedUserData({ ...LLAMACPP, companions: both }, ENV)).toBe(
+      buildSeedUserData(
+        { ...LLAMACPP, companions: { mmproj: both.mmproj, draft: both.draft } },
+        ENV,
+      ),
+    );
   });
 
   it('downloads the whole checkpoint for vllm', () => {

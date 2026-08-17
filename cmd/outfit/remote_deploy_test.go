@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -587,5 +588,72 @@ func TestRemoteStart_StdoutCarriesOnlyTheResult(t *testing.T) {
 		if !strings.HasPrefix(lines[i], want) {
 			t.Errorf("stdout line %d = %q, want it to start with %q", i, lines[i], want)
 		}
+	}
+}
+
+// glimmerPreset mirrors examples/llamacpp/muse-glimmer-30b: repo and file set
+// apart, a drafter at a local path, and --spec-type left to the user.
+const glimmerPreset = `[*]
+host  = 127.0.0.1
+port  = 8080
+jinja = 1
+
+[muse-glimmer-30b]
+hf               = meta-models/Muse-Glimmer-30B-GGUF
+hff              = muse-glimmer-30B-kquant-dynamic.gguf
+ctx-size         = 524288
+np               = 4
+spec-type        = draft-dflash
+spec-draft-model = ./Muse-Glimmer-30B-GGUF/dflash-kquant.gguf
+spec-draft-ngl   = 999
+`
+
+const glimmerOutfit = "PROVIDER llamacpp\nALIAS muse-glimmer-30b\nCONTEXT 524288\nMODEL meta-models/Muse-Glimmer-30B-GGUF:kquant-dynamic\nPRESET ./preset.ini\n"
+
+func TestDeployConfigFor_CarriesDrafterAsCompanion(t *testing.T) {
+	dc := deployConfigFrom(t, glimmerOutfit, glimmerPreset)
+
+	if got := dc.Companions["draft"]; got != "dflash-kquant.gguf" {
+		t.Errorf("companions[draft] = %q, want dflash-kquant.gguf", got)
+	}
+	// Only the filename travels: the local path is meaningless on the instance.
+	for _, arg := range dc.ServeArgs {
+		if strings.Contains(arg, "Muse-Glimmer-30B-GGUF/dflash") {
+			t.Errorf("serveArgs leaked the local drafter path: %v", dc.ServeArgs)
+		}
+		if arg == "--spec-draft-model" {
+			t.Errorf("serveArgs kept a cloud-owned flag: %v", dc.ServeArgs)
+		}
+	}
+	// How the engine uses the drafter is still the user's to state.
+	if !slices.Contains(dc.ServeArgs, "draft-dflash") {
+		t.Errorf("--spec-type should pass through, got %v", dc.ServeArgs)
+	}
+	if !slices.Contains(dc.ServeArgs, "--spec-draft-ngl") {
+		t.Errorf("--spec-draft-ngl should pass through, got %v", dc.ServeArgs)
+	}
+}
+
+func TestDeployConfigFor_DrafterShorthandIsAlsoCloudOwned(t *testing.T) {
+	// `md` is the same flag; if the drop-set missed it the local path would
+	// reach the instance, where it does not exist.
+	preset := strings.Replace(glimmerPreset,
+		"spec-draft-model = ./Muse-Glimmer-30B-GGUF/dflash-kquant.gguf",
+		"md               = ./Muse-Glimmer-30B-GGUF/dflash-kquant.gguf", 1)
+	dc := deployConfigFrom(t, glimmerOutfit, preset)
+
+	if got := dc.Companions["draft"]; got != "dflash-kquant.gguf" {
+		t.Errorf("companions[draft] = %q, want dflash-kquant.gguf", got)
+	}
+	if strings.Contains(strings.Join(dc.ServeArgs, " "), "dflash-kquant.gguf") {
+		t.Errorf("serveArgs leaked the drafter path: %v", dc.ServeArgs)
+	}
+}
+
+func TestDeployConfigFor_NoCompanionsWhenNoneNamed(t *testing.T) {
+	dc := deployConfigFrom(t,
+		"PROVIDER llamacpp\nALIAS qwen3.6-27b\nCONTEXT 131072\nPRESET ./preset.ini\n", qwenPreset)
+	if len(dc.Companions) != 0 {
+		t.Errorf("companions = %v, want none", dc.Companions)
 	}
 }
