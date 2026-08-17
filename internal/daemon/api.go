@@ -45,7 +45,7 @@ func Listen(addr, token string) (net.Listener, error) {
 		return nil, fmt.Errorf(
 			"refusing to serve the control API on non-loopback %q without a token: "+
 				"pass --api-token-file <path>, set %s, or pass --api-token — "+
-				"or bind loopback with --api-addr 127.0.0.1:4242, which needs none",
+				"or bind loopback with --loopback, which needs none",
 			addr, TokenEnvVar)
 	}
 	return net.Listen("tcp", addr)

@@ -365,13 +365,16 @@ func TestDaemonMetricsIdle(t *testing.T) {
 }
 
 func TestListenGuard(t *testing.T) {
-	// Tokenless non-loopback is refused.
+	// Tokenless non-loopback is refused, with the hint pointing at the
+	// --loopback shorthand rather than a hand-typed long address.
 	for _, addr := range []string{":0", "0.0.0.0:0", "[::]:0"} {
 		if l, err := Listen(addr, ""); err == nil {
 			l.Close()
 			t.Errorf("tokenless Listen(%q) succeeded, want refusal", addr)
 		} else if !strings.Contains(err.Error(), TokenEnvVar) {
 			t.Errorf("refusal for %q does not name %s: %v", addr, TokenEnvVar, err)
+		} else if !strings.Contains(err.Error(), "--loopback") {
+			t.Errorf("refusal for %q does not hint %s: %v", addr, LoopbackAPIAddr, err)
 		}
 	}
 	// Tokenless loopback is fine.
