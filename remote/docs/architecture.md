@@ -218,5 +218,5 @@ AMI matching the tags**. A slim AMI carries only the driver + the runner
 | Idle / manual stop | `lambda/stop/index.ts`, `lambda/shared/idle.ts` |
 | Set the deploy-config | `lambda/deploy/index.ts` |
 | Shared AWS + SSM helpers | `lambda/shared/aws.ts` |
-| Seed weights to S3 | `scripts/seed-model.mjs` |
+| Seed weights to S3 (on absence, or `--reseed`) | `lambda/deploy/index.ts`, `lambda/shared/seed.ts` |
 | Seed the initial deploy-config (once, over the placeholder) | `scripts/seed-deploy-config.mjs` |

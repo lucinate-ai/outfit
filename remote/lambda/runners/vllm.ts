@@ -14,13 +14,19 @@ export const vllm: RunnerSpec = {
   syncedModelPath,
 
   // config.json is part of every checkpoint and synced last-ish; its presence
-  // under the prefix marks a complete seed.
-  weightsSentinel: (weightsPrefix) => `${weightsPrefix}config.json`,
+  // under the prefix marks a complete seed. vLLM uses no companions, so the
+  // sentinel is the whole expected set.
+  weightsKeys: (_cfg, weightsPrefix) => [`${weightsPrefix}config.json`],
 
   // The whole safetensors checkpoint, straight into the model dir.
   seedDownload: () =>
     `/opt/llm/venv/bin/python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['MODEL_ID'], local_dir='/opt/llm/model', token=(os.environ.get('HF_TOKEN') or None))"
 `,
+
+  // vLLM serves a whole checkpoint and has no companion-file flags of its own,
+  // so a companion named for a vLLM deployment is seeded but unused rather
+  // than rejected — see the companionArgs contract in spec.ts.
+  companionArgs: () => [],
 
   daemonBoot: (cfg, modelDir, port) => `# Python dev headers: Triton JIT-compiles a CUDA stub against Python.h on the
 # first model load (Qwen3.6's linear-attention path); baked into recipe 2.0.3+,

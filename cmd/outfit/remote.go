@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -858,6 +860,20 @@ var cloudOwnedFlags = map[string]bool{
 	"hf-repo": true, "hf-file": true, "hf-token": true,
 	"api-key": true, "api-key-file": true,
 	"ctx-size": true, "alias": true, "metrics": true,
+	// Companion weights: the cloud syncs these from S3 and names them at its
+	// own paths, so the preset's local paths must not travel. Only the
+	// location is cloud-owned — how the engine is asked to use a drafter
+	// (--spec-type) stays the user's, exactly as it is for a local run.
+	"spec-draft-model": true, "mmproj": true,
+}
+
+// companionRoleForFlag maps a preset flag naming a companion weight to the
+// deploy-config role the cloud knows it by. Keyed by canonical name, so every
+// spelling the preset dialect accepts (`md`, `model-draft`, `mm`) resolves
+// here too.
+var companionRoleForFlag = map[string]string{
+	"spec-draft-model": "draft",
+	"mmproj":           "mmproj",
 }
 
 // isCloudOwned reports whether the cloud sets this preset key itself.
@@ -866,14 +882,19 @@ func isCloudOwned(key string) bool {
 }
 
 // isNodeOwned reports whether a fleet node's daemon sets this preset key
-// itself. It is the cloud's set minus the bind: a node is a machine the
-// operator owns, so where its engine listens is their choice to make. Dropping
-// it left a woken engine on llama.cpp's loopback default however the preset was
-// written — reachable from nobody else in the fleet, which is the whole point
-// of a fleet.
+// itself. It is the cloud's set minus the bind and the companion paths: a node
+// is a machine the operator owns, so where its engine listens is their choice
+// to make. Dropping the bind left a woken engine on llama.cpp's loopback
+// default however the preset was written — reachable from nobody else in the
+// fleet, which is the whole point of a fleet.
+//
+// The companion paths go the same way, for the same reason. The cloud owns them
+// because it seeds the weights from Hugging Face and puts them where it likes;
+// a node has the files already, at the path its preset names, so dropping them
+// would lose the drafter with nothing to replace it.
 func isNodeOwned(key string) bool {
 	switch preset.CanonicalKey(key) {
-	case "host", "port":
+	case "host", "port", "spec-draft-model", "mmproj":
 		return false
 	}
 	return isCloudOwned(key)
@@ -900,7 +921,11 @@ func dropOwned(owned func(string) bool, params []preset.Param) []preset.Param {
 // it is provisioned. deployConfigWithoutContext is the same derivation for a
 // caller where that is not true.
 func deployConfigFor(sel outfit.Selection, outfitPath string) (remote.DeployConfig, error) {
-	return deployConfig(sel, outfitPath, deployTarget{requireContext: true, owns: isCloudOwned})
+	return deployConfig(sel, outfitPath, deployTarget{
+		requireContext: true,
+		seedsWeights:   true,
+		owns:           isCloudOwned,
+	})
 }
 
 // deployConfigForNode derives the same config for a machine that already
@@ -914,9 +939,11 @@ func deployConfigForNode(sel outfit.Selection, outfitPath string) (remote.Deploy
 }
 
 // deployTarget is what the derivation cannot decide for itself: whether a
-// context size is required, and which preset flags the destination assigns.
+// context size is required, which preset flags the destination assigns, and
+// whether it fetches the weights itself (and so needs companions named).
 type deployTarget struct {
 	requireContext bool
+	seedsWeights   bool
 	owns           func(key string) bool
 }
 
@@ -990,11 +1017,40 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 		dc.ServedModelName = dc.ModelID
 	}
 
+	// Companion weights are read from the same preset keys that drive a local
+	// serve, so one preset still works both ways. Only where the destination
+	// fetches the weights itself: it pulls them from the model's own repo, so
+	// only the filename travels and the local path the user downloaded to is
+	// meaningless there. A node already has its files, and keeps its own path.
+	if target.seedsWeights {
+		dc.Companions = companionsFrom(global, params)
+	}
+
 	dc.ServeArgs = preset.Flags(dropOwned(target.owns, global), dropOwned(target.owns, params))
 	if dc.ServeArgs == nil {
 		dc.ServeArgs = []string{}
 	}
 	return dc, nil
+}
+
+// companionsFrom collects the companion weights a preset names, as role ->
+// filename. The value is reduced to its base name: a companion ships in the
+// model's own repo, so the basename is what the seed asks Hugging Face for.
+func companionsFrom(layers ...[]preset.Param) map[string]string {
+	companions := map[string]string{}
+	for _, layer := range layers {
+		for _, p := range layer {
+			role, ok := companionRoleForFlag[preset.CanonicalKey(p.Key)]
+			if !ok || strings.TrimSpace(p.Value) == "" {
+				continue
+			}
+			companions[role] = filepath.Base(strings.TrimSpace(p.Value))
+		}
+	}
+	if len(companions) == 0 {
+		return nil
+	}
+	return companions
 }
 
 // presetValue returns a preset param's value across layers, or "" when it is
@@ -1030,12 +1086,14 @@ func cmdRemoteDeploy(args []string) error {
 	var (
 		dryRun      bool
 		overwrite   bool
+		reseed      bool
 		allowedCidr string
 		region      string
 	)
 	fs.BoolVar(&dryRun, "dry-run", false, "print the config that would be deployed, without sending it")
 	fs.BoolVar(&dryRun, "n", false, "print the config without sending it (shorthand)")
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
+	fs.BoolVar(&reseed, "reseed", false, "re-fetch the weights even if they are already in S3 (starts a ~20-minute seed)")
 	fs.StringVar(&allowedCidr, "allowed-cidr", "", "who may reach this environment's instance (default: your public IP as a /32, on first deploy)")
 	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
 	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
@@ -1083,8 +1141,18 @@ func cmdRemoteDeploy(args []string) error {
 	fmt.Println()
 	fmt.Printf("  context: %d\n", dc.ContextSize)
 	fmt.Printf("  served:  %s\n", dc.ServedModelName)
+	// Companions are easy to get wrong quietly — a renamed file yields no
+	// drafter and a slower endpoint with no error — so show what was picked up.
+	for _, role := range slices.Sorted(maps.Keys(dc.Companions)) {
+		fmt.Printf("  %-8s %s\n", role+":", dc.Companions[role])
+	}
 	if len(dc.ServeArgs) > 0 {
 		fmt.Printf("  args:    %s\n", strings.Join(dc.ServeArgs, " "))
+	}
+	// Worth stating: a re-seed costs a ~20-minute instance and re-downloads the
+	// weights, so --reseed --dry-run must not look like a plain deploy.
+	if reseed {
+		fmt.Println("  reseed:  yes — the weights will be re-fetched even if already in S3")
 	}
 	if dryRun {
 		return nil
@@ -1138,7 +1206,7 @@ func cmdRemoteDeploy(args []string) error {
 		fmt.Printf("  ingress: %s (your public IP; override with --allowed-cidr)\n", allowedCidr)
 	}
 
-	resp, err := remoteDeployFn(ctx, cfg, dc, allowedCidr)
+	resp, err := remoteDeployFn(ctx, cfg, dc, allowedCidr, reseed)
 	if err != nil {
 		return err
 	}

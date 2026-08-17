@@ -474,7 +474,7 @@ func TestDeploy_Success(t *testing.T) {
 
 	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
 	dc := DeployConfig{Runner: "vllm", ModelID: "org/model"}
-	resp, err := Deploy(context.Background(), cfg, dc, "203.0.113.0/24")
+	resp, err := Deploy(context.Background(), cfg, dc, "203.0.113.0/24", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,6 +485,30 @@ func TestDeploy_Success(t *testing.T) {
 	if !strings.Contains(string(gotBody), `"runner":"vllm"`) ||
 		!strings.Contains(string(gotBody), `"allowedCidr":"203.0.113.0/24"`) {
 		t.Errorf("deploy did not send the expected body: %s", gotBody)
+	}
+	// Omitted entirely when not asked for, so an older control plane sees the
+	// body it always saw.
+	if strings.Contains(string(gotBody), "reseed") {
+		t.Errorf("reseed should be omitted when false: %s", gotBody)
+	}
+}
+
+func TestDeploy_ReseedReachesTheRequest(t *testing.T) {
+	stubAWSEnv(t)
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Write([]byte(`{"state":"deployed","deployed":true,"seeding":true}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
+	dc := DeployConfig{Runner: "vllm", ModelID: "org/model"}
+	if _, err := Deploy(context.Background(), cfg, dc, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gotBody), `"reseed":true`) {
+		t.Errorf("reseed did not reach the request body: %s", gotBody)
 	}
 }
 
@@ -497,14 +521,14 @@ func TestDeploy_ExpiredCredentials(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{DeployURL: server.URL, Region: "eu-west-1"}
-	if _, err := Deploy(context.Background(), cfg, DeployConfig{Runner: "vllm"}, ""); err == nil ||
+	if _, err := Deploy(context.Background(), cfg, DeployConfig{Runner: "vllm"}, "", false); err == nil ||
 		!strings.Contains(err.Error(), "expired or invalid") {
 		t.Errorf("expected deploy to fail with an expired-credentials error, got %v", err)
 	}
 }
 
 func TestDeploy_MissingURL(t *testing.T) {
-	if _, err := Deploy(context.Background(), Config{}, DeployConfig{}, ""); err == nil ||
+	if _, err := Deploy(context.Background(), Config{}, DeployConfig{}, "", false); err == nil ||
 		!strings.Contains(err.Error(), "no deploy_url") {
 		t.Errorf("expected a missing-URL error, got %v", err)
 	}

@@ -90,13 +90,29 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     return jsonResponse(400, { error: `allowedCidr must be an IPv4 CIDR, got ${allowedCidr}` });
   }
 
+  // A property of this request, not of what the environment serves — so it is
+  // read from the raw body rather than by parseDeployConfig, and never reaches
+  // the persisted deploy-config. Stored, it would re-seed on every wake that
+  // read it back.
+  if (parsedBody.reseed !== undefined && typeof parsedBody.reseed !== 'boolean') {
+    return jsonResponse(400, {
+      error: `reseed must be a boolean, got ${JSON.stringify(parsedBody.reseed)}`,
+    });
+  }
+  const reseed = parsedBody.reseed === true;
+
   // Seed before anything else: if the weights are missing and the seed cannot
   // even be launched, the environment (and any current working config) is left
   // alone rather than half-created.
+  //
+  // A requested re-seed skips the presence check rather than overriding it —
+  // there is no point paying for HEADs whose answer is ignored — and then
+  // takes the same path as any other seed, so it inherits the runner-tagged
+  // AMI choice and the launch idempotency token along with it.
   let seeding = false;
   let seedInstanceId: string | undefined;
   try {
-    if (!(await weightsPresent(WEIGHTS_BUCKET, config))) {
+    if (reseed || !(await weightsPresent(WEIGHTS_BUCKET, config))) {
       seedInstanceId = await launchSeedInstance(config, SEED_ENV);
       seeding = true;
     }
@@ -139,6 +155,9 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
       quant: config.quant,
       weightsPrefix: config.weightsPrefix,
       seeding,
+      // Distinguishes a forced re-seed from one the missing weights caused,
+      // which is otherwise invisible after the fact.
+      reseed,
       seedInstanceId,
     }),
   );

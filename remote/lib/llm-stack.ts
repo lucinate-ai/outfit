@@ -449,7 +449,8 @@ export class LlmStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'Region', { value: this.region });
     new cdk.CfnOutput(this, 'WeightsBucket', { value: weightsBucket.bucketName });
     new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
-    // Consumed by `pnpm seed-model` to launch the disposable seed instance.
+    // Consumed by the deploy Lambda (via SEED_* env vars) to launch the
+    // disposable seed instance.
     new cdk.CfnOutput(this, 'SeedInstanceProfileArn', { value: seedProfile.instanceProfileArn });
     new cdk.CfnOutput(this, 'SeedInstanceType', { value: cfg.builderInstanceType });
     new cdk.CfnOutput(this, 'SeedSubnetId', { value: vpc.publicSubnets[0].subnetId });
