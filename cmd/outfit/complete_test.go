@@ -181,6 +181,10 @@ func TestComplete_FlagNames(t *testing.T) {
 	if got, _ := complete(t, "serve", "-"); !hasAll(got, "--dry-run", "-n") {
 		t.Errorf("serve flags missing from %v", got)
 	}
+
+	if got, _ := complete(t, "daemon", "-"); !hasAll(got, "--loopback", "-l") {
+		t.Errorf("daemon flags missing the loopback shorthand from %v", got)
+	}
 }
 
 // TestComplete_FlagValues checks the values that can be enumerated.

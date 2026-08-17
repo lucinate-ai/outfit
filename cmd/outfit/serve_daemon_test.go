@@ -133,6 +133,23 @@ func TestCmdServe_DaemonFlagRemoved(t *testing.T) {
 	})
 }
 
+// TestCmdServe_HasNoLoopbackFlag pins the shorthand's scope: the spec gives
+// --loopback to the daemon alone, so serve's API must still keep --api-addr
+// rather than growing a second bind source.
+func TestCmdServe_HasNoLoopbackFlag(t *testing.T) {
+	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
+	captureStderr(t, func() {
+		if err := cmdServe([]string{"-a", "--loopback", outfitPath}); err == nil ||
+			!strings.Contains(err.Error(), "not defined") {
+			t.Errorf("serve --loopback = %v, want unknown-flag error", err)
+		}
+		if err := cmdServe([]string{"-a", "-l", outfitPath}); err == nil ||
+			!strings.Contains(err.Error(), "not defined") {
+			t.Errorf("serve -l = %v, want unknown-flag error", err)
+		}
+	})
+}
+
 func TestCmdServe_APIDryRunAddsMetricsFlag(t *testing.T) {
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
 	out := captureStdout(t, func() {
@@ -153,6 +170,96 @@ func TestCmdDaemon_RefusesTokenlessNonLoopback(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), daemon.TokenEnvVar) {
 		t.Fatalf("tokenless daemon on %s = %v, want refusal naming %s",
 			daemon.DefaultAPIAddr, err, daemon.TokenEnvVar)
+	}
+}
+
+func TestDaemonAPIAddr(t *testing.T) {
+	tests := []struct {
+		name     string
+		apiAddr  string
+		explicit bool
+		loopback bool
+		want     string
+		wantErr  bool
+	}{
+		{name: "neither", apiAddr: daemon.DefaultAPIAddr, want: daemon.DefaultAPIAddr},
+		{name: "typed address alone", apiAddr: "10.0.0.5:9999", explicit: true, want: "10.0.0.5:9999"},
+		{name: "loopback replaces the default", apiAddr: daemon.DefaultAPIAddr, loopback: true, want: daemon.LoopbackAPIAddr},
+		{name: "loopback and a typed address conflict", apiAddr: "10.0.0.5:9999", explicit: true, loopback: true, wantErr: true},
+		{name: "loopback and the repeated default conflict", apiAddr: daemon.DefaultAPIAddr, explicit: true, loopback: true, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := daemonAPIAddr(tt.apiAddr, tt.explicit, tt.loopback)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("daemonAPIAddr(%q, %v, %v) error = %v, wantErr %v", tt.apiAddr, tt.explicit, tt.loopback, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Fatalf("daemonAPIAddr = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestCmdDaemon_LoopbackConflictsWithExplicitAddr covers the rule through the
+// real flag parsing, so the -l spelling and an --api-addr typed to the
+// default's own value are both counted as explicit. The conflict is detected
+// by fs.Visit, which is order-independent — the last case types the address
+// first, pinning that a sequential rewrite can't make the rule depend on
+// flag position.
+func TestCmdDaemon_LoopbackConflictsWithExplicitAddr(t *testing.T) {
+	for _, args := range [][]string{
+		{"--loopback", "--api-addr", "127.0.0.1:0"},
+		{"--loopback", "--api-addr", daemon.DefaultAPIAddr},
+		{"-l", "--api-addr", daemon.DefaultAPIAddr},
+		{"--api-addr", "127.0.0.1:0", "--loopback"},
+	} {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv(daemon.TokenEnvVar, "")
+		t.Chdir(t.TempDir())
+		err := cmdDaemon(args)
+		if err == nil || !strings.Contains(err.Error(), "--loopback") || !strings.Contains(err.Error(), "--api-addr") {
+			t.Fatalf("cmdDaemon(%v) = %v, want a conflict naming both flags", args, err)
+		}
+	}
+}
+
+// TestCmdDaemon_LoopbackBindsLoopback checks the shorthand end to end: the
+// daemon binds daemon.LoopbackAPIAddr and answers unauthenticated, because a
+// loopback listen needs no token. The port is fixed, so the test declines
+// rather than fights one — a developer in this repo often has a real daemon
+// on it, and the rest of the suite never binds a fixed port for the same
+// reason.
+func TestCmdDaemon_LoopbackBindsLoopback(t *testing.T) {
+	probe, err := net.DialTimeout("tcp", daemon.LoopbackAPIAddr, 500*time.Millisecond)
+	if err == nil {
+		probe.Close()
+		t.Skipf("%s is taken", daemon.LoopbackAPIAddr)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv(daemon.TokenEnvVar, "")
+	t.Chdir(t.TempDir())
+
+	waitAddr := apiAddrFromStderr(t)
+	done := make(chan error, 1)
+	go func() { done <- cmdDaemon([]string{"--loopback"}) }()
+	addr := waitAddr()
+	if addr != daemon.LoopbackAPIAddr {
+		t.Fatalf("daemon --loopback bound %s, want %s", addr, daemon.LoopbackAPIAddr)
+	}
+	// No token was configured anywhere: an unauthenticated status answers.
+	if code, body := apiDo(t, "GET", "http://"+addr+"/v1/status", "", ""); code != 200 || body["state"] != "idle" {
+		t.Fatalf("unauthenticated status = %d %v, want 200 idle", code, body)
+	}
+
+	interruptSelf(t)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("daemon exited with %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("daemon did not exit on SIGINT")
 	}
 }
 

@@ -148,7 +148,7 @@ var commands = map[string]command{
 		positional: kindAlias, positionals: 1,
 	},
 	"daemon": {
-		flags:      []string{"--api-addr", "--log-level"},
+		flags:      []string{"--api-addr", "--loopback", "-l", "--log-level"},
 		values:     map[string]candidateKind{"--api-addr": kindNone, "--log-level": kindLogLevel},
 		positional: kindAlias, positionals: 1,
 	},

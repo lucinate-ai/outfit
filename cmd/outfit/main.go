@@ -155,7 +155,7 @@ Usage:
   outfit alias  [path] [-n <name>] [-l]    (name an Outfit; -l lists them)
   outfit unalias <name>                    (drop a registered name)
   outfit serve  [path] [--dry-run] [--api]  (run the PROVIDER's inference server)
-  outfit daemon [path] [--api-addr <addr>]  (supervise an engine via the control API)
+  outfit daemon [--api-addr <addr>] [--loopback] (supervise an engine via the control API)
   outfit fleet  <status|metrics|start|stop> [node] [--fleet <path>]
                                     (observe and drive the engines in fleet.yaml)
   outfit export [--provider <name>]

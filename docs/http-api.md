@@ -1,6 +1,6 @@
 # HTTP Control API
 
-When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a control API is exposed on `:4242` (or the address specified by `--api-addr`) that allows management of the engine via JSON requests.
+When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a control API is exposed on `:4242` (or the address specified by `--api-addr`; on the daemon, `--loopback` binds `127.0.0.1:4242` instead) that allows management of the engine via JSON requests.
 
 > **The machine-readable contract is [`openapi.yaml`](openapi.yaml)** — every route, its
 > auth, its request body and the schemas of its replies. Point a client generator
@@ -17,7 +17,7 @@ When running `outfit daemon` (always) or `outfit serve --api` (opt-in), a contro
 All requests must include a bearer token in the `Authorization` header:
 `Authorization: Bearer $OUTFIT_API_TOKEN`
 
-The token is read from the environment (e.g., the `.env` file beside the Outfit). A non-loopback listen with no token refuses to start; a loopback listen may go tokenless.
+The token comes from the environment — under `serve --api`, the `.env` beside the Outfit; under the daemon, the process environment it is given — or from `--api-token-file`/`--api-token` on the command line. A non-loopback listen with no token refuses to start; a loopback listen may go tokenless.
 
 Under `outfit daemon`, nothing runs until a start request asks, and stopping the engine never ends the daemon — the API keeps answering. Under `serve --api` the engine is foreground-managed: start always fails as already-running, and stopping the engine ends serve itself.
 
@@ -44,7 +44,7 @@ than each caller re-deriving it from raw counters at whatever rate it polls.
 The cloud deployment's idle check reads exactly these two fields.
 
 ### POST `/v1/start`
-Starts the engine. The request body may carry a deploy config (same JSON as `PUT /v1/deploy-config`) naming what to run — it is validated and persisted exactly like a push, then started. With no body, the stored deploy config, else the Outfit the daemon sits beside, is served.
+Starts the engine. The request body may carry a deploy config (same JSON as `PUT /v1/deploy-config`) naming what to run — it is validated and persisted exactly like a push, then started. With no body, the stored deploy config is served — a start with nothing stored fails saying so.
 - Returns `200 OK` on success.
 - Returns `409 Conflict` if an engine is already running — a carried config is **not** stored.
 - Returns `400 Bad Request` if the config is invalid or the engine fails to start.

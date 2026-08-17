@@ -167,7 +167,8 @@ model and a fleet; a node holds nothing. See
 [`examples/fleet-local/`](../../examples/fleet-local/) for the whole shape on one
 machine.
 
-The API listens on `:4242` (change with `--api-addr`) and speaks JSON.
+The API listens on `:4242` (change with `--api-addr`; on the daemon,
+`--loopback`/`-l` binds `127.0.0.1:4242` instead) and speaks JSON.
 See [HTTP Control API](../http-api.md) for details, or
 [`openapi.yaml`](../openapi.yaml) for the full contract:
 
@@ -177,6 +178,7 @@ See [HTTP Control API](../http-api.md) for details, or
 | `POST /v1/start` | Start the engine (optional deploy-config body, optionally carrying the engine's API key; 409 while one runs) |
 | `POST /v1/stop` | Stop the engine (idempotent; never ends the daemon) |
 | `GET /v1/metrics` | Engine token counters plus host GPU/CPU/RAM |
+| `GET /v1/logs` | A slice of the engine's captured output, by offset |
 | `PUT /v1/deploy-config` | Set what the *next* start serves |
 
 Requests carry `Authorization: Bearer <token>`. The token comes from one of
@@ -264,6 +266,7 @@ output.
 | `-n`, `--dry-run` | Print the server command without running it |
 | `-a`, `--api` | Expose the control API beside the foreground engine |
 | `--api-addr` | Control API listen address (default `:4242`) |
+| `--loopback`, `-l` | (daemon only) Bind the control API to loopback, `127.0.0.1:4242` — needs no token |
 | `--log-level` | `debug`, `info` (default), `warn` or `error`; overrides [`OUTFIT_LOG_LEVEL`](../env-vars.md) |
 
 ## Notes

@@ -184,7 +184,7 @@ outfit alias  [path] [-n <name>] [-l]    # name an Outfit; -l lists them
 outfit unalias <name>                    # drop a registered name
 outfit serve  [path] [--dry-run] [-a]    # run the PROVIDER's inference server, from the PRESET
                                          #   (-a/--api serves the control API beside it)
-outfit daemon [path] [--api-addr <addr>] # supervise an engine via the control API
+outfit daemon [--api-addr <addr>] [--loopback] # supervise an engine via the control API
                                          #   (starts nothing until asked over the API)
 outfit fleet <status|metrics|start|stop> # observe and drive the engines in fleet.yaml
                                          #   (one outfit watching every machine you run)
@@ -347,8 +347,8 @@ a small control API: status, start, stop, metrics — token counters scraped
 from the engine plus GPU/CPU/RAM readings from the host — and a deploy-config
 push. It starts *nothing* on boot: the engine runs only when a start request
 asks, and the request can carry the deploy config (runner, model, flags) to
-run — or fall back to a previously pushed config, or the Outfit the daemon
-sits beside. Stopping the engine leaves the daemon answering.
+run — or fall back to a previously pushed one. With neither, a start says so.
+Stopping the engine leaves the daemon answering.
 
 It also keeps an eye on whether the engine is actually doing anything: it
 reads the engine's counters every 15 seconds and reports `lastActiveAt` and
@@ -358,14 +358,16 @@ from raw counters yourself.
 
 ```sh
 OUTFIT_API_TOKEN=…  outfit daemon           # control API on :4242
-outfit daemon --api-addr 127.0.0.1:4242     # loopback-only needs no token
+outfit daemon --loopback                    # loopback-only (127.0.0.1:4242), needs no token
 outfit daemon --log-level warn              # quiet on a node a fleet polls
 ```
 
-The API is bearer-token authenticated (`OUTFIT_API_TOKEN`, e.g. from the
-`.env` beside the Outfit); a non-loopback listen without a token refuses to
-start. `outfit serve -a/--api` exposes the same API beside an ordinary
-foreground serve.
+The API is bearer-token authenticated: under `serve --api`, `OUTFIT_API_TOKEN`
+comes from the `.env` beside the Outfit; the daemon reads no Outfit, so its
+token comes from the environment its service manager gives it or
+`--api-token-file`. A non-loopback listen without a token refuses to start —
+which is exactly what `--loopback` is for. `outfit serve -a/--api` exposes the
+same API beside an ordinary foreground serve.
 
 Every request is summarised on stderr — method, path, status, duration, size,
 caller — alongside the engine's starts, stops and crashes. Never the token and
