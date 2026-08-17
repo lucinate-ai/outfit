@@ -9,8 +9,9 @@
 //	PROVIDER openrouter
 //	MODEL    deepseek/deepseek-v4-pro   # the provider-native model ref
 //	ALIAS    deepseek                   # optional; friendly name for the model
-//	CONTEXT  128k                       # optional; context window
+//	CONTEXT  128k                       # optional; context window (per request)
 //	OUTPUT   32k                        # optional; max output tokens
+//	PARALLEL 2                          # optional; concurrent request slots for `serve`
 //	BASEURL  https://gateway/v1         # optional; API base URL override
 //	PRESET   ./preset.ini               # optional; llama.cpp preset for `serve`
 //	REMOTE   ./remote.json              # optional; remote-instance config for `remote`
@@ -52,6 +53,12 @@ type Selection struct {
 	BaseURL   string
 	Preset    string
 	Remote    string
+	// Parallel is the PARALLEL instruction's value: a count of concurrent
+	// request slots the served engine should run with. It has no meaning for
+	// a hosted-harness selection, only for a served one — see the
+	// local-serving capability for how it and Context translate into each
+	// engine's own flags.
+	Parallel string
 	// Fleet is the FLEET instruction's value: a path to a fleet file whose
 	// nodes a launch chooses between, or a URL naming an endpoint that has
 	// already chosen (see FleetIsEndpoint).
@@ -81,6 +88,7 @@ const (
 	kwAlias    = "alias"
 	kwContext  = "context"
 	kwOutput   = "output"
+	kwParallel = "parallel"
 	kwBaseURL  = "baseurl"
 	kwPreset   = "preset"
 	kwRemote   = "remote"
@@ -93,7 +101,7 @@ const (
 // "" for an unrecognised keyword.
 func canonicalKeyword(kw string) string {
 	switch kw {
-	case kwProvider, kwModel, kwAlias, kwContext, kwOutput, kwPreset, kwRemote, kwFleet, kwEnv:
+	case kwProvider, kwModel, kwAlias, kwContext, kwOutput, kwParallel, kwPreset, kwRemote, kwFleet, kwEnv:
 		return kw
 	case kwBaseURL, "base-url", "base_url", "url":
 		return kwBaseURL
@@ -121,7 +129,7 @@ func Parse(data []byte) (Selection, error) {
 		fields := strings.Fields(text)
 		canon := canonicalKeyword(strings.ToLower(fields[0]))
 		if canon == "" {
-			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, MODEL, ALIAS, CONTEXT, OUTPUT, BASEURL, PRESET, REMOTE, FLEET, or ENV)", line, fields[0])
+			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, MODEL, ALIAS, CONTEXT, OUTPUT, PARALLEL, BASEURL, PRESET, REMOTE, FLEET, or ENV)", line, fields[0])
 		}
 		switch {
 		case len(fields) < 2:
@@ -159,6 +167,8 @@ func Parse(data []byte) (Selection, error) {
 			sel.Context = value
 		case kwOutput:
 			sel.Output = value
+		case kwParallel:
+			sel.Parallel = value
 		case kwBaseURL:
 			sel.BaseURL = value
 		case kwPreset:
@@ -228,6 +238,7 @@ func Format(sel Selection) string {
 	line("ALIAS", sel.Alias)
 	line("CONTEXT", sel.Context)
 	line("OUTPUT", sel.Output)
+	line("PARALLEL", sel.Parallel)
 	line("BASEURL", sel.BaseURL)
 	line("PRESET", sel.Preset)
 	line("REMOTE", sel.Remote)

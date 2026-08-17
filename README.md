@@ -336,6 +336,7 @@ PROVIDER llamacpp
 MODEL    unsloth/Qwen3.6-35B-A3B-GGUF:UD-Q4_K_XL   # HF repo, or a .gguf path
 ALIAS    qwen3.6                                    # llama-server --alias
 CONTEXT  32768                                      # llama-server --ctx-size
+# PARALLEL 2                                        # optional; concurrent slots
 ```
 
 ```sh
@@ -347,8 +348,12 @@ For flags an `Outfit` doesn't model (`-ngl`, `--jinja`, KV-cache types, draft
 models), point at a llama.cpp preset `.ini` with `PRESET` and `serve` flattens
 the chosen section into the command instead — with anything the `Outfit` states
 (like `CONTEXT`) overriding the preset. It's the missing piece presets don't
-cover: launching a *single* model. Details in
-[`docs/commands/serve.md`](docs/commands/serve.md).
+cover: launching a *single* model. `CONTEXT` always means the context per
+request; add `PARALLEL` to run more than one slot and `outfit` works out each
+engine's own accounting (llama.cpp's `--ctx-size` gets scaled, vLLM's and
+oMLX's don't) — see
+[Parallelism](docs/commands/serve.md#parallelism) for the full mapping.
+Details in [`docs/commands/serve.md`](docs/commands/serve.md).
 
 ### The daemon
 

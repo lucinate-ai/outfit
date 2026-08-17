@@ -477,6 +477,28 @@ func TestCmdServe_VllmDryRun(t *testing.T) {
 	}
 }
 
+// TestCmdServe_VllmParallelDoesNotScaleContext checks vLLM's PARALLEL maps to
+// --max-num-seqs, a concurrency cap independent of context: unlike
+// llama.cpp, --max-model-len (from CONTEXT) is never scaled by it.
+func TestCmdServe_VllmParallelDoesNotScaleContext(t *testing.T) {
+	dir := t.TempDir()
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER vllm\nMODEL org/model\nCONTEXT 128k\nPARALLEL 4\n")
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Error(err)
+		}
+	})
+	for _, want := range []string{"--max-model-len 128000", "--max-num-seqs 4"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("vllm argv missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--max-model-len 512000") {
+		t.Errorf("vllm's context must not be scaled by PARALLEL:\n%s", out)
+	}
+}
+
 func TestArgvFromDeployConfigVllm(t *testing.T) {
 	engine, err := engineFor("vllm")
 	if err != nil {
@@ -498,6 +520,84 @@ func TestArgvFromDeployConfigVllm(t *testing.T) {
 	}
 	for _, want := range []string{"--served-model-name friendly", "--max-model-len 32768",
 		"--gpu-memory-utilization 0.92"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q: %s", want, got)
+		}
+	}
+}
+
+// TestArgvFromDeployConfigLlamacppScalesContext checks a pushed deploy config
+// (the daemon/fleet path) scales ctx-size by parallel exactly as a local
+// `outfit serve` would — the whole point of putting this math in the shared
+// *ServeParams functions.
+func TestArgvFromDeployConfigLlamacppScalesContext(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:      "llamacpp",
+		ModelID:     "/opt/llm/model.gguf",
+		ContextSize: 128000,
+		Parallel:    2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	for _, want := range []string{"--ctx-size 256000", "--parallel 2"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q: %s", want, got)
+		}
+	}
+}
+
+// TestArgvFromDeployConfigParallelWithoutContext covers a state only the fleet
+// path can reach: waking a node does not require a context size (the engine's
+// own default stands), so a config may carry a slot count and no context at
+// all. The slot count must still be applied, and nothing may invent a
+// ctx-size out of the zero — a scaled `0 * n` would cap the engine at nothing.
+func TestArgvFromDeployConfigParallelWithoutContext(t *testing.T) {
+	engine, err := engineFor("llamacpp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:   "llamacpp",
+		ModelID:  "/opt/llm/model.gguf",
+		Parallel: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	if !strings.Contains(got, "--parallel 2") {
+		t.Errorf("argv missing --parallel 2: %s", got)
+	}
+	if strings.Contains(got, "--ctx-size") {
+		t.Errorf("no stored context size should mean no ctx-size flag at all: %s", got)
+	}
+}
+
+// TestArgvFromDeployConfigVllmParallel checks vLLM's PARALLEL maps to
+// --max-num-seqs with no effect on --max-model-len, from a pushed deploy
+// config just as from a local Outfit.
+func TestArgvFromDeployConfigVllmParallel(t *testing.T) {
+	engine, err := engineFor("vllm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	argv, err := argvFromDeployConfig(engine, remote.DeployConfig{
+		Runner:      "vllm",
+		ModelID:     "/opt/llm/model",
+		ContextSize: 32768,
+		Parallel:    4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(argv, " ")
+	for _, want := range []string{"--max-model-len 32768", "--max-num-seqs 4"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("argv missing %q: %s", want, got)
 		}

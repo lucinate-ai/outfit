@@ -340,6 +340,9 @@ func argvFromDeployConfig(engine serveEngine, dc remote.DeployConfig) ([]string,
 	if dc.ContextSize > 0 {
 		sel.Context = strconv.Itoa(dc.ContextSize)
 	}
+	if dc.Parallel > 0 {
+		sel.Parallel = strconv.Itoa(dc.Parallel)
+	}
 	params, err := engine.params(sel)
 	if err != nil {
 		return nil, err

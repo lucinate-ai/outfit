@@ -135,6 +135,102 @@ func TestDeployConfigFor_SectionOverridesGlobals(t *testing.T) {
 	}
 }
 
+// TestDeployConfigFor_Parallel checks PARALLEL is captured as its own field —
+// not scaled here, since building the command from it is the daemon's job at
+// start time (argvFromDeployConfig), matching how ContextSize is a stored,
+// unscaled value too.
+func TestDeployConfigFor_Parallel(t *testing.T) {
+	dc := deployConfigFrom(t,
+		"PROVIDER llamacpp\nALIAS qwen3.6-27b\nCONTEXT 131072\nPARALLEL 2\nPRESET ./preset.ini\n", qwenPreset)
+	if dc.Parallel != 2 {
+		t.Errorf("parallel = %d, want 2", dc.Parallel)
+	}
+	if dc.ContextSize != 131072 {
+		t.Errorf("contextSize = %d, want the unscaled 131072 (scaling happens at start time)", dc.ContextSize)
+	}
+}
+
+// TestDeployConfigFor_ParallelFallsBackToPreset checks a preset's own np is
+// captured into dc.Parallel — it is dropped from serveArgs below (cloud-owned),
+// so losing it there without this fallback would silently discard it.
+func TestDeployConfigFor_ParallelFallsBackToPreset(t *testing.T) {
+	preset := "[*]\nnp = 4\n\n[m]\nhf = org/model:Q4\nctx-size = 4096\n"
+	dc := deployConfigFrom(t, "PROVIDER llamacpp\nALIAS m\nPRESET ./preset.ini\n", preset)
+	if dc.Parallel != 4 {
+		t.Errorf("parallel = %d, want 4 (from the preset's np)", dc.Parallel)
+	}
+}
+
+// TestDeployConfigFor_ParallelDroppedFromServeArgs checks a preset's own
+// np/parallel value does not survive into serveArgs once it has been
+// captured into dc.Parallel — otherwise it would double-define the flag
+// alongside the daemon's own computed one at start time.
+func TestDeployConfigFor_ParallelDroppedFromServeArgs(t *testing.T) {
+	preset := "[*]\nnp = 4\n\n[m]\nhf = org/model:Q4\nctx-size = 4096\n"
+	dc := deployConfigFrom(t, "PROVIDER llamacpp\nALIAS m\nPARALLEL 2\nPRESET ./preset.ini\n", preset)
+	if dc.Parallel != 2 {
+		t.Errorf("parallel = %d, want the Outfit's own PARALLEL (2), not the preset's np", dc.Parallel)
+	}
+	args := strings.Join(dc.ServeArgs, " ")
+	if strings.Contains(args, "--parallel") || strings.Contains(args, "np") {
+		t.Errorf("serveArgs %q should not carry the cloud-owned parallel flag", args)
+	}
+}
+
+// TestDeployConfigFor_ParallelPresetKeyIsPerRunner is the guard on the
+// regression that dropping every spelling from serveArgs invites: the deploy
+// reads a preset's slot count back in the runner's *own* vocabulary. Reading
+// only llama.cpp's would leave a vLLM preset's max-num-seqs dropped by
+// dropOwned and captured by nothing — silently lost rather than passed
+// through, which is what it did before parallelism was modelled at all.
+func TestDeployConfigFor_ParallelPresetKeyIsPerRunner(t *testing.T) {
+	dc := deployConfigFrom(t,
+		"PROVIDER vllm\nALIAS m\nMODEL org/model\nCONTEXT 32k\nPRESET ./preset.ini\n",
+		"[m]\nmax-num-seqs = 4\n")
+	if dc.Parallel != 4 {
+		t.Errorf("parallel = %d, want 4 (from the vLLM preset's max-num-seqs)", dc.Parallel)
+	}
+	// And it must not also survive as a raw arg, or the engine would be told
+	// twice — once by the computed flag, once by the passthrough.
+	if args := strings.Join(dc.ServeArgs, " "); strings.Contains(args, "max-num-seqs") {
+		t.Errorf("serveArgs %q should not also carry the cloud-owned max-num-seqs", args)
+	}
+}
+
+// TestDeployConfigFor_ParallelIgnoresAnotherRunnersKey is the negative half of
+// the rule above: a key belonging to a different engine's vocabulary is not
+// read as this runner's slot count. A llama.cpp preset carrying max-num-seqs
+// is a mistake, and inventing a --parallel from it would launder that mistake
+// into a real flag.
+func TestDeployConfigFor_ParallelIgnoresAnotherRunnersKey(t *testing.T) {
+	dc := deployConfigFrom(t,
+		"PROVIDER llamacpp\nALIAS m\nPRESET ./preset.ini\n",
+		"[m]\nhf = org/model:Q4\nctx-size = 4096\nmax-num-seqs = 4\n")
+	if dc.Parallel != 0 {
+		t.Errorf("parallel = %d, want 0: max-num-seqs is not llama.cpp's spelling", dc.Parallel)
+	}
+}
+
+// TestParallelPresetKey pins the per-engine vocabulary itself. Each runner
+// spells its slot count differently, and reading the wrong spelling is
+// invisible — the value is dropped from the passthrough args either way, so a
+// wrong key here loses the setting silently rather than failing.
+func TestParallelPresetKey(t *testing.T) {
+	for runner, want := range map[string]string{
+		"llamacpp": "parallel",
+		"vllm":     "max-num-seqs",
+		"omlx":     "max-concurrent-requests",
+		// A runner with no known spelling must yield "", not a key that would
+		// match a param whose canonical form is also empty.
+		"":        "",
+		"unknown": "",
+	} {
+		if got := parallelPresetKey(runner); got != want {
+			t.Errorf("parallelPresetKey(%q) = %q, want %q", runner, got, want)
+		}
+	}
+}
+
 func TestDeployConfigFor_VllmNeedsNoPreset(t *testing.T) {
 	dc := deployConfigFrom(t, "PROVIDER vllm\nMODEL Qwen/Qwen3.6-27B-FP8\nCONTEXT 32k\n", "")
 	if dc.Runner != "vllm" {
@@ -174,6 +270,11 @@ func TestDeployConfigFor_Rejects(t *testing.T) {
 			name:       "no context anywhere",
 			outfitBody: "PROVIDER llamacpp\nMODEL org/m:Q4\n",
 			want:       "no context size",
+		},
+		{
+			name:       "invalid parallel",
+			outfitBody: "PROVIDER llamacpp\nMODEL org/m:Q4\nCONTEXT 32k\nPARALLEL 0\n",
+			want:       "invalid PARALLEL",
 		},
 	}
 	for _, tc := range cases {

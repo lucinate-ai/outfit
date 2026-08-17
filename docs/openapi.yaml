@@ -478,6 +478,16 @@ components:
           description: The quantisation to select, where the runner takes one.
         contextSize:
           type: integer
+        parallel:
+          type: integer
+          description: |
+            The number of concurrent request slots the engine should run
+            with. Zero/absent means unset: no parallelism flag is added, and
+            contextSize is used unscaled. Translated into each runner's own
+            flag at start time — llamacpp's ctx-size is scaled by this value,
+            since llama.cpp divides that budget across its parallel slots;
+            vllm's context is left unscaled, since its concurrency is bounded
+            independently via max-num-seqs.
         servedModelName:
           type: string
           description: The name the endpoint advertises the model under.

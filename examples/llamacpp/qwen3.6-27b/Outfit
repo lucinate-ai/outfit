@@ -2,6 +2,10 @@
 # ALIAS names the model in opencode and selects the preset section below.
 PROVIDER llamacpp
 ALIAS    qwen3.6-27b
-CONTEXT  32768            # match the server's --ctx-size
+CONTEXT  32768            # context per request; match the server's --ctx-size
 PRESET   ./preset.ini     # `outfit serve` launches llama-server from this
+# PARALLEL 2              # uncomment to serve 2 concurrent slots — outfit then
+                           # scales --ctx-size to 65536 (32768 * 2) so each slot
+                           # still gets the 32768 CONTEXT asks for; see
+                           # docs/commands/serve.md#parallelism
 # BASEURL http://127.0.0.1:9090/v1   # uncomment for a non-default host/port

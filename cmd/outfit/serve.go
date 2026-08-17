@@ -291,10 +291,28 @@ func resolvePresetPath(presetValue, outfitPath string) (string, error) {
 	return outfitsrc.Resolve(outfitPath, presetValue)
 }
 
+// parseParallel validates an Outfit's PARALLEL value: a plain positive
+// integer count of concurrent request slots, with none of CONTEXT's k/m/g
+// suffix leniency — a slot count, not a size. Empty is not a valid input;
+// callers check sel.Parallel != "" first, exactly as they do for sel.Context.
+func parseParallel(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid PARALLEL %q: must be a positive integer", s)
+	}
+	return n, nil
+}
+
 // vllmServeParams turns the vLLM settings an Outfit states into preset
 // params. The model is deliberately absent — `vllm serve` takes it as its
 // positional argument (see the engine's positional func). ALIAS names what is
 // served, CONTEXT caps the model length, BASEURL binds the address.
+//
+// PARALLEL maps to --max-num-seqs, a concurrency cap independent of context:
+// vLLM shares one dynamically-allocated KV-cache pool across requests via
+// continuous batching, so --max-model-len (from CONTEXT) already bounds a
+// single request and is never scaled by how many run at once — unlike
+// llama.cpp, where --ctx-size is a total budget split across slots.
 func vllmServeParams(sel outfit.Selection) ([]preset.Param, error) {
 	var params []preset.Param
 	if sel.Alias != "" {
@@ -307,6 +325,13 @@ func vllmServeParams(sel outfit.Selection) ([]preset.Param, error) {
 		}
 		params = append(params, preset.Param{Key: "max-model-len", Value: strconv.Itoa(n)})
 	}
+	if sel.Parallel != "" {
+		n, err := parseParallel(sel.Parallel)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, preset.Param{Key: "max-num-seqs", Value: strconv.Itoa(n)})
+	}
 	bind, err := bindAddressParams(sel)
 	if err != nil {
 		return nil, err
@@ -315,24 +340,50 @@ func vllmServeParams(sel outfit.Selection) ([]preset.Param, error) {
 }
 
 // omlxServeParams turns the oMLX settings an Outfit states into preset params.
-// Only the bind address maps: oMLX serves a whole --model-dir and picks the
-// model per request, so MODEL and ALIAS keep their usual job of naming what the
-// harness asks for, and CONTEXT sizes the harness's window rather than the
+// The bind address and PARALLEL map: oMLX serves a whole --model-dir and picks
+// the model per request, so MODEL and ALIAS keep their usual job of naming what
+// the harness asks for, and CONTEXT sizes the harness's window rather than the
 // server (oMLX has no context flag). Everything else — the model directory,
 // memory guard, SSD cache — comes from the PRESET or from oMLX's own settings.
+//
+// PARALLEL maps to --max-concurrent-requests: like vLLM, oMLX serves
+// concurrent requests against its own paged/tiered KV cache rather than
+// dividing a fixed budget per slot, so there is no context flag to scale
+// either way.
 //
 // The API key is deliberately not passed: serve prints the command it runs, and
 // oMLX takes its key as a command-line flag, so passing one would put the secret
 // on screen and in the process table. Auth belongs in oMLX's own settings.
 func omlxServeParams(sel outfit.Selection) ([]preset.Param, error) {
-	return bindAddressParams(sel)
+	var params []preset.Param
+	if sel.Parallel != "" {
+		n, err := parseParallel(sel.Parallel)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, preset.Param{Key: "max-concurrent-requests", Value: strconv.Itoa(n)})
+	}
+	bind, err := bindAddressParams(sel)
+	if err != nil {
+		return nil, err
+	}
+	return append(params, bind...), nil
 }
 
 // llamacppServeParams turns the llama-server settings an Outfit states into
 // preset params: the provider-native MODEL supplies the model source (hf for a
-// Hugging Face repo, model for a .gguf path); ALIAS, CONTEXT, and BASEURL fill
-// in the rest. They seed a preset-less command and, with a preset, override its
-// values.
+// Hugging Face repo, model for a .gguf path); ALIAS, CONTEXT, PARALLEL, and
+// BASEURL fill in the rest. They seed a preset-less command and, with a
+// preset, override its values.
+//
+// PARALLEL maps to --parallel, the slot count. llama.cpp treats --ctx-size as
+// a total KV-cache budget divided across those slots, so when the Outfit
+// states CONTEXT too, the rendered ctx-size is scaled by the slot count —
+// context_tokens * n — rather than passed through unscaled, so CONTEXT keeps
+// meaning "context per request" the way it does for every other engine. A
+// CONTEXT supplied only by a PRESET's own ctx-size (the Outfit itself states
+// none) is left exactly as the preset wrote it: the multiply only applies to
+// an Outfit-stated CONTEXT.
 func llamacppServeParams(sel outfit.Selection) ([]preset.Param, error) {
 	var params []preset.Param
 	if sel.Model != "" {
@@ -345,10 +396,22 @@ func llamacppServeParams(sel outfit.Selection) ([]preset.Param, error) {
 	if sel.Alias != "" {
 		params = append(params, preset.Param{Key: "alias", Value: sel.Alias})
 	}
+	var parallel int
+	if sel.Parallel != "" {
+		n, err := parseParallel(sel.Parallel)
+		if err != nil {
+			return nil, err
+		}
+		parallel = n
+		params = append(params, preset.Param{Key: "parallel", Value: strconv.Itoa(n)})
+	}
 	if sel.Context != "" {
 		n, err := contextsize.Parse(sel.Context)
 		if err != nil {
 			return nil, err
+		}
+		if parallel > 0 {
+			n *= parallel
 		}
 		params = append(params, preset.Param{Key: "ctx-size", Value: strconv.Itoa(n)})
 	}

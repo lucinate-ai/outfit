@@ -878,6 +878,11 @@ var cloudOwnedFlags = map[string]bool{
 	// location is cloud-owned — how the engine is asked to use a drafter
 	// (--spec-type) stays the user's, exactly as it is for a local run.
 	"spec-draft-model": true, "mmproj": true,
+	// Parallelism: outfit computes each runner's own flag from
+	// DeployConfig.Parallel, exactly as it computes ctx-size — a preset's
+	// raw value would otherwise survive in serveArgs and double-define the
+	// flag alongside the computed one.
+	"parallel": true, "max-num-seqs": true, "max-concurrent-requests": true,
 }
 
 // companionRoleForFlag maps a preset flag naming a companion weight to the
@@ -892,6 +897,24 @@ var companionRoleForFlag = map[string]string{
 // isCloudOwned reports whether the cloud sets this preset key itself.
 func isCloudOwned(key string) bool {
 	return cloudOwnedFlags[preset.CanonicalKey(key)]
+}
+
+// parallelPresetKey names the preset key holding a runner's slot count, in
+// that engine's own vocabulary — the same split the *ServeParams functions
+// make when they render it. It is what a deploy reads back out of a preset,
+// so the value survives cloudOwnedFlags dropping it from the passthrough args.
+// A runner with no parallelism key yields "", which reads as "not set".
+func parallelPresetKey(runner string) string {
+	switch runner {
+	case "llamacpp":
+		return "parallel" // also matches the np alias, via CanonicalKey
+	case "vllm":
+		return "max-num-seqs"
+	case "omlx":
+		return "max-concurrent-requests"
+	default:
+		return ""
+	}
 }
 
 // isNodeOwned reports whether a fleet node's daemon sets this preset key
@@ -1026,6 +1049,25 @@ func deployConfig(sel outfit.Selection, outfitPath string, target deployTarget) 
 		dc.ContextSize = n
 	}
 
+	// Parallel falls back to the preset's own parallelism key the same way
+	// context falls back to ctx-size, since that value is about to be dropped
+	// from serveArgs below (it is cloud-owned) — capturing it here is what
+	// keeps it from being silently lost rather than re-emitted as the
+	// deployment's own computed flag. The key is the runner's own spelling:
+	// reading only llama.cpp's would drop a vLLM preset's max-num-seqs on the
+	// floor, since dropOwned removes it either way.
+	parallel := sel.Parallel
+	if key := parallelPresetKey(dc.Runner); parallel == "" && key != "" {
+		parallel = presetValue(key, global, params)
+	}
+	if parallel != "" {
+		n, err := parseParallel(parallel)
+		if err != nil {
+			return dc, err
+		}
+		dc.Parallel = n
+	}
+
 	// The served name is what a coding agent asks for. ALIAS is the friendly
 	// name; without one the repo id is served under its own name.
 	dc.ServedModelName = sel.Alias
@@ -1156,6 +1198,9 @@ func cmdRemoteDeploy(args []string) error {
 	}
 	fmt.Println()
 	fmt.Printf("  context: %d\n", dc.ContextSize)
+	if dc.Parallel > 0 {
+		fmt.Printf("  parallel: %d\n", dc.Parallel)
+	}
 	fmt.Printf("  served:  %s\n", dc.ServedModelName)
 	// Companions are easy to get wrong quietly — a renamed file yields no
 	// drafter and a slower endpoint with no error — so show what was picked up.

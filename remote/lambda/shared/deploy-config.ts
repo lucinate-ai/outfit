@@ -96,6 +96,17 @@ export interface DeployConfig {
   weightsPrefix: string;
   /** Context window in tokens — vLLM's --max-model-len / llama.cpp's --ctx-size. */
   contextSize: number;
+  /**
+   * Concurrent request slots. Optional; absent/undefined means unset — no
+   * parallelism flag, contextSize used unscaled. This value is only stored
+   * and relayed here (via runners/daemon-boot.ts, unchanged, into the JSON
+   * the instance's own outfit daemon reads back); the daemon's Go code —
+   * the same argvFromDeployConfig path a local `outfit serve` also runs
+   * through — is what scales contextSize by it for llama.cpp (--ctx-size is
+   * a total budget divided across --parallel slots) and leaves it unscaled
+   * for vLLM (--max-num-seqs is an independent concurrency cap).
+   */
+  parallel?: number;
   /** The model name the API reports and clients request. */
   servedModelName: string;
   /** Runner-specific extra flags appended to the serve command, pre-tokenised. */
@@ -136,6 +147,13 @@ export function parseDeployConfig(raw: string | undefined): DeployConfig {
   if (!Number.isInteger(contextSize) || contextSize <= 0) {
     throw new Error(`deploy-config.contextSize must be a positive integer, got ${obj.contextSize}`);
   }
+  let parallel: number | undefined;
+  if (obj.parallel !== undefined) {
+    parallel = Number(obj.parallel);
+    if (!Number.isInteger(parallel) || parallel <= 0) {
+      throw new Error(`deploy-config.parallel must be a positive integer, got ${obj.parallel}`);
+    }
+  }
   const serveArgs = obj.serveArgs ?? [];
   if (!Array.isArray(serveArgs) || serveArgs.some((a) => typeof a !== 'string')) {
     throw new Error('deploy-config.serveArgs must be an array of strings');
@@ -148,6 +166,7 @@ export function parseDeployConfig(raw: string | undefined): DeployConfig {
     // Derived, so any weightsPrefix in the request body is ignored.
     weightsPrefix: weightsPrefixFor(obj.runner, modelId, quant),
     contextSize,
+    parallel,
     servedModelName,
     serveArgs: serveArgs as string[],
     companions: parseCompanions(obj.companions),

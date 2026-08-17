@@ -216,6 +216,62 @@ func TestDaemonDeployConfigPersistence(t *testing.T) {
 	}
 }
 
+// TestDaemonDeployConfigParallelSurvivesRestart covers the half of a pushed
+// config that only shows up later: a slot count is stored on disk and read
+// back by the *next* start, so a daemon restarted between the push and the
+// start still serves what was asked for. A field that marshals but does not
+// unmarshal would pass every same-process test and lose the value here.
+func TestDaemonDeployConfigParallelSurvivesRestart(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+	dc := remote.DeployConfig{
+		Runner: "llamacpp", ModelID: "org/model",
+		ContextSize: 128000, Parallel: 2, ServeArgs: []string{},
+	}
+	if err := d.Push(dc); err != nil {
+		t.Fatal(err)
+	}
+
+	d2 := testDaemon(t, "exit 0")
+	d2.Dir = d.Dir
+	got, err := d2.StoredConfig()
+	if err != nil || got == nil {
+		t.Fatalf("restarted StoredConfig = %+v, %v", got, err)
+	}
+	if got.Parallel != 2 {
+		t.Errorf("parallel = %d, want 2 to survive the restart", got.Parallel)
+	}
+	if got.ContextSize != 128000 {
+		t.Errorf("contextSize = %d, want the stored 128000 unscaled", got.ContextSize)
+	}
+}
+
+// TestDaemonDeployConfigOmitsUnsetParallel pins the cross-language half of the
+// contract. The same struct is marshalled to the deploy Lambda, whose
+// validator rejects a parallel that is present but not a positive integer — so
+// an unset slot count must be *absent* from the JSON, not a zero. Dropping the
+// omitempty would send "parallel": 0 and fail every deployment that never
+// asked for parallelism at all.
+func TestDaemonDeployConfigOmitsUnsetParallel(t *testing.T) {
+	d := testDaemon(t, "exit 0")
+	if err := d.Push(remote.DeployConfig{
+		Runner: "llamacpp", ModelID: "org/model", ServeArgs: []string{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(d.Dir, "deploy-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "parallel") {
+		t.Errorf("an unset parallel must be omitted, not serialised as a zero:\n%s", data)
+	}
+	// The sibling field has no omitempty, so this asserts the check above is
+	// discriminating rather than passing on a JSON that says nothing at all.
+	if !strings.Contains(string(data), "contextSize") {
+		t.Errorf("expected contextSize to still be serialised:\n%s", data)
+	}
+}
+
 func TestDaemonAPI(t *testing.T) {
 	d := testDaemon(t, `trap 'exit 0' TERM
 while true; do sleep 0.05; done`)

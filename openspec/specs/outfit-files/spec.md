@@ -10,14 +10,18 @@ provider selection — and the commands that consume and produce it:
 
 An Outfit SHALL be a flat, line-oriented text file of `KEYWORD value`
 instructions. The keywords are `PROVIDER`, `MODEL`, `ALIAS`, `CONTEXT`,
-`OUTPUT`, `BASEURL` (also accepted as `BASE-URL`, `BASE_URL`, or `URL`),
-`PRESET`, `REMOTE`, `FLEET`, and `ENV`. Keywords SHALL match
+`OUTPUT`, `PARALLEL`, `BASEURL` (also accepted as `BASE-URL`, `BASE_URL`, or
+`URL`), `PRESET`, `REMOTE`, `FLEET`, and `ENV`. Keywords SHALL match
 case-insensitively, with UPPERCASE as the canonical form. Blank lines, full-line
 `#` comments, and trailing comments introduced by whitespace-then-`#` SHALL be
 ignored. Each instruction SHALL take exactly one value; every instruction SHALL
 appear at most once, except `ENV`, which MAY be repeated. An `ENV` instruction's
 value SHALL be a single `KEY=VALUE` token with a non-empty key and no
-whitespace. `PROVIDER` is required. Parse errors SHALL name the offending line.
+whitespace. `PARALLEL`'s value SHALL name a count of concurrent request slots;
+like `CONTEXT`, its numeric validity (a positive integer) is enforced by the
+commands that consume it rather than by parsing itself, and what it does to
+the served engine's command is defined by the `local-serving` capability.
+`PROVIDER` is required. Parse errors SHALL name the offending line.
 
 #### Scenario: A minimal Outfit
 
@@ -63,6 +67,18 @@ whitespace. `PROVIDER` is required. Parse errors SHALL name the offending line.
 - **WHEN** an Outfit contains an `ENV` instruction whose value has no `=` or an
   empty key
 - **THEN** parsing fails, naming the offending line
+
+#### Scenario: Setting the number of parallel slots
+
+- **WHEN** an Outfit contains `PARALLEL 2`
+- **THEN** it parses, yielding a parallel count of 2 in the selection
+
+#### Scenario: A non-numeric or non-positive PARALLEL is caught on use
+
+- **WHEN** an Outfit contains `PARALLEL 0`, `PARALLEL -1`, or `PARALLEL abc`
+- **THEN** parsing accepts the raw value, exactly as it does for `CONTEXT`, and
+  the command that goes on to use it (`serve`, `remote deploy`, a fleet wake)
+  fails naming the value, rather than silently treating it as a slot count
 
 ### Requirement: Harness neutrality
 

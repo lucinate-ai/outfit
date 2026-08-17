@@ -1,37 +1,4 @@
-# Inference Runners Specification
-
-## Purpose
-
-Define which inference engine serves a deployment, how it is chosen and
-configured, and how the engine's command is built.
-## Requirements
-### Requirement: Choosing an inference engine
-
-A deployment SHALL serve through one of a fixed set of inference engines. There
-SHALL be no default: an engine is a deliberate choice, and a deployment whose
-engine is unset or unrecognised SHALL fail loudly rather than assume one, at
-the point the configuration is accepted and again when an instance is started.
-
-Each engine SHALL have its own machine image, identified by the engine it was
-built for, so that starting an instance uses an image carrying that engine.
-Both images SHALL remain available, so moving a deployment from one engine to
-the other is a matter of what is deployed, not of rebuilding anything.
-
-#### Scenario: No engine chosen
-
-- **WHEN** a configuration naming no engine is deployed
-- **THEN** it is rejected saying which engines are accepted
-
-#### Scenario: The image matches the engine
-
-- **WHEN** an instance is started for a deployment
-- **THEN** it is launched from the most recent image built for that
-  deployment's engine
-
-#### Scenario: Changing engine
-
-- **WHEN** a deployment naming the other engine is applied
-- **THEN** the next start serves through that engine, with no image rebuilt
+## MODIFIED Requirements
 
 ### Requirement: What to serve is stored, not built in
 
@@ -135,4 +102,3 @@ machine's process list.
   parallelism value
 - **THEN** the started engine's command carries the context window unscaled
   and a concurrency flag set from the parallelism value
-
