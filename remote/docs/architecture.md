@@ -7,14 +7,17 @@ the [README](../README.md); for the pound-and-pence, [costs.md](costs.md).
 
 A **scale-to-zero, self-hosted OpenAI-compatible LLM endpoint** on AWS. A GPU
 instance exists only while you are actually serving requests: a start Lambda
-launches one on demand, and a stop Lambda terminates it after idle. Nothing runs
-(and almost nothing is billed) at rest.
+launches one on demand (or re-wakes one the sweep has stopped), and a stop
+Lambda stops it after idle, then terminates it after a retention period.
+Nothing runs (and almost nothing is billed) at rest.
 
 Three ideas hold it together:
 
-- **The instance is stateless.** No fixed EC2 instance, no persistent EBS. The
-  start Lambda launches one from a baked AMI, the stop Lambda terminates it. The
-  model weights live in S3 and are synced onto the instance at boot.
+- **The instance is stateless.** No fixed EC2 instance; the weights live in S3
+  and are synced onto the instance at boot. The start Lambda launches one from a
+  baked AMI, or **re-wakes** a stopped one (its boot disk and synced weights
+  survive a stop, so a re-wake skips the launch and the sync) — and the stop
+  Lambda stops idle ones before terminating them past retention.
 - **The runner is pluggable.** The inference server (currently vLLM; llama.cpp
   landing) is chosen per deployment, not hard-wired. A runner-neutral
   *deploy-config* says what to serve; the start Lambda builds the right command.
@@ -51,18 +54,19 @@ flowchart TB
   inst["EC2 g6e (L40S)<br/>runner + weights"]
 
   outfit -->|SigV4 start, status| start
-  outfit -->|SigV4 stop| stop
+  outfit -->|SigV4 stop / pause| stop
   outfit -->|SigV4 deploy| deploy
   deploy -->|write| dcfg
   start -->|read at wake| dcfg
   start -->|RunInstances<br/>+ associate| eip
-  start -.->|launch newest AMI by tag| ami
-  inst -->|sync at boot| s3
-  eip --- inst
-  agent -->|http + api key| inst
-  sched --> stop
-  stop -->|SSM status scrape, terminate| inst
-  start -->|SSM health| inst
+   start -.->|launch newest AMI by tag| ami
+   inst -->|sync at boot| s3
+   eip --- inst
+   agent -->|http + api key| inst
+   sched --> stop
+   stop -->|SSM status scrape;<br/>stop, then terminate| inst
+   start -->|StartInstances (re-wake)| inst
+   start -->|SSM health| inst
 ```
 
 The Lambdas live **outside the VPC** (no NAT cost) and reach the instance over
@@ -165,18 +169,30 @@ engine's counters every 15 seconds and reports `idleSeconds` on `/v1/status`;
 the Lambda reads that number and applies the policy only it knows — retention,
 the hard cap, the grace period.
 
+The shutdown is **tiered**: an idle running instance is *stopped* (its boot
+disk and the weights synced onto it survive, so a start re-wakes it in seconds
+rather than re-launching from the AMI), and a stopped instance is *terminated*
+once it has slept longer than `stopRetentionMinutes` — no volume is billed
+forever. The stop Lambda marks its own stops with a `Stopped-At` instance tag
+(EC2 has no stop time to read), and the start Lambda records a `Started-At`
+tag on each re-wake so the max-runtime cap and grace period measure the current
+session, not first boot.
+
 ```mermaid
 flowchart TB
-  tick["EventBridge tick<br/>(every 5 min)"] --> stop["StopFn idleCheck"]
-  stop --> retain{"Retain-Until<br/>in the future?"}
+  tick["EventBridge tick<br/>(every 5 min)"] --> state{"instance<br/>state?"}
+  state -->|stopped| sret{"stopped longer than<br/>stopRetentionMinutes?"}
+  sret -->|yes| term["TerminateInstances"]
+  sret -->|no| wait4["wait"]
+  state -->|running| retain{"Retain-Until<br/>in the future?"}
   retain -->|yes| wait1["wait"]
   retain -->|no| cap{"past max runtime?"}
-  cap -->|yes| term["TerminateInstances"]
-  cap -->|no| grace{"within grace<br/>of launch?"}
+  cap -->|yes| stopit["StopInstances<br/>+ Stopped-At tag"]
+  cap -->|no| grace{"within grace<br/>of session start?"}
   grace -->|yes| wait2["wait"]
   grace -->|no| scrape["SSM: scrape /v1/status"]
   scrape --> idle{"daemon idleSeconds<br/>> threshold?"}
-  idle -->|yes| term
+  idle -->|yes| stopit
   idle -->|no| wait3["wait"]
 ```
 
@@ -187,13 +203,17 @@ keeps no activity history — there is no `idle-state` parameter and no wake
 timestamp, because the daemon counts an engine start as activity itself.
 
 A daemon that cannot be reached, or that answers without a last-active time,
-counts as "no activity", so a wedged box is still terminated at the threshold
+counts as "no activity", so a wedged box is still stopped at the threshold
 rather than burning GPU-hours. There is deliberately **no fallback** to reading
 counters: an instance whose baked outfit predates this behaviour reports no
 last-active time and is treated as idle, which is why the AMIs are re-baked
-before the stack is deployed. A `Retain-Until` instance tag (UTC ISO-8601)
-overrides both the idle timer and the max-runtime cap; a manual `outfit remote
-stop` still terminates immediately.
+before the stack is deployed. A stopped instance with no `Stopped-At` tag
+(stopped outside the control plane, or a crash between the stop and its tag) is
+self-healed: the next sweep records the stop time and gives it the full
+retention. A `Retain-Until` instance tag (UTC ISO-8601) overrides both the idle
+timer and the max-runtime cap (and, on a stopped instance, its termination);
+`outfit remote pause` stops an instance on purpose, and a manual
+`outfit remote stop` still terminates it immediately.
 
 ## Image stack
 

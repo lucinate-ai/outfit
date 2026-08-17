@@ -48,12 +48,17 @@ export interface LlmConfig {
    * driver (open kernel modules, required for Ada/L40S), not the CUDA toolkit.
    */
   nvidiaDriverPackage: string;
-  /** Terminate an environment's instance after this many minutes without requests. */
+  /** Stop an environment's instance after this many minutes without requests. */
   idleThresholdMinutes: number;
-  /** Never idle-terminate within this many minutes of launch (model load time). */
+  /**
+   * Keep a stopped instance (boot disk and weights preserved, so a start
+   * re-wakes it quickly) for this many minutes before terminating it.
+   */
+  stopRetentionMinutes: number;
+  /** Never idle-stop within this many minutes of launch (model load time). */
   gracePeriodMinutes: number;
   /**
-   * Hard cap on a running session: terminate this many minutes after launch,
+   * Hard cap on a running session: stop this many minutes after launch,
    * even if requests are still flowing.
    */
   maxRuntimeMinutes: number;
@@ -106,8 +111,12 @@ const DEFAULTS = {
   // with `-c outfitVersion=` to pin or roll back.
   nvidiaDriverPackage: 'nvidia-driver-570-server-open',
   idleThresholdMinutes: 15,
+  // A stopped instance bills its root volume, so the retention balances the
+  // re-wake speed (weights and boot disk kept warm) against storage cost: a
+  // few hours of pause, then the instance is gone.
+  stopRetentionMinutes: 720,
   // Must exceed the whole cold start (S3 sync ~4 min + weight/CUDA load), or
-  // the idle check terminates the instance mid-load (the metrics scrape fails
+  // the idle check stops the instance mid-load (the metrics scrape fails
   // while the server is still loading, which reads as "idle").
   gracePeriodMinutes: 30,
   maxRuntimeMinutes: 240,
@@ -211,6 +220,7 @@ export function loadConfig(
     outfitVersion: contextString(app, 'outfitVersion', latestReleaseVersion()),
     nvidiaDriverPackage: contextString(app, 'nvidiaDriverPackage', DEFAULTS.nvidiaDriverPackage),
     idleThresholdMinutes: contextNumber(app, 'idleThresholdMinutes', DEFAULTS.idleThresholdMinutes),
+    stopRetentionMinutes: contextNumber(app, 'stopRetentionMinutes', DEFAULTS.stopRetentionMinutes),
     gracePeriodMinutes: contextNumber(app, 'gracePeriodMinutes', DEFAULTS.gracePeriodMinutes),
     maxRuntimeMinutes: contextNumber(app, 'maxRuntimeMinutes', DEFAULTS.maxRuntimeMinutes),
     enginePort: DEFAULTS.enginePort,

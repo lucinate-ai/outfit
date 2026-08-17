@@ -12,6 +12,9 @@ import {
   runInstance,
   runShellCommand,
   sleep,
+  STARTED_AT_TAG,
+  startInstance,
+  tagInstance,
 } from '../shared/aws';
 import { type DeployConfig, logGroupEnvVar, type Runner, RUNNERS } from '../shared/deploy-config';
 import {
@@ -50,7 +53,10 @@ const ENGINE_LOG_FILE = `${DAEMON_CONFIG_DIR}/daemon/engine.log`;
 const DEADLINE_MARGIN_MS = 20_000;
 const POLL_MS = 5_000;
 const HEALTH_POLL_MS = 10_000;
-const TERMINAL_STATES = new Set(['shutting-down', 'terminated', 'stopping', 'stopped']);
+// stopping/stopped are re-wakable, not terminal: the sweep stops instances
+// now, so a wake must find the one it is trying to revive rather than fail on
+// it. Only states headed for the scrapyard end a wake.
+const TERMINAL_STATES = new Set(['shutting-down', 'terminated']);
 
 const HEALTH_COMMAND =
   `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${ENGINE_PORT}/health || true`;
@@ -184,10 +190,17 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
 
   const existing = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   let instanceId: string;
+  let startIssued = false;
   if (existing) {
-    // Idempotent: this environment's instance is already up (or coming up).
+    // Idempotent: this environment's instance already exists (up, coming up,
+    // or stopped — the sweep stops idle ones now, so this is the normal
+    // re-wake path).
     instanceId = existing.instanceId;
     console.log(JSON.stringify({ phase: 'existing', environment: env, instanceId, state: existing.state }));
+    if (existing.state === 'stopped') {
+      await rewake(instanceId);
+      startIssued = true;
+    }
   } else {
     const launched = await launchAcrossAzs(env, deployConfig, securityGroupId);
     if ('error' in launched) {
@@ -214,7 +227,19 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
       break;
     }
     if (TERMINAL_STATES.has(state)) {
-      return jsonResponse(500, { state, message: `instance went ${state} while starting` });
+      // A dying instance is not this wake's machine to adopt; the deploy
+      // config is intact, so a retry launches a fresh one.
+      return jsonResponse(
+        503,
+        { state, message: `instance went ${state} while starting`, retry_after_seconds: 300 },
+        { 'retry-after': '300' },
+      );
+    }
+    if (state === 'stopped' && !startIssued) {
+      // A stop raced us between discovery and now; issue the re-wake here so
+      // one wake owns at most one start call.
+      await rewake(instanceId);
+      startIssued = true;
     }
     await sleep(POLL_MS);
   }
@@ -245,6 +270,24 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
 
   console.log(JSON.stringify({ phase: 'deadline', environment: env, instanceId }));
   return jsonResponse(503, { state: 'starting', retry_after_seconds: 60 }, { 'retry-after': '60' });
+}
+
+/**
+ * Re-wake a stopped instance and record when this session began. The boot
+ * script re-runs on start — the S3 sync is a no-op over the weights the root
+ * volume already holds — and the on-instance crash-recovery check starts the
+ * engine, so the existing phase polling (SSM agent, health) then applies
+ * unchanged. The Started-At tag is best-effort: losing it only makes the max-
+ * runtime judgement conservative (measuring from first launch), never unsafe.
+ */
+async function rewake(instanceId: string): Promise<void> {
+  console.log(JSON.stringify({ phase: 'rewake', instanceId }));
+  await startInstance(instanceId);
+  try {
+    await tagInstance(instanceId, STARTED_AT_TAG, new Date().toISOString());
+  } catch (err) {
+    console.log(JSON.stringify({ phase: 'rewake', instanceId, error: `tag ${errorName(err)}` }));
+  }
 }
 
 /** Try each AZ's subnet in turn, skipping ones without capacity. */

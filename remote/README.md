@@ -9,8 +9,9 @@ VPC and the AMI bake pipelines — is deployed **once per account** by
 own Elastic IP, API key and allowed CIDR — are created on it by
 `outfit remote deploy`, as many as you need side by side. An environment's GPU
 instance exists only while you are actually using it: the start Lambda
-launches it on demand, and the stop Lambda's idle sweep terminates it after a
-period of idleness.
+launches it on demand (and re-wakes it when it is merely stopped), and the
+stop Lambda's idle sweep stops it after a period of idleness, then terminates
+it after a further retention period.
 
 The inference engine is **pluggable** — [llama.cpp](https://github.com/ggml-org/llama.cpp)
 or [vLLM](https://docs.vllm.ai). The deployed default is llama.cpp, serving
@@ -50,8 +51,9 @@ outfit remote deploy ─▶ deploy Lambda ─▶ creates env <name>: EIP, SG (yo
 outfit remote start ─SigV4▶ start Lambda ─ RunInstances (try each AZ) ─▶ EC2 g6e.xlarge
 outfit remote status ──?env▶ (Function URL,  + the env's EIP, SSM)      │ L40S 48GB
 outfit remote stop ───────▶ stop Lambda        AWS_IAM auth             │ s3 sync weights
-                                 ▲                                      │ engine on :8000
-EventBridge rate(5 min) ─────────┘ (idle sweep over EVERY environment)  ▼
+outfit remote pause ──────▶  (stop, not terminate)                      │ engine on :8000
+                                  ▲
+EventBridge rate(5 min) ─────────┘ (idle sweep: stop, then terminate)  ▼
 coding agent ── OPENAI_BASE_URL=http://<env EIP>:8000/v1 + api key ──▶ direct HTTP
 ```
 
@@ -164,9 +166,10 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `llamacppRelease` | `b10435` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
 | `vllmVersion` | `0.26.0` | vLLM version installed into that AMI's venv (`uv pip install`) |
 | `nvidiaDriverPackage` | `nvidia-driver-570-server-open` | Driver installed in both AMIs |
-| `idleThresholdMinutes` | `15` | Terminate after this long without requests |
-| `gracePeriodMinutes` | `30` | Never terminate this soon after boot (covers the cold load) |
-| `maxRuntimeMinutes` | `240` | Hard terminate this long after boot, even if busy |
+| `idleThresholdMinutes` | `15` | Stop after this long without requests |
+| `stopRetentionMinutes` | `720` | Keep a stopped instance (re-wakeable) this long before terminating it |
+| `gracePeriodMinutes` | `30` | Never stop this soon after boot (covers the cold load) |
+| `maxRuntimeMinutes` | `240` | Hard stop this long after boot, even if busy |
 
 The **model, quant, context window and engine flags are not in this table** —
 they come from the `Outfit` and its preset via `outfit remote deploy`, so
@@ -250,11 +253,12 @@ its `REMOTE` names the environment `deploy` registered under
 reads `./Outfit`):
 
 ```sh
-outfit remote start    # boots the instance, blocks until it is serving,
-                       # prints OPENAI_BASE_URL + OPENAI_API_KEY exports
+outfit remote start    # boots (or re-wakes a stopped) the instance, blocks
+                        # until it is serving, prints OPENAI_BASE_URL + OPENAI_API_KEY exports
 outfit apply           # points your coding agent at the endpoint
 outfit remote status   # instance state + endpoint health
-outfit remote stop     # stop immediately instead of waiting for the idle timer
+outfit remote pause    # stop now (no terminate); a later start re-wakes it
+outfit remote stop     # terminate now instead of waiting for the idle timer
 ```
 
 `outfit apply` writes the endpoint's base URL and API key into your harness
@@ -281,11 +285,17 @@ curl "$OPENAI_BASE_URL/chat/completions" \
 The on-instance outfit daemon reads its engine's request/token counters every
 15 seconds and keeps track of when the engine was last doing work, which it
 reports as `lastActiveAt` and `idleSeconds` on `/v1/status`. Every 5 minutes
-the stop Lambda asks for that (via SSM) and **terminates** the instance once
+the stop Lambda asks for that (via SSM) and **stops** the instance once
 `idleSeconds` passes `idleThresholdMinutes`. With defaults, expect that
-**15–20 minutes** after the last request. Terminated means $0 compute and no
-volume left behind — the next `outfit remote start` launches a fresh one from
-the AMI.
+**15–20 minutes** after the last request.
+
+Stopping (rather than terminating) keeps the boot disk and the weights the
+boot synced onto it, so the next `outfit remote start` **re-wakes** the
+instance — a boot without a fresh launch and a no-op S3 sync — instead of
+launching one from the AMI. The stopped instance is billed for its volume only,
+not compute, and the sweep **terminates** it once it has been stopped longer
+than `stopRetentionMinutes` (default 12 h): after that, the next start is a
+fresh launch again. `outfit remote pause` does the same stop on purpose.
 
 Sampling on the box is what makes this reliable: a busy endpoint that happens
 to have nothing in flight at the moment a 5-minute sweep lands used to read as
@@ -293,18 +303,19 @@ idle, because that single sample was the entire signal. Sixty samples between
 sweeps cannot miss traffic the way one can.
 
 If the daemon cannot be reached, or answers without a last-active time, the
-instance is treated as showing no activity and is still terminated at the
+instance is treated as showing no activity and is still stopped at the
 threshold — deliberately, so a wedged box does not run up GPU-hours unnoticed.
 That second case is also why the **runtime AMIs must be re-baked before the
 control plane is deployed**: an outfit older than daemon-owned idle detection
 reports no last-active time, and there is no fallback to counter scraping.
 
-There is also a hard cap: `maxRuntimeMinutes` (default 4 hours) terminates the
-instance that long after it started **even if requests are still flowing**, as
-a backstop against a runaway session. Each launch resets the clock, so it caps
-a session, not anything cumulative — if you hit it mid-work, `outfit remote
-start` brings the endpoint back for another 4 hours. Like the idle stop, it
-lands on the next 5-minute tick.
+There is also a hard cap: `maxRuntimeMinutes` (default 4 hours) stops the
+instance that long after its session started **even if requests are still
+flowing**, as a backstop against a runaway session. A session begins at launch
+or re-wake (the control plane records both on the instance), so it caps one
+running session, not anything cumulative — if you hit it mid-work, `outfit
+remote start` brings the endpoint back for another 4 hours. Like the idle
+stop, it lands on the next 5-minute tick.
 
 **Pinning an instance up**: tag it `Retain-Until` with a UTC ISO-8601 time and
 neither the idle timer nor the hard cap will touch it until then — handy while
@@ -319,8 +330,11 @@ aws ec2 create-tags --resources <instance id> \
 
 At rest (nothing running) the endpoint costs only the **Elastic IP, the S3
 weights (~$0.60/mo for the 26 GB GGUF), the AMI snapshots, and Secrets
-Manager — roughly $6–7/month** — because the instance is terminated, not stopped, so there
-is no idle EBS volume. While running it is **$1.86/hour in us-east-1**; ~2 h of
+Manager — roughly $6–7/month**. Between the idle stop and the instance's
+termination after `stopRetentionMinutes`, its stopped root volume adds a small
+EBS charge; long-term idle costs the same as today,
+because the sweep does terminate eventually. While running it is
+**$1.86/hour in us-east-1**; ~2 h of
 coding a day lands around $90/month. Full breakdown in
 [docs/costs.md](docs/costs.md).
 

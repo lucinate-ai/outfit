@@ -1,6 +1,6 @@
 ## Context
 
-The remote control plane currently terminates an EC2 instance as soon as the idle check decides to stop it. The stop Lambda's `decideIdle` returns `action: 'stop'` which is implemented as `terminateInstance`. The start Lambda treats a stopped instance as terminal and errors instead of re-waking it.
+The remote control plane currently terminates an EC2 instance as soon as the idle check decides to stop it. The stop Lambda's `decideIdle` returns `action: 'stop'` which is implemented as `terminateInstance`. The start Lambda treats a stopped instance as terminal and errors instead of re-waking it. Two further constraints surfaced during implementation: `findManagedInstances` filters instance states to `pending`/`running`, so a stopped instance is invisible to both Lambdas; and EC2 exposes no stop time from `DescribeInstances`, so the stop-retention timer needs a timestamp the control plane owns.
 
 ## Goals / Non-Goals
 
@@ -19,32 +19,44 @@ The remote control plane currently terminates an EC2 instance as soon as the idl
 ## Decisions
 
 **Two-stage idle decision**
-- Extend `IdleDecision` to distinguish `stop` (EC2 stop) from `terminate`. Keep `decideIdle` for the first stage (running → stopped). A second check for stopped instances uses `stoppedSince` to decide termination.
-- Alternative: a single decision with a `stop` action that later becomes termination. Rejected because it conflates policy with state.
+- `decideIdle` takes the instance's state and returns distinct actions: `stop` (EC2 stop) for a running instance past its bounds, and `terminate` for a stopped instance past stop retention. Retain-until, grace period and max runtime bound the *running session*; a stopped instance is judged on stop retention alone (plus retain-until).
+- Alternative: a single `stop` action that later becomes termination. Rejected because it conflates policy with state and forces callers to track which stage produced the action.
+
+**Instance discovery**
+- `findManagedInstances` gains `stopped` in its instance-state-name filter (`pending`, `running`, `stopped`), so the sweep can see stopped instances to terminate after retention, and the start Lambda's existing "existing instance" lookup finds the one to re-wake. `stopping`/`shutting-down` stay out: transient states where a second act is a footgun — the sweep skips them, the start Lambda waits them out.
+- Alternative: a separate stopped-instance query. Rejected — one discovery path is the single place both Lambdas agree on what exists.
+
+**Stop time: a `Stopped-At` tag**
+- EC2 exposes no stop time from `DescribeInstances`, so the control plane writes the stop time on the instance as a tag (`Stopped-At`, ISO-8601 UTC) — the same mechanism as the existing `Retain-Until` tag. Both the idle sweep and a manual pause write it as they issue the stop.
+- A stopped instance without the tag (stopped outside the control plane, or a Lambda crash between the EC2 call and the tag write) self-heals: the next sweep tags it with now and warns, so it gets the full retention instead of an immediate death.
+- Alternative: an SSM parameter per environment. Rejected — a tag travels with the instance, is visible in the console, and cannot outlive it by accident.
+
+**Session start and max runtime**
+- A stop→start cycle keeps the same instance, so max runtime and the grace period must measure the *current session*, not first boot. The start Lambda writes a `Started-At` tag when it re-wakes a stopped instance; the sweep computes `sessionStart = Started-At ?? LaunchTime` and passes that as the session origin to `decideIdle`.
+- Correctness no longer depends on how EC2 reports `LaunchTime` across stop/start cycles.
+- Alternative: trust `LaunchTime` or the daemon's uptime. Rejected — neither is guaranteed per-session; daemon uptime also resets on crash-restarts inside one session.
 
 **Instance start handling**
-- `start/index.ts` will check existing instance state. If state is `stopped`, call EC2 `startInstances` and wait for `running`, then continue to EIP association and health checks. If state is `terminated` or absent, launch new instance as before.
-- Alternative: always terminate stopped instances before launching new ones. Rejected because it loses fast re-wake benefit.
+- `start/index.ts` checks the existing instance state: `stopped` → `startInstances`, write the `Started-At` tag, then continue through the existing phase polling (EIP association, SSM agent, health); `stopping` → keep polling for the transition; `shutting-down`/`terminated` → fail with a retryable 503 so a retry launches fresh; absent → launch new as before.
+- The re-wake needs no new boot path: the boot script re-runs on start, the S3 sync is effectively a no-op over the weights that the persistent root volume already holds, systemd restarts the daemon, and the on-instance crash-recovery check starts the engine.
 
 **Configuration**
-- Add two env vars to the stop/start Lambdas: `STOP_RETENTION_MINUTES` (how long a stopped instance is kept before termination) and `IDLE_THRESHOLD_MINUTES` remains for running → stopped. Existing `IDLE_THRESHOLD_MINUTES`, `GRACE_PERIOD_MINUTES`, `MAX_RUNTIME_MINUTES` stay.
-- Alternative: reuse idle threshold for both stages. Rejected because stop retention should be independent.
-
-**Termination of stopped instances**
-- The idle sweep will process both running and stopped instances. For running, use existing `decideIdle`. For stopped, if `stoppedSince` > `STOP_RETENTION_MINUTES` and retain-until not in future, call `terminateInstance`.
-- Alternative: a separate timer. Rejected to keep single sweep.
+- One new env var on the stop Lambda: `STOP_RETENTION_MINUTES` (how long a stopped instance is kept before termination). `IDLE_THRESHOLD_MINUTES`, `GRACE_PERIOD_MINUTES` and `MAX_RUNTIME_MINUTES` stay unchanged.
+- Alternative: reuse the idle threshold for both stages. Rejected — the retention trade-off (EBS cost vs re-wake speed) is independent of GPU-idle cost.
 
 **Pause command handling**
-- `outfit remote pause` invokes the stop Lambda in pause mode, calling EC2 `stopInstances` instead of `terminateInstance`. Manual `outfit remote stop` remains immediate termination.
+- `outfit remote pause` invokes the stop Lambda in pause mode: write the `Stopped-At` tag, then `stopInstances`. Manual `outfit remote stop` remains immediate termination.
 - Alternative: a separate pause Lambda. Rejected to keep control plane surface minimal and reuse auth/validation.
 
 ## Risks / Trade-offs
 
-[Cost of stopped instances] → Stopped EC2 still incurs EBS charges. Mitigation: `STOP_RETENTION_MINUTES` defaults to a few hours, balancing fast re-wake vs cost.
+[Cost of stopped instances] → A stopped EC2 instance still bills its root volume (and the idle EIP). Mitigation: `STOP_RETENTION_MINUTES` is configurable; its default balances fast re-wake against storage cost.
 
-[State drift on launchTime] → EC2 `LaunchTime` resets on stop/start? It does not; use instance `stoppedTime` field. Mitigation: track `stoppedSince` from EC2 `stateTransitionReason` or store timestamp on first stop.
+[Missing stop tag after a crash] → A Lambda crash between the EC2 stop call and the tag write leaves a stopped instance with no `Stopped-At`. Mitigation: the sweep self-heals with now plus a warning log — the instance buys its full retention rather than being killed early; a few hours of storage on a rare crash path is acceptable.
 
-[Manual stop expectations] → Users may expect stop to stop, not terminate. Mitigation: manual stop remains terminate; CLI `stop` is explicit termination. Document change.
+[A paused instance is indistinguishable from an idle-stopped one] → The sweep will terminate a paused instance after retention, like any other stopped one. That is the intent (pause is "stop now, please"), and the `Retain-Until` override already exists to pin a paused instance.
+
+[Manual stop expectations] → Users may expect `stop` to stop, not terminate. Mitigation: the CLI makes the distinction explicit — `stop` is deliberate termination, `pause` is deliberate stopping — and both are documented in the command help.
 
 ## Migration Plan
 

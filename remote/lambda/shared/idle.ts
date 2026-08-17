@@ -42,11 +42,18 @@ export interface IdleDecisionInput {
    * future, do not terminate for any automatic reason (idle or max-runtime).
    */
   retainUntil?: Date;
+  /** Optional retention for stopped instances before termination. */
+  stopRetentionMinutes?: number;
+  /** When the instance entered stopped state, if applicable. */
+  stoppedSince?: Date;
+  /** Current instance state for tiered decision. */
+  instanceState?: 'running' | 'stopped';
 }
 
 export type IdleDecision =
   | { action: 'wait'; reason: string }
-  | { action: 'stop'; reason: string };
+  | { action: 'stop'; reason: string }
+  | { action: 'terminate'; reason: string };
 
 export function decideIdle(input: IdleDecisionInput): IdleDecision {
   const {
@@ -57,6 +64,9 @@ export function decideIdle(input: IdleDecisionInput): IdleDecision {
     gracePeriodMinutes,
     maxRuntimeMinutes,
     retainUntil,
+    stopRetentionMinutes,
+    stoppedSince,
+    instanceState,
   } = input;
 
   // A manual Retain-Until override beats every automatic reason to stop,
@@ -66,6 +76,21 @@ export function decideIdle(input: IdleDecisionInput): IdleDecision {
     return {
       action: 'wait',
       reason: `retained until ${retainUntil.toISOString()}`,
+    };
+  }
+
+  // Tiered handling for stopped instances: terminate after retention
+  if (instanceState === 'stopped' && stoppedSince && stopRetentionMinutes !== undefined) {
+    const minutesStopped = minutesBetween(stoppedSince, now);
+    if (minutesStopped > stopRetentionMinutes) {
+      return {
+        action: 'terminate',
+        reason: `stopped for ${minutesStopped.toFixed(1)} min, over stop retention (${stopRetentionMinutes} min)`,
+      };
+    }
+    return {
+      action: 'wait',
+      reason: `stopped for ${minutesStopped.toFixed(1)} min (retention ${stopRetentionMinutes} min)`,
     };
   }
 

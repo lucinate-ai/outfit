@@ -29,7 +29,9 @@ import (
 
 // cmdRemote dispatches the remote subcommands, which control the
 // scale-to-zero GPU inference instance defined in this repo's remote/:
-// start boots it and prints the endpoint exports, stop shuts it down
+// start boots it and prints the endpoint exports, pause stops it without
+// terminating it (the sweep terminates stopped instances after their
+// retention, and a later start re-wakes them), stop shuts it down
 // immediately (its stop Lambda also runs on a schedule to auto-stop on
 // idle), status reports instance state and endpoint health, and deploy sets
 // what the instance will serve from the Outfit itself. Each subcommand takes
@@ -37,7 +39,7 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|stop|status|metrics|logs|deploy|env|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -45,6 +47,8 @@ func cmdRemote(args []string) error {
 		return cmdRemoteBootstrap(rest)
 	case "start":
 		return cmdRemoteStart(rest)
+	case "pause":
+		return cmdRemotePause(rest)
 	case "stop":
 		return cmdRemoteStop(rest)
 	case "status":
@@ -61,7 +65,7 @@ func cmdRemote(args []string) error {
 		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, logs, deploy, env or ls)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, pause, stop, status, metrics, logs, deploy, env or ls)", sub)
 	}
 }
 
@@ -520,6 +524,27 @@ func cmdRemoteList(args []string) error {
 		}
 		fmt.Printf("%s\t%s\t%s\n", e.Name, base, e.Region)
 	}
+	return nil
+}
+
+func cmdRemotePause(args []string) error {
+	fs := flag.NewFlagSet("remote pause", flag.ContinueOnError)
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
+		return err
+	}
+	cfg, err := resolveRemoteConfig(outfitArg(fs))
+	if err != nil {
+		return err
+	}
+	resp, err := remote.Pause(context.Background(), cfg)
+	if err != nil {
+		return err
+	}
+	// State is "stopping" (EC2 has not finished) or "stopped" (it already
+	// was); either way the instance is re-wakeable, and the control plane's
+	// sweep terminates it once the stop retention passes.
+	fmt.Printf("state: %s\n", resp.State)
+	fmt.Println("the endpoint can be re-woken with `outfit remote start`, or terminated now with `outfit remote stop`")
 	return nil
 }
 

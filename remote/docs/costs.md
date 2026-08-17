@@ -2,8 +2,9 @@
 
 The short version: **~$7/month at rest, plus $1.86 for every hour the GPU
 instance is actually running.** Nothing scales with request volume — only with
-hours up. Because the instance is terminated (not stopped) when idle, there is
-no idle EBS volume, so the resting cost is low.
+hours up. An idle instance is stopped, not terminated, for a while (its root
+volume keeps billing while it sleeps), and terminated after the stop retention
+passes — so a long idle costs the same as today.
 
 ## Fixed costs
 
@@ -26,9 +27,12 @@ Lambdas live outside the VPC and reach the instance via SSM instead).
 
 There is **no persistent EBS volume**: the weights live in S3, and the running
 instance's root volume is created from the engine's AMI and deleted on
-termination. So while running you also pay for that ephemeral ~80 GB gp3 root
-(~$0.25/day pro-rated while up), but nothing for it at rest. Moving the weights
-out of the AMI into S3 also shrank the snapshot from ~113 GB to ~20 GB.
+termination. While running you pay for that ~80 GB gp3 root (~$0.25/day
+pro-rated while up), and while the instance is merely **stopped** (the first
+stage of idle shutdown) it keeps billing at the stopped-volume rate (~$0.10/day
+on gp3) until `stopRetentionMinutes` (default 12 h) passes and the sweep
+terminates it. Moving the weights out of the AMI into S3 also shrank the
+snapshot from ~113 GB to ~20 GB.
 
 ## Variable cost: GPU hours
 
@@ -60,12 +64,16 @@ on a `g6e.xlarge`. A `g6e.2xlarge` doubles RAM to 64 GB (same single L40S) at
 
 Two mechanisms keep the variable column honest:
 
-- **Idle terminate** — the instance is terminated 15–20 minutes after the last
-  request (`idleThresholdMinutes`, default 15, plus up to one 5-minute check
-  tick). Forgetting to stop it costs about $0.60, not a day of GPU time.
-- **Maximum runtime** — `maxRuntimeMinutes` (default 4 hours) terminates the
-  instance that long after boot even if requests are still flowing, so a
-  runaway session is bounded at ~$8. Each launch resets the clock.
+- **Idle stop** — the instance is **stopped** (no GPU billing from then) 15–20
+  minutes after the last request (`idleThresholdMinutes`, default 15, plus up to
+  one 5-minute check tick). Forgetting to stop it costs about $0.60 of GPU time
+  plus a day or so of cheap stopped-volume billing, not a day of GPU time. The
+  stopped instance is terminated `stopRetentionMinutes` (default 12 h) after
+  the stop, unless a start re-wakes it first.
+- **Maximum runtime** — `maxRuntimeMinutes` (default 4 hours) stops the
+  instance that long after its session started (launch or re-wake), even if
+  requests are still flowing, so a runaway session is bounded at ~$8 of GPU
+  time. Each session resets the clock.
 
 Data transfer is negligible: the weights sync from S3 in-region (free), so a
 wake pulls no billable bytes, and streamed completions outbound are text.

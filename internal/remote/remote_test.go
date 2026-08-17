@@ -349,6 +349,51 @@ func TestStatusAndStop(t *testing.T) {
 	}
 }
 
+func TestPause(t *testing.T) {
+	stubAWSEnv(t)
+	var gotAction, gotMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotAction = r.URL.Query().Get("action")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	pause, err := Pause(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pause.State != "stopping" {
+		t.Errorf("unexpected pause response: %+v", pause)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("pause should POST, got %s", gotMethod)
+	}
+	// The pause speaks to the stop Lambda in pause mode: same URL, an action
+	// parameter — nothing new to configure.
+	if gotAction != "pause" {
+		t.Errorf("pause must select the stop Lambda's pause mode, got action=%q", gotAction)
+	}
+}
+
+func TestPause_NonSuccess(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"stopped","message":"cannot stop"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Pause(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "pause") ||
+		!strings.Contains(err.Error(), "cannot stop") {
+		t.Errorf("expected a pause error with the reply's detail, got %v", err)
+	}
+}
+
 func TestCall_NonJSONError(t *testing.T) {
 	stubAWSEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
