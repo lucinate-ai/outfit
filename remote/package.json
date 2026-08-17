@@ -11,9 +11,9 @@
     "deploy:image": "cdk deploy cloud-vm-llm-image",
     "bake": "bash scripts/bake",
     "console": "bash scripts/console",
-    "seed-model": "node scripts/seed-model.mjs",
     "deploy": "cdk deploy cloud-vm-llm --outputs-file cdk-outputs.json",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "build:seeder": "esbuild seeder/src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/seed.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "^3.1111.0",

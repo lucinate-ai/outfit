@@ -133,43 +133,43 @@
 
 - [x] 8.1 Change `DeployFn`'s reply to carry `seedId` in place of
   `seedInstanceId`, keeping auto-seed on a missing-weights deploy.
-- [ ] 8.2 Update the Go `DeployResponse` accordingly and have `outfit remote deploy`
+- [x] 8.2 Update the Go `DeployResponse` accordingly and have `outfit remote deploy`
   print the follow-up command rather than a wait estimate.
 
 ## 9. Go client and CLI
 
-- [ ] 9.1 Add `SeedURL` to `remote.Config` with an `OUTFIT_REMOTE_SEED_URL`
+- [x] 9.1 Add `SeedURL` to `remote.Config` with an `OUTFIT_REMOTE_SEED_URL`
   override, optional in the same way as `EnvURL`, and a clear error naming the
   value to add when a seed command runs without it.
-- [ ] 9.2 Add the seed calls to `internal/remote`: start (with force and revision),
+- [x] 9.2 Add the seed calls to `internal/remote`: start (with force and revision),
   status, list, stop.
-- [ ] 9.3 Add `outfit remote seed <start|status|ls|stop>` to the dispatch in
+- [x] 9.3 Add `outfit remote seed <start|status|ls|stop>` to the dispatch in
   `cmd/outfit/remote.go`, resolving what to seed from the Outfit the same way
   `deploy` does, and update the `remote` usage string and the unknown-subcommand
   error.
-- [ ] 9.4 Output: `start` says whether it started or joined; `status` prints phase,
+- [x] 9.4 Output: `start` says whether it started or joined; `status` prints phase,
   progress and outcome; `ls` states plainly when nothing is in flight; `stop` is
   safe twice.
-- [ ] 9.5 Tests for each subcommand including the not-configured, unknown-seed and
+- [x] 9.5 Tests for each subcommand including the not-configured, unknown-seed and
   cap-reached paths. Keep coverage at or above the 80% bar.
 
 ## 10. Removal and documentation
 
-- [ ] 10.1 Delete `remote/scripts/seed-model.mjs` and its `seed-model` package
+- [x] 10.1 Delete `remote/scripts/seed-model.mjs` and its `seed-model` package
   script.
-- [ ] 10.2 Update `remote/README.md` and `remote/docs/architecture.md`: the seed
+- [x] 10.2 Update `remote/README.md` and `remote/docs/architecture.md`: the seed
   lifecycle and its control surface, `outfit remote seed` in place of
   `pnpm seed-model`, the manifest in place of the sentinel, the seed log group, and
   the new config knobs. Refresh the architecture diagrams that show the seed as a
   one-way arrow.
-- [ ] 10.3 Document the migration: prefixes seeded before this change carry no
+- [x] 10.3 Document the migration: prefixes seeded before this change carry no
   `_seed.json` and will be re-seeded once. State why no backfill helper is offered.
-- [ ] 10.4 Note the fixed token disclosure in the changelog entry, since anyone who
+- [x] 10.4 Note the fixed token disclosure in the changelog entry, since anyone who
   ran the old seed has a token traced into a boot log and may want to rotate it.
 
 ## 11. Verification
 
-- [ ] 11.1 `pnpm build`, `pnpm test`, `pnpm synth` in `remote/`; `go test ./...
+- [x] 11.1 `pnpm build`, `pnpm test`, `pnpm synth` in `remote/`; `go test ./...
   -cover` and `gofmt` at the repo root.
 - [ ] 11.2 End-to-end in a real account: seed a vLLM checkpoint and a llama.cpp
   GGUF; confirm the manifest, the instance's self-termination, and status

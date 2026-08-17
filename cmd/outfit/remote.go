@@ -33,7 +33,7 @@ import (
 // is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|seed|env|ls> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -51,13 +51,15 @@ func cmdRemote(args []string) error {
 		return cmdRemoteLogs(rest)
 	case "deploy":
 		return cmdRemoteDeploy(rest)
+	case "seed":
+		return cmdRemoteSeed(rest)
 	case "env":
 		return cmdRemoteEnv(rest)
 	case "ls":
 		return cmdRemoteList(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, logs, deploy, env or ls)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, stop, status, metrics, logs, deploy, seed, env or ls)", sub)
 	}
 }
 
@@ -1154,7 +1156,7 @@ func cmdRemoteDeploy(args []string) error {
 	fmt.Printf("deployed: environment %s at %s\n", env, resp.BaseURL)
 	fmt.Printf("registered: %s\n", envConfigPath)
 	if resp.Seeding {
-		fmt.Printf("seeding the weights on %s — this takes ~15-20 min.\n", resp.SeedInstanceID)
+		fmt.Printf("seeding the weights — follow it with `outfit remote seed status %s`.\n", resp.SeedID)
 		fmt.Println("Wait for it to finish before `outfit remote start`, or the instance will")
 		fmt.Println("start against an incomplete download.")
 	} else {

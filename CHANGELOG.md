@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+### Added
+- feat(remote): rework model weight seeding into a supervised job — a streaming
+  seeder on a stock Amazon Linux instance (no bake), CloudWatch progress and
+  outcome records, and an `outfit remote seed start|status|ls|stop` CLI
+
+### Changed
+- feat(remote)!: weights are judged complete by a `_seed.json` manifest rather
+  than a per-runner sentinel file. Prefixes seeded before this change carry no
+  manifest and will be seeded once more; see `remote/README.md` for why no
+  backfill is offered
+- feat(remote)!: a deploy that starts a seed now returns `seedId` in place of
+  `seedInstanceId`, and `remote/scripts/seed-model.mjs` is removed in favour of
+  `outfit remote seed start --force`
+- feat(remote): a llama.cpp quant matching more than one file now fails the seed
+  instead of silently taking the first, which shipped one shard of a split quant
+
+### Security
+- fix(remote): the Hugging Face token is no longer disclosed in seed boot logs.
+  The previous seed script fetched it into a shell variable under `set -x`, and
+  bash's xtrace expands assignments from command substitution, so the value was
+  written to `/var/log/cloud-init-output.log` and the EC2 console output.
+  **Rotate any token used with an earlier seed.**
+- fix(remote): a failed seed now always terminates its instance. The previous
+  script ran under `set -e`, which aborted before its closing `shutdown`, so a
+  failed seed kept billing until someone noticed
+
 ## [1.22.0] - 2026-08-15
 ### Added
 - feat(examples): add Qwen3.8-27B on llama.cpp, deployable to AWS (#96)

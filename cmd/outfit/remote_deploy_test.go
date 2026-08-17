@@ -252,7 +252,7 @@ func TestRemoteDeploy_PostsTheConfigAndRegisters(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &got)
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"deployed":true,"environment":"testenv","base_url":"http://198.51.100.9:8000/v1","seeding":true,"seedInstanceId":"i-123"}`))
+		w.Write([]byte(`{"deployed":true,"environment":"testenv","base_url":"http://198.51.100.9:8000/v1","seeding":true,"seedId":"llamacpp--unsloth-Qwen3.6-27B-MTP-GGUF--UD-Q6_K_XL"}`))
 	}))
 	defer server.Close()
 	stubDeploySeams(t, server.URL, "undeployed")
@@ -282,8 +282,10 @@ func TestRemoteDeploy_PostsTheConfigAndRegisters(t *testing.T) {
 	if got.AllowedCidr != "203.0.113.7/32" {
 		t.Errorf("allowedCidr = %q, want the detected /32", got.AllowedCidr)
 	}
-	if !strings.Contains(out, "seeding the weights on i-123") {
-		t.Errorf("seeding should be reported with the instance id, got:\n%s", out)
+	// The seed is named by its stable id, and the output states the command
+	// that follows it rather than quoting an estimate to wait out.
+	if !strings.Contains(out, "outfit remote seed status llamacpp--unsloth-Qwen3.6-27B-MTP-GGUF--UD-Q6_K_XL") {
+		t.Errorf("seeding should name the follow-up command, got:\n%s", out)
 	}
 
 	// The environment is registered, owner-only, carrying the base URL and id.

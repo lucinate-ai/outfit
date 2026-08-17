@@ -324,7 +324,10 @@ describe('LlmStack (control plane)', () => {
       [s.Action].flat().includes('ec2:TerminateInstances'),
     );
     const tagValues = statements.map(
-      (s) => s.Condition?.StringEquals?.['ec2:ResourceTag/cloud-vm-llm'],
+      (s) =>
+        (s.Condition as { StringEquals?: Record<string, string> } | undefined)?.StringEquals?.[
+          'ec2:ResourceTag/cloud-vm-llm'
+        ],
     );
     expect(tagValues).toContain('endpoint');
     expect(tagValues).toContain('seed');
