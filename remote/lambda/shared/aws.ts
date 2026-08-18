@@ -22,7 +22,7 @@ import {
 } from '@aws-sdk/client-ssm';
 import { randomUUID } from 'node:crypto';
 import { type DeployConfig, parseDeployConfig } from './deploy-config';
-import { DAEMON_STOP_CMD } from './daemon';
+import { DAEMON_START_CMD, DAEMON_STOP_CMD, DAEMON_UNREACHABLE } from './daemon';
 
 const ec2 = new EC2Client({});
 const ssm = new SSMClient({});
@@ -341,6 +341,21 @@ export async function stopEngineDaemon(instanceId: string): Promise<boolean> {
   try {
     const result = await runShellCommand(instanceId, DAEMON_STOP_CMD, 10);
     return result.status === 'Success';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ask the daemon on an instance to start its engine, best-effort. The daemon
+ * answers whenever it is up — including with a "not running" reply that the
+ * health poll then gates on — so a false here means the request was not
+ * delivered, not that the engine will not run.
+ */
+export async function startEngineDaemon(instanceId: string): Promise<boolean> {
+  try {
+    const result = await runShellCommand(instanceId, DAEMON_START_CMD, 10);
+    return result.status === 'Success' && !result.stdout.includes(DAEMON_UNREACHABLE);
   } catch {
     return false;
   }

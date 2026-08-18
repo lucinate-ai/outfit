@@ -24,6 +24,7 @@ const LAMBDA_ENV = {
 
 const findManagedInstance = vi.fn();
 const getInstance = vi.fn();
+const startEngineDaemon = vi.fn();
 const startInstance = vi.fn();
 const runInstance = vi.fn();
 const findLatestAmi = vi.fn();
@@ -40,6 +41,7 @@ vi.mock('../lambda/shared/aws', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lambda/shared/aws')>()),
   findManagedInstance: (...args: unknown[]) => findManagedInstance(...args),
   getInstance: (...args: unknown[]) => getInstance(...args),
+  startEngineDaemon: (...args: unknown[]) => startEngineDaemon(...args),
   startInstance: (...args: unknown[]) => startInstance(...args),
   runInstance: (...args: unknown[]) => runInstance(...args),
   findLatestAmi: (...args: unknown[]) => findLatestAmi(...args),
@@ -87,6 +89,7 @@ beforeEach(() => {
   readEnvApiKey.mockResolvedValue('sk-test');
   isSsmAgentOnline.mockResolvedValue(true);
   runShellCommand.mockResolvedValue(HEALTHY);
+  startEngineDaemon.mockResolvedValue(true);
 });
 
 describe('re-waking a stopped instance', () => {
@@ -99,6 +102,9 @@ describe('re-waking a stopped instance', () => {
     expect(JSON.parse(structured(result).body).state).toBe('ready');
 
     expect(startInstance).toHaveBeenCalledWith('i-off');
+    // The engine start is the control plane's ask, not user data's: a
+    // re-wake must not bet on the boot script re-running.
+    expect(startEngineDaemon).toHaveBeenCalledWith('i-off');
     // The session start is recorded, so the max-runtime cap measures this
     // session rather than first boot.
     expect(tagInstance).toHaveBeenCalledWith(

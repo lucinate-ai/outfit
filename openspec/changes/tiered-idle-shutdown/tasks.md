@@ -38,3 +38,7 @@
 - [x] 7.1 Add `pause` subcommand handling in `cmd/outfit/remote.go` for `outfit remote pause`
 - [x] 7.2 Extend the stop Lambda with a pause mode: write the `Stopped-At` tag, then `stopInstance` (manual stop stays `terminateInstance`)
 - [x] 7.3 Add tests for pause vs stop semantics and status reporting
+
+## 8. Re-wake fix (found on the deployed control plane)
+
+- [x] 8.1 Ask the daemon for the engine start on every wake: `POST /v1/start` via SSM once the SSM agent is online — user data does not re-run on stop→start, and the baked nudge timer only covers a crashed engine, so the control plane owns the engine start (idempotent ask: the daemon 409s when one already runs)

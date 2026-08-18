@@ -38,7 +38,7 @@ The remote control plane currently terminates an EC2 instance as soon as the idl
 
 **Instance start handling**
 - `start/index.ts` checks the existing instance state: `stopped` → `startInstances`, write the `Started-At` tag, then continue through the existing phase polling (EIP association, SSM agent, health); `stopping` → keep polling for the transition; `shutting-down`/`terminated` → fail with a retryable 503 so a retry launches fresh; absent → launch new as before.
-- The re-wake needs no new boot path: the boot script re-runs on start, the S3 sync is effectively a no-op over the weights that the persistent root volume already holds, systemd restarts the daemon, and the on-instance crash-recovery check starts the engine.
+- The re-wake needs no new boot path for weights — the persistent root volume already holds them, so the instance boots fast — but it **does** need an engine start from the control plane: user data is not re-run on a stop→start cycle, so the boot script's start request never fires, and the baked crash-nudge timer only acts on a `crashed` engine, never on the daemon's fresh `idle` state. The start Lambda therefore asks the daemon for an engine start (same loopback `/v1/start` API the stop side uses) once the SSM agent is online. The ask is idempotent — the daemon 409s when an engine already runs — so the same call is harmless on a fresh launch before its boot script requests one.
 
 **Configuration**
 - One new env var on the stop Lambda: `STOP_RETENTION_MINUTES` (how long a stopped instance is kept before termination). `IDLE_THRESHOLD_MINUTES`, `GRACE_PERIOD_MINUTES` and `MAX_RUNTIME_MINUTES` stay unchanged.
