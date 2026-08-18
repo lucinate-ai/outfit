@@ -30,7 +30,7 @@ instance's root volume is created from the engine's AMI and deleted on
 termination. While running you pay for that ~80 GB gp3 root (~$0.25/day
 pro-rated while up), and while the instance is merely **stopped** (the first
 stage of idle shutdown) it keeps billing at the stopped-volume rate (~$0.10/day
-on gp3) until `stopRetentionMinutes` (default 12 h) passes and the sweep
+on gp3) until `stopRetentionMinutes` (default 1 h) passes and the sweep
 terminates it. Moving the weights out of the AMI into S3 also shrank the
 snapshot from ~113 GB to ~20 GB.
 
@@ -68,7 +68,7 @@ Two mechanisms keep the variable column honest:
   minutes after the last request (`idleThresholdMinutes`, default 15, plus up to
   one 5-minute check tick). Forgetting to stop it costs about $0.60 of GPU time
   plus a day or so of cheap stopped-volume billing, not a day of GPU time. The
-  stopped instance is terminated `stopRetentionMinutes` (default 12 h) after
+  stopped instance is terminated `stopRetentionMinutes` (default 1 h) after
   the stop, unless a start re-wakes it first.
 - **Maximum runtime** — `maxRuntimeMinutes` (default 4 hours) stops the
   instance that long after its session started (launch or re-wake), even if

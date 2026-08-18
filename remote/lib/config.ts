@@ -114,7 +114,7 @@ const DEFAULTS = {
   // A stopped instance bills its root volume, so the retention balances the
   // re-wake speed (weights and boot disk kept warm) against storage cost: a
   // few hours of pause, then the instance is gone.
-  stopRetentionMinutes: 720,
+  stopRetentionMinutes: 60,
   // Must exceed the whole cold start (S3 sync ~4 min + weight/CUDA load), or
   // the idle check stops the instance mid-load (the metrics scrape fails
   // while the server is still loading, which reads as "idle").

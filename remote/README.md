@@ -167,7 +167,7 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `vllmVersion` | `0.26.0` | vLLM version installed into that AMI's venv (`uv pip install`) |
 | `nvidiaDriverPackage` | `nvidia-driver-570-server-open` | Driver installed in both AMIs |
 | `idleThresholdMinutes` | `15` | Stop after this long without requests |
-| `stopRetentionMinutes` | `720` | Keep a stopped instance (re-wakeable) this long before terminating it |
+| `stopRetentionMinutes` | `60` | Keep a stopped instance (re-wakeable) this long before terminating it |
 | `gracePeriodMinutes` | `30` | Never stop this soon after boot (covers the cold load) |
 | `maxRuntimeMinutes` | `240` | Hard stop this long after boot, even if busy |
 
@@ -294,7 +294,7 @@ boot synced onto it, so the next `outfit remote start` **re-wakes** the
 instance — a boot without a fresh launch and a no-op S3 sync — instead of
 launching one from the AMI. The stopped instance is billed for its volume only,
 not compute, and the sweep **terminates** it once it has been stopped longer
-than `stopRetentionMinutes` (default 12 h): after that, the next start is a
+than `stopRetentionMinutes` (default 1 h): after that, the next start is a
 fresh launch again. `outfit remote pause` does the same stop on purpose.
 
 Sampling on the box is what makes this reliable: a busy endpoint that happens
