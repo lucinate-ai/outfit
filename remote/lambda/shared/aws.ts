@@ -22,6 +22,7 @@ import {
 } from '@aws-sdk/client-ssm';
 import { randomUUID } from 'node:crypto';
 import { type DeployConfig, parseDeployConfig } from './deploy-config';
+import { DAEMON_STOP_CMD } from './daemon';
 
 const ec2 = new EC2Client({});
 const ssm = new SSMClient({});
@@ -328,6 +329,21 @@ export async function runShellCommand(
     }
   }
   return { status: 'Timeout', stdout: '' };
+}
+
+/**
+ * Ask the daemon on an instance to stop its engine, best-effort. Returns true
+ * when the daemon answered with a success status, false when it did not answer
+ * or the command failed. This is deliberately tolerant: a crashed daemon should
+ * not prevent the Lambda from proceeding to stop the EC2 instance.
+ */
+export async function stopEngineDaemon(instanceId: string): Promise<boolean> {
+  try {
+    const result = await runShellCommand(instanceId, DAEMON_STOP_CMD, 10);
+    return result.status === 'Success';
+  } catch {
+    return false;
+  }
 }
 
 /**

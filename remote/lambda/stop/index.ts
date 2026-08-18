@@ -8,6 +8,7 @@ import {
   requireEnv,
   runShellCommand,
   STOPPED_AT_TAG,
+  stopEngineDaemon,
   stopInstance,
   tagInstance,
   terminateInstance,
@@ -65,6 +66,7 @@ async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunction
     if (event.queryStringParameters?.action === 'pause') {
       return pauseInstance(instance, env);
     }
+    await stopEngineDaemon(instance.instanceId);
     await terminateInstance(instance.instanceId);
     console.log(
       JSON.stringify({ mode: 'manual', action: 'terminate', environment: env, instanceId: instance.instanceId }),
@@ -92,6 +94,7 @@ async function pauseInstance(instance: InstanceInfo, env: string): Promise<Lambd
     return jsonResponse(200, { state: 'stopped', environment: env });
   }
   await tagInstance(instance.instanceId, STOPPED_AT_TAG, new Date().toISOString());
+  await stopEngineDaemon(instance.instanceId);
   await stopInstance(instance.instanceId);
   console.log(
     JSON.stringify({ mode: 'manual', action: 'stop', environment: env, instanceId: instance.instanceId }),
@@ -196,6 +199,7 @@ async function idleCheck(instance: InstanceInfo): Promise<void> {
     // stopped instance with its stop time already recorded, and a stale tag on
     // a still-running instance is ignored by the running path.
     await tagInstance(instance.instanceId, STOPPED_AT_TAG, now.toISOString());
+    await stopEngineDaemon(instance.instanceId);
     await stopInstance(instance.instanceId);
     console.log(
       JSON.stringify({ mode: 'idle', action: 'stop', environment: env, instanceId: instance.instanceId }),

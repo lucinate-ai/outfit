@@ -20,6 +20,9 @@ export const DAEMON_METRICS_CMD = `curl -s --max-time 10 ${DAEMON_API}/v1/metric
 /** The SSM command that fetches the daemon's status — the idle check's source. */
 export const DAEMON_STATUS_CMD = `curl -s --max-time 10 ${DAEMON_API}/v1/status || echo ${DAEMON_UNREACHABLE}`;
 
+/** The SSM command that asks the daemon to stop its engine. */
+export const DAEMON_STOP_CMD = `curl -s --max-time 10 -X POST ${DAEMON_API}/v1/stop || echo ${DAEMON_UNREACHABLE}`;
+
 /**
  * The daemon's /v1/metrics reply — the same stats dialect the Go formatters
  * render (outfit's internal/metrics.Stats), minus what only the control
