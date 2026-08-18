@@ -198,8 +198,19 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
     instanceId = existing.instanceId;
     console.log(JSON.stringify({ phase: 'existing', environment: env, instanceId, state: existing.state }));
     if (existing.state === 'stopped') {
-      await rewake(instanceId);
-      startIssued = true;
+      try {
+        await rewake(instanceId);
+        startIssued = true;
+      } catch (err) {
+        if (errorName(err) === 'InsufficientInstanceCapacity') {
+          return jsonResponse(
+            503,
+            { state: 'no-capacity', environment: env, retry_after_seconds: 120 },
+            { 'retry-after': '120' },
+          );
+        }
+        throw err;
+      }
     }
   } else {
     const launched = await launchAcrossAzs(env, deployConfig, securityGroupId);
@@ -238,8 +249,19 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
     if (state === 'stopped' && !startIssued) {
       // A stop raced us between discovery and now; issue the re-wake here so
       // one wake owns at most one start call.
-      await rewake(instanceId);
-      startIssued = true;
+      try {
+        await rewake(instanceId);
+        startIssued = true;
+      } catch (err) {
+        if (errorName(err) === 'InsufficientInstanceCapacity') {
+          return jsonResponse(
+            503,
+            { state: 'no-capacity', environment: env, retry_after_seconds: 120 },
+            { 'retry-after': '120' },
+          );
+        }
+        throw err;
+      }
     }
     await sleep(POLL_MS);
   }
