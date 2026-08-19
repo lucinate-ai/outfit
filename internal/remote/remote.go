@@ -276,12 +276,23 @@ func Deploy(ctx context.Context, cfg Config, dc DeployConfig, allowedCidr string
 // connection. A variable so tests can shorten it.
 var startRetryWait = 5 * time.Second
 
+// StateInFlight is the state Start reports to its onState observer when a new
+// attempt is issued and no response has come back yet. It is a client-side
+// report of the client's own situation — no Lambda reply ever carries it. An
+// in-flight attempt supersedes an earlier no-capacity report: that report
+// described the previous attempt, and a refusal of the new one comes back
+// within seconds of trying each zone, while a successful one holds its request
+// while the instance boots. An observer reading it should describe a start as
+// underway, not a capacity wait.
+const StateInFlight = "in-flight"
+
 // Start boots the instance and blocks until the model is serving, retrying
 // while the endpoint reports it is still starting. progress is called with a
 // status line before each wait. onState, when non-nil, is called with the raw
-// state of every poll that returns a response, so a caller can describe what is
-// happening (booting versus waiting for capacity) rather than assume a boot is
-// underway.
+// state of every poll that returns a response, and with StateInFlight when a
+// new attempt is issued and its response has not come back, so a caller can
+// describe what is happening (booting versus waiting for capacity) rather than
+// assume a boot is underway.
 //
 // A start holds one long-lived request while the instance boots, so a network
 // blip mid-wait (switching networks, a dropped VPN) surfaces as a transport
@@ -290,6 +301,13 @@ var startRetryWait = 5 * time.Second
 // to the same booting instance — so retrying never launches a second one.
 func Start(ctx context.Context, cfg Config, progress func(string), onState func(string)) (*Response, error) {
 	for {
+		// Supersedes whatever the previous attempt reported — including a
+		// no-capacity reply: this attempt has not refused anything yet, and a
+		// refusal arrives long before a boot would, so the observer should not
+		// keep reading the older attempt's verdict while this one is in flight.
+		if onState != nil {
+			onState(StateInFlight)
+		}
 		resp, err := call(ctx, cfg, http.MethodPost, cfg.StartURL, nil)
 		if err != nil {
 			var urlErr *url.Error

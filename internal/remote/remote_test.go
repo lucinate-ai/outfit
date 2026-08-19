@@ -192,8 +192,9 @@ func TestStart_RetriesUntilReady(t *testing.T) {
 	}
 }
 
-// onState must see the raw state of every poll, so a caller can tell a
-// capacity wait apart from a boot rather than assume the instance is starting.
+// onState must see both the raw state of every poll and each attempt as it is
+// issued, so a caller can tell a capacity wait apart from a boot rather than
+// assume the instance is starting.
 func TestStart_ReportsEachPollState(t *testing.T) {
 	stubAWSEnv(t)
 	calls := 0
@@ -214,8 +215,62 @@ func TestStart_ReportsEachPollState(t *testing.T) {
 	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(states, ","); got != "no-capacity,ready" {
-		t.Errorf("onState saw %q, want %q", got, "no-capacity,ready")
+	want := StateInFlight + ",no-capacity," + StateInFlight + ",ready"
+	if got := strings.Join(states, ","); got != want {
+		t.Errorf("onState saw %q, want %q", got, want)
+	}
+}
+
+// A boot following a capacity wait must not leave the observer holding the
+// stale no-capacity state: the attempt that finds capacity holds its request
+// open without a reply, so Start must report it as in flight for the boot to
+// be distinguishable from still waiting on capacity.
+func TestStart_ReportsInFlightAfterACapacityWait(t *testing.T) {
+	stubAWSEnv(t)
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"state":"no-capacity","retry_after_seconds":0}`))
+			return
+		}
+		// The attempt that finds capacity holds its request open while the
+		// instance boots and answers only when ready.
+		time.Sleep(50 * time.Millisecond)
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	var states []string
+	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }); err != nil {
+		t.Fatal(err)
+	}
+	lastNoCapacity, inFlightAfter, readyAfter := -1, false, false
+	for i, s := range states {
+		switch s {
+		case "no-capacity":
+			lastNoCapacity = i
+		case StateInFlight:
+			if i > lastNoCapacity {
+				inFlightAfter = true
+			}
+		case "ready":
+			if i > lastNoCapacity {
+				readyAfter = true
+			}
+		}
+	}
+	if lastNoCapacity == -1 {
+		t.Fatalf("onState never saw the no-capacity reply: %v", states)
+	}
+	if !inFlightAfter {
+		t.Errorf("no in-flight report between the no-capacity reply and ready: %v", states)
+	}
+	if !readyAfter {
+		t.Errorf("no ready report after the no-capacity reply: %v", states)
 	}
 }
 
