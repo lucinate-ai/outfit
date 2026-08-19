@@ -5,9 +5,7 @@
 Define when the remote endpoint's instance exists — how it is started on
 demand, how it is judged to be still wanted, and the bounds that decide
 when it is torn down.
-
 ## Requirements
-
 ### Requirement: Starting on demand
 
 Each environment SHALL hold no running instance when idle. A start request names
@@ -50,52 +48,47 @@ environment identifier.
 
 ### Requirement: Stopping when unused
 
-A running instance SHALL be **terminated**, not stopped, once unused, so that
-no storage is billed while an environment is idle. Activity SHALL be judged
-from the inference server's own counters, read on the instance, and SHALL
-account for both requests in flight and work that started and finished between
-two readings. Because the metric names differ per inference engine, the check
-SHALL read the names belonging to the engine that is deployed.
+A running instance SHALL be **stopped**, not terminated, once unused, so that the boot disk and synced weights are preserved for fast re-wake. After a further configured period in the stopped state without a start request, the instance SHALL be **terminated** to free storage. Activity SHALL be judged from the inference server's own counters, read on the instance, and SHALL account for both requests in flight and work that started and finished between two readings. Because the metric names differ per inference engine, the check SHALL read the names belonging to the engine that is deployed.
 
-Those counters SHALL be sampled continuously on the instance itself, at an
-interval short relative to the idle threshold, and the scheduled sweep SHALL
-judge idleness from the resulting activity history rather than from a single
-reading taken at the moment it runs. A quiet gap between requests that happens
-to coincide with a sweep SHALL NOT be read as idleness. The scheduled idle
-sweep SHALL consider every environment's instance in the account, judging and
-terminating each on its own activity, so one shared sweep covers all
-environments.
+Those counters SHALL be sampled continuously on the instance itself, at an interval short relative to the idle threshold, and the scheduled sweep SHALL judge idleness from the resulting activity history rather than from a single reading taken at the moment it runs. A quiet gap between requests that happens to coincide with a sweep SHALL NOT be read as idleness. The scheduled idle sweep SHALL consider every environment's instance in the account, judging and stopping each on its own activity, so one shared sweep covers all environments.
 
-A failed reading SHALL be treated as no activity rather than as activity, so a
-wedged server is terminated rather than left running indefinitely.
+A failed reading SHALL be treated as no activity rather than as activity, so a wedged server is stopped rather than left running indefinitely.
 
 #### Scenario: Idle for longer than the threshold
 
 - **WHEN** no activity is observed for the configured idle period
-- **THEN** the instance is terminated
+- **THEN** the instance is stopped, not terminated
 
 #### Scenario: A long generation is not mistaken for idleness
 
-- **WHEN** a single request runs across two checks without any request being in
-  flight at the moment either is taken
+- **WHEN** a single request runs across two checks without any request being in flight at the moment either is taken
 - **THEN** the moved token counters count as activity and the instance is kept
 
 #### Scenario: A lull at sweep time is not idleness
 
-- **WHEN** an endpoint is serving steady traffic but happens to have nothing in
-  flight and no counter movement at the instant the scheduled sweep runs
+- **WHEN** an endpoint is serving steady traffic but happens to have nothing in flight and no counter movement at the instant the scheduled sweep runs
 - **THEN** the activity observed between sweeps keeps the instance alive
 
 #### Scenario: The server has stopped responding
 
 - **WHEN** the activity reading fails
-- **THEN** the instance is still terminated once the idle period passes
+- **THEN** the instance is still stopped once the idle period passes
 
 #### Scenario: The sweep covers every environment
 
 - **WHEN** several environments have running instances and the idle sweep runs
-- **THEN** each is judged on its own activity, and only the idle ones are
-  terminated
+- **THEN** each is judged on its own activity, and only the idle ones are stopped
+
+#### Scenario: Stopped instance is terminated after further idle
+
+- **WHEN** an instance has been stopped for longer than the stop-retention period without a start request
+- **THEN** the instance is terminated
+
+#### Scenario: Start re-wakes a stopped instance
+
+- **WHEN** a start request is made for an environment whose instance is stopped
+- **THEN** the existing instance is started, not replaced, and the environment's URL remains unchanged
+
 ### Requirement: Bounds on a running instance
 
 The following SHALL take precedence over one another in this order, so that the
@@ -132,3 +125,37 @@ A manual stop SHALL take effect immediately regardless of all three.
 
 - **WHEN** a stop is requested for a retained instance
 - **THEN** it is terminated
+
+### Requirement: Explicit pause
+
+A user-initiated pause SHALL stop the instance without terminating it, preserving boot disk and weights for fast re-wake. The instance SHALL remain stoppable and re-wakable via start, and retain-until overrides SHALL still apply.
+
+#### Scenario: Pause stops without terminating
+
+- **WHEN** user runs `outfit remote pause` for a running environment
+- **THEN** the instance is stopped, not terminated, and the environment's URL is retained
+
+#### Scenario: Pause is distinct from stop
+
+- **WHEN** user runs `outfit remote stop`
+- **THEN** the instance is terminated immediately
+
+### Requirement: Engine is stopped before the EC2 instance
+
+When the stop Lambda stops a running instance (idle sweep, manual pause, or manual terminate), it SHALL first send a stop request to the on-instance daemon's control API (`POST /v1/stop`) to shut down the engine before calling EC2 `StopInstances`. The daemon's existing signal handler terminates the engine process group, ensuring the instance exits the `stopping` state promptly regardless of which engine it runs. The API call SHALL be best-effort: if the daemon is unreachable the Lambda SHALL proceed with the EC2 stop as normal, rather than failing the operation.
+
+#### Scenario: Normal graceful stop
+
+- **WHEN** the stop Lambda needs to stop a running instance
+- **THEN** it first sends `POST /v1/stop` to the daemon, and only then calls EC2 `StopInstances`
+
+#### Scenario: Daemon is unreachable
+
+- **WHEN** the stop request to the daemon fails or times out
+- **THEN** the Lambda still calls EC2 `StopInstances` and does not treat it as an error
+
+#### Scenario: Engine-neutral stop
+
+- **WHEN** the instance runs any supported engine (llama.cpp, vLLM, or a future runner)
+- **THEN** the stop mechanism works via the daemon API without engine-specific logic in the Lambda
+
