@@ -24,7 +24,7 @@ import type { Runner } from '../deploy-config';
 export interface SeedSelection {
   /** Paths to take. A file must match at least one to be transferred. */
   include: string[];
-  /** Paths to drop even when included (e.g. llama.cpp's mmproj companions). */
+  /** Paths to drop even when included (e.g. an unnamed mmproj projector). */
   exclude?: string[];
   /**
    * Set when the engine serves exactly one file: the selection must resolve to
@@ -33,6 +33,22 @@ export interface SeedSelection {
    * first, which silently shipped half of a split quant.
    */
   expectSingle?: string;
+  /**
+   * Extra files the deployment named, taken by *exact* repository filename and
+   * stored under a fixed name — companion weights, such as a speculative
+   * drafter or a projector.
+   *
+   * They cannot ride on `include`, for two reasons. The quant glob does not
+   * reach them (a `kquant-dynamic` quant whose drafter is
+   * `dflash-kquant.gguf`), and `expectSingle` must still see exactly one
+   * candidate for the main weights, so a companion has to be selected apart
+   * from it rather than competing with it.
+   *
+   * A named companion the repository does not have fails the seed. That is
+   * deliberate: the alternative is an instance starting minutes later with a
+   * flag pointing at a file that was never fetched.
+   */
+  companions?: { storeAs: string; file: string }[];
 }
 
 /**
@@ -251,7 +267,24 @@ export function applySelection(
   paths: string[],
   selection: SeedSelection,
 ): { path: string; storeAs: string }[] {
-  const matched = paths.filter((path) => matchesSelection(path, selection)).sort();
+  // Companions are resolved first and removed from the pool, so a named
+  // companion can never also be a candidate for the main weights — which is
+  // what lets expectSingle stay an exact "one file" check.
+  const companions = (selection.companions ?? []).map(({ storeAs, file }) => {
+    const path = paths.find((p) => p === file || p.endsWith(`/${file}`));
+    if (!path) {
+      throw new Error(
+        `companion ${JSON.stringify(file)} (stored as ${storeAs}) is not in the repository — ` +
+          'check the filename, or remove it from the deployment',
+      );
+    }
+    return { path, storeAs };
+  });
+  const claimed = new Set(companions.map((c) => c.path));
+
+  const matched = paths
+    .filter((path) => !claimed.has(path) && matchesSelection(path, selection))
+    .sort();
   if (matched.length === 0) {
     throw new Error(
       `no files in the repository match ${JSON.stringify(selection.include)}` +
@@ -265,7 +298,7 @@ export function applySelection(
           `${matched.join(', ')} — narrow the quant, or the model needs support for split files`,
       );
     }
-    return [{ path: matched[0], storeAs: selection.expectSingle }];
+    return [{ path: matched[0], storeAs: selection.expectSingle }, ...companions];
   }
-  return matched.map((path) => ({ path, storeAs: path }));
+  return [...matched.map((path) => ({ path, storeAs: path })), ...companions];
 }

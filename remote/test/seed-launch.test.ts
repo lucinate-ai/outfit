@@ -108,6 +108,7 @@ describe('launching, and the idempotency escape', () => {
         contextSize: 1,
         servedModelName: 'm',
         serveArgs: [],
+        companions: {},
       },
       infra,
       '',

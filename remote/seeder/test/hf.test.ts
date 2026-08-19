@@ -177,6 +177,29 @@ describe('listing and selecting', () => {
     expect(files).toEqual([{ path: 'm-Q6.gguf', storeAs: 'model.gguf', size: 900, sha256: 'aa' }]);
   });
 
+  it('carries a named companion through with its size and checksum', async () => {
+    const files = await listSelectedFiles(
+      'org/m',
+      'main',
+      {
+        include: ['*Q6*.gguf'],
+        expectSingle: 'model.gguf',
+        companions: [{ storeAs: 'draft.gguf', file: 'dflash-kquant.gguf' }],
+      },
+      '',
+      {
+        listFiles: fakeListFiles([
+          { path: 'm-Q6.gguf', size: 900, lfs: { oid: 'aa' } },
+          { path: 'dflash-kquant.gguf', size: 120, lfs: { oid: 'bb' } },
+        ]),
+      },
+    );
+    expect(files).toEqual([
+      { path: 'm-Q6.gguf', storeAs: 'model.gguf', size: 900, sha256: 'aa' },
+      { path: 'dflash-kquant.gguf', storeAs: 'draft.gguf', size: 120, sha256: 'bb' },
+    ]);
+  });
+
   it('refuses a split quant rather than seeding one shard', async () => {
     await expect(
       listSelectedFiles(

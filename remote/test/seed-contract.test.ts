@@ -19,6 +19,7 @@ const LLAMACPP: DeployConfig = {
   contextSize: 131072,
   servedModelName: 'qwen3.6-27b',
   serveArgs: [],
+  companions: {},
 };
 
 const VLLM: DeployConfig = { ...LLAMACPP, runner: 'vllm', quant: '' };
@@ -96,11 +97,105 @@ describe('selection', () => {
     );
   });
 
+  it('takes a named companion by exact filename, stored under its role', () => {
+    // The quant glob cannot reach a drafter, so it is selected by name.
+    const files = ['Qwen3.6-27B-UD-Q6_K_XL.gguf', 'dflash-kquant.gguf'];
+    expect(
+      applySelection(files, {
+        include: ['*UD-Q6_K_XL*.gguf'],
+        exclude: ['*mmproj*'],
+        expectSingle: 'model.gguf',
+        companions: [{ storeAs: 'draft.gguf', file: 'dflash-kquant.gguf' }],
+      }),
+    ).toEqual([
+      { path: 'Qwen3.6-27B-UD-Q6_K_XL.gguf', storeAs: 'model.gguf' },
+      { path: 'dflash-kquant.gguf', storeAs: 'draft.gguf' },
+    ]);
+  });
+
+  it('does not let a named companion compete for the main weights', () => {
+    // Without claiming it first, expectSingle would see two candidates and
+    // fail — the companion is excluded from the pick, not from the seed.
+    const files = ['m-UD-Q6_K_XL.gguf', 'draft-UD-Q6_K_XL.gguf'];
+    expect(
+      applySelection(files, {
+        include: ['*UD-Q6_K_XL*.gguf'],
+        expectSingle: 'model.gguf',
+        companions: [{ storeAs: 'draft.gguf', file: 'draft-UD-Q6_K_XL.gguf' }],
+      }),
+    ).toEqual([
+      { path: 'm-UD-Q6_K_XL.gguf', storeAs: 'model.gguf' },
+      { path: 'draft-UD-Q6_K_XL.gguf', storeAs: 'draft.gguf' },
+    ]);
+  });
+
+  it('keeps a named projector even though projectors are excluded by default', () => {
+    // The blanket exclusion stops an unnamed projector being served as the
+    // model; naming it as a companion is how to keep it.
+    const files = ['m-Q6.gguf', 'mmproj-Q6.gguf'];
+    expect(
+      applySelection(files, {
+        include: ['*Q6*.gguf'],
+        exclude: ['*mmproj*'],
+        expectSingle: 'model.gguf',
+        companions: [{ storeAs: 'mmproj.gguf', file: 'mmproj-Q6.gguf' }],
+      }),
+    ).toEqual([
+      { path: 'm-Q6.gguf', storeAs: 'model.gguf' },
+      { path: 'mmproj-Q6.gguf', storeAs: 'mmproj.gguf' },
+    ]);
+  });
+
+  it('fails when a named companion is not in the repository', () => {
+    // Better than an instance starting minutes later with a flag pointing at a
+    // file that was never fetched.
+    expect(() =>
+      applySelection(['m-Q6.gguf'], {
+        include: ['*Q6*.gguf'],
+        expectSingle: 'model.gguf',
+        companions: [{ storeAs: 'draft.gguf', file: 'missing.gguf' }],
+      }),
+    ).toThrow(/companion "missing\.gguf" \(stored as draft\.gguf\) is not in the repository/);
+  });
+
+  it('finds a companion that lives in a subdirectory', () => {
+    expect(
+      applySelection(['m-Q6.gguf', 'extra/draft.gguf'], {
+        include: ['*Q6*.gguf'],
+        expectSingle: 'model.gguf',
+        companions: [{ storeAs: 'draft.gguf', file: 'draft.gguf' }],
+      })[1],
+    ).toEqual({ path: 'extra/draft.gguf', storeAs: 'draft.gguf' });
+  });
+
   it('excludes the projector companion as well as mmproj', () => {
     const files = ['model-UD-Q6_K_XL.gguf', 'projector-UD-Q6_K_XL.gguf'];
     expect(applySelection(files, runnerSpec('llamacpp').seedSelection(LLAMACPP))).toEqual([
       { path: 'model-UD-Q6_K_XL.gguf', storeAs: 'model.gguf' },
     ]);
+  });
+
+  it('wires a deploy-config companion through the runner spec, ahead of the quant glob', () => {
+    // The regression this guards. The quant glob cannot reach a drafter —
+    // `*UD-Q6_K_XL*` does not match `dflash-kquant.gguf` — so it must be
+    // claimed by its exact name rather than by pattern.
+    const withDrafter = { ...LLAMACPP, companions: { draft: 'dflash-kquant.gguf' } };
+    const files = ['Qwen3.6-27B-UD-Q6_K_XL.gguf', 'dflash-kquant.gguf'];
+    expect(applySelection(files, runnerSpec('llamacpp').seedSelection(withDrafter))).toEqual([
+      { path: 'Qwen3.6-27B-UD-Q6_K_XL.gguf', storeAs: 'model.gguf' },
+      { path: 'dflash-kquant.gguf', storeAs: 'draft.gguf' },
+    ]);
+  });
+
+  it('orders companions deterministically regardless of the deploy-config map key order', () => {
+    const both = { draft: 'dflash-kquant.gguf', mmproj: 'mmproj-kquant.gguf' };
+    const flipped = { mmproj: both.mmproj, draft: both.draft };
+    const files = ['Qwen3.6-27B-UD-Q6_K_XL.gguf', 'dflash-kquant.gguf', 'mmproj-kquant.gguf'];
+    expect(
+      applySelection(files, runnerSpec('llamacpp').seedSelection({ ...LLAMACPP, companions: both })),
+    ).toEqual(
+      applySelection(files, runnerSpec('llamacpp').seedSelection({ ...LLAMACPP, companions: flipped })),
+    );
   });
 });
 

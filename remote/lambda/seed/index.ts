@@ -118,6 +118,9 @@ async function start(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLRe
     contextSize: 1,
     servedModelName: modelId,
     serveArgs: [],
+    // Seeds name no companions of their own: `deploy --reseed` carries the
+    // deployment's, and a bare `seed start` fetches the main weights.
+    companions: {},
   };
 
   if (!force && (await weightsPresent(infra.bucket, cfg))) {

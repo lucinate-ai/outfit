@@ -42,6 +42,7 @@ process.env.GRACE_PERIOD_MINUTES = '30';
 process.env.MAX_RUNTIME_MINUTES = '240';
 process.env.MAX_SEED_MINUTES = '60';
 process.env.SEED_STALL_MINUTES = '10';
+process.env.STOP_RETENTION_MINUTES = '60';
 
 const minutesAgo = (n: number) => new Date(Date.now() - n * 60_000);
 
