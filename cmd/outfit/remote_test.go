@@ -1192,3 +1192,82 @@ func TestRemoteMetrics_WatchBuffersBeforeClear(t *testing.T) {
 			"Output (%d bytes):\n%s", len(out), out)
 	}
 }
+
+// TestRemoteKeep sets the retention deadline.
+func TestRemoteKeep_PrintsDeadline(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("cmd") != "set-keep" {
+			t.Errorf("expected cmd=set-keep, got %q", r.URL.Query().Get("cmd"))
+		}
+		if r.URL.Query().Get("retainUntil") == "" {
+			t.Error("expected retainUntil query param")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment":"test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	// Also need to write the update URL.
+	path := must1(remote.ConfigPath())
+	data := must1(os.ReadFile(path))
+	var cfg remote.Config
+	json.Unmarshal(data, &cfg)
+	cfg.UpdateURL = server.URL
+	os.WriteFile(path, must1(json.Marshal(cfg)), 0o600)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemoteKeep([]string{"4h"}); err != nil {
+			t.Errorf("cmdRemoteKeep: %v", err)
+		}
+	})
+	if !strings.Contains(out, "retain until:") {
+		t.Errorf("keep should print the deadline, got:\n%s", out)
+	}
+}
+
+// TestRemoteKeep_MissingDuration fails.
+func TestRemoteKeep_MissingDuration(t *testing.T) {
+	err := cmdRemoteKeep(nil)
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("expected usage error, got %v", err)
+	}
+}
+
+// TestRemoteKeep_InvalidDuration fails.
+func TestRemoteKeep_InvalidDuration(t *testing.T) {
+	err := cmdRemoteKeep([]string{"4hours"})
+	if err == nil || !strings.Contains(err.Error(), "invalid duration") {
+		t.Errorf("expected duration parse error, got %v", err)
+	}
+}
+
+// TestRemoteStart_KeepFlag passes the retainUntil parameter.
+func TestRemoteStart_KeepFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var gotRetainUntil string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	// Probe reachability will fail, but that's stderr and doesn't affect the test.
+	out := captureStdout(t, func() {
+		cmdRemoteStart([]string{"--keep", "2h"})
+	})
+	// The keep deadline should be reported on stderr (via progress).
+	// We can check that the request included the retainUntil parameter.
+	if gotRetainUntil == "" {
+		t.Error("expected retainUntil query param on start with --keep")
+	}
+	// stdout should only have the export lines (no retain until on stdout).
+	if strings.Contains(out, "retain until") {
+		t.Errorf("retain until should not appear on stdout, got:\n%s", out)
+	}
+}

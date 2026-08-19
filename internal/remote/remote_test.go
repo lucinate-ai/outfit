@@ -177,7 +177,7 @@ func TestStart_RetriesUntilReady(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var progress []string
-	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil)
+	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestStart_ReportsEachPollState(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var states []string
-	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }); err != nil {
+	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := StateInFlight + ",no-capacity," + StateInFlight + ",ready"
@@ -301,7 +301,7 @@ func TestStart_RetriesADroppedConnection(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var progress []string
-	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil)
+	resp, err := Start(context.Background(), cfg, func(msg string) { progress = append(progress, msg) }, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +336,7 @@ func TestStart_DoesNotRetryPastTheDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(ctx, cfg, func(string) {}, nil)
+	_, err := Start(ctx, cfg, func(string) {}, nil, nil)
 	if err == nil {
 		t.Fatal("expected an error once the deadline passed")
 	}
@@ -351,7 +351,7 @@ func TestStart_Failure(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(context.Background(), cfg, func(string) {}, nil)
+	_, err := Start(context.Background(), cfg, func(string) {}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "cannot start") {
 		t.Errorf("expected the server's message in the error, got %v", err)
 	}
@@ -368,7 +368,7 @@ func TestStart_ContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Start(ctx, cfg, func(string) {}, nil)
+	_, err := Start(ctx, cfg, func(string) {}, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "gave up") {
 		t.Errorf("expected a gave-up error, got %v", err)
 	}
@@ -645,7 +645,7 @@ func TestStart_ExpiredCredentials(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, Region: "eu-west-1"}
-	if _, err := Start(context.Background(), cfg, func(string) {}, nil); err == nil ||
+	if _, err := Start(context.Background(), cfg, func(string) {}, nil, nil); err == nil ||
 		!strings.Contains(err.Error(), "expired or invalid") {
 		t.Errorf("expected start to fail with an expired-credentials error, got %v", err)
 	}
@@ -899,5 +899,106 @@ func TestProbeReachability_BadURL(t *testing.T) {
 	err := ProbeReachability("://not-a-url")
 	if err == nil {
 		t.Error("probe should fail on an unparseable URL")
+	}
+}
+
+func TestKeep(t *testing.T) {
+	stubAWSEnv(t)
+	var gotCmd, gotRetainUntil, gotMethod string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotCmd = r.URL.Query().Get("cmd")
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment":"test","retainUntil":"2025-01-01T00:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, UpdateURL: server.URL, Region: "eu-west-1"}
+	retainUntil := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	resp, err := Keep(context.Background(), cfg, retainUntil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.RetainUntil != "2025-01-01T00:00:00Z" {
+		t.Errorf("unexpected retainUntil: %q", resp.RetainUntil)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("keep should POST, got %s", gotMethod)
+	}
+	if gotCmd != "set-keep" {
+		t.Errorf("keep should send cmd=set-keep, got %q", gotCmd)
+	}
+	if gotRetainUntil != "2025-01-01T00:00:00Z" {
+		t.Errorf("keep should send retainUntil as ISO-8601, got %q", gotRetainUntil)
+	}
+}
+
+func TestKeep_NoUpdateURL(t *testing.T) {
+	stubAWSEnv(t)
+	cfg := Config{StartURL: "https://start/", StopURL: "https://stop/", Region: "eu-west-1"}
+	_, err := Keep(context.Background(), cfg, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "no update_url") {
+		t.Errorf("expected a no-update-url error, got %v", err)
+	}
+}
+
+func TestKeep_NonSuccess(t *testing.T) {
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"error":"no running instance"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, UpdateURL: server.URL, Region: "eu-west-1"}
+	_, err := Keep(context.Background(), cfg, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "keep") ||
+		!strings.Contains(err.Error(), "no running instance") {
+		t.Errorf("expected a keep error with the reply's detail, got %v", err)
+	}
+}
+
+func TestStart_RetainUntil(t *testing.T) {
+	stubAWSEnv(t)
+	var gotRetainUntil string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","retainUntil":"2025-01-01T04:00:00Z"}`))
+	}))
+	defer server.Close()
+
+	retainUntil := time.Date(2025, 1, 1, 4, 0, 0, 0, time.UTC)
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	resp, err := Start(context.Background(), cfg, func(string) {}, nil, &retainUntil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRetainUntil != "2025-01-01T04:00:00Z" {
+		t.Errorf("start should send retainUntil as ISO-8601, got %q", gotRetainUntil)
+	}
+	if resp.RetainUntil != "2025-01-01T04:00:00Z" {
+		t.Errorf("unexpected retainUntil in response: %q", resp.RetainUntil)
+	}
+}
+
+func TestStart_NoRetainUntil(t *testing.T) {
+	stubAWSEnv(t)
+	var gotRetainUntil string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Start(context.Background(), cfg, func(string) {}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRetainUntil != "" {
+		t.Errorf("start without retainUntil should not send the parameter, got %q", gotRetainUntil)
 	}
 }

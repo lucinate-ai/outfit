@@ -33,13 +33,14 @@ import (
 // terminating it (the sweep terminates stopped instances after their
 // retention, and a later start re-wakes them), stop shuts it down
 // immediately (its stop Lambda also runs on a schedule to auto-stop on
-// idle), status reports instance state and endpoint health, and deploy sets
-// what the instance will serve from the Outfit itself. Each subcommand takes
-// an optional Outfit path; see resolveRemoteConfig for how the remote config
-// is found.
+// idle), status reports instance state and endpoint health, keep sets the
+// retention deadline to prevent the sweep from terminating the instance
+// early, and deploy sets what the instance will serve from the Outfit itself.
+// Each subcommand takes an optional Outfit path; see resolveRemoteConfig for
+// how the remote config is found.
 func cmdRemote(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|stop|status|metrics|logs|deploy|env|ls> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|stop|status|metrics|logs|deploy|env|ls|keep> [path]")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
@@ -63,9 +64,11 @@ func cmdRemote(args []string) error {
 		return cmdRemoteEnv(rest)
 	case "ls":
 		return cmdRemoteList(rest)
+	case "keep":
+		return cmdRemoteKeep(rest)
 	default:
 		return fmt.Errorf(
-			"unknown remote subcommand %q (expected bootstrap, start, pause, stop, status, metrics, logs, deploy, env or ls)", sub)
+			"unknown remote subcommand %q (expected bootstrap, start, pause, stop, status, metrics, logs, deploy, env, ls or keep)", sub)
 	}
 }
 
@@ -449,12 +452,27 @@ func cmdRemoteStart(args []string) error {
 	var printEnv bool
 	fs.BoolVar(&printEnv, "env", false, "print export lines to stdout for eval")
 	fs.BoolVar(&printEnv, "e", false, "print export lines to stdout for eval (shorthand)")
+	var keepD string
+	fs.StringVar(&keepD, "keep", "", "retain instance until now + DURATION (e.g. 4h, 60m), preventing the idle sweep from stopping it")
 	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
 		return err
 	}
 	cfg, err := resolveRemoteConfig(outfitArg(fs))
 	if err != nil {
 		return err
+	}
+
+	var retainUntil *time.Time
+	if keepD != "" {
+		d, err := time.ParseDuration(keepD)
+		if err != nil {
+			return fmt.Errorf("invalid --keep duration %q: %w", keepD, err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("--keep duration must be positive, got %q", keepD)
+		}
+		t := time.Now().Add(d)
+		retainUntil = &t
 	}
 
 	progress := newStartProgress(heartbeatEvery)
@@ -464,7 +482,7 @@ func cmdRemoteStart(args []string) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState)
+	resp, err := remote.Start(ctx, cfg, progress.line, progress.setState, retainUntil)
 	if err != nil {
 		return err
 	}
@@ -482,6 +500,14 @@ func cmdRemoteStart(args []string) error {
 		}
 		fmt.Fprintln(os.Stderr, "the endpoint is ready but not reachable from this network — its ingress admits a different address.")
 		fmt.Fprintf(os.Stderr, "Re-admit this machine with:\n  outfit remote deploy --overwrite --allowed-cidr %s\n", cidr)
+	}
+
+	if retainUntil != nil || resp.RetainUntil != "" {
+		retainStr := resp.RetainUntil
+		if retainStr == "" && retainUntil != nil {
+			retainStr = retainUntil.Format(time.RFC3339)
+		}
+		progress.line(fmt.Sprintf("retain until: %s", retainStr))
 	}
 
 	if printEnv {
@@ -524,6 +550,41 @@ func cmdRemoteList(args []string) error {
 		}
 		fmt.Printf("%s\t%s\t%s\n", e.Name, base, e.Region)
 	}
+	return nil
+}
+
+func cmdRemoteKeep(args []string) error {
+	fs := flag.NewFlagSet("remote keep", flag.ContinueOnError)
+	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) == 0 {
+		return fmt.Errorf("usage: outfit remote keep <duration> [path]")
+	}
+	durationStr := rest[0]
+	d, err := time.ParseDuration(durationStr)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", durationStr, err)
+	}
+	if d <= 0 {
+		return fmt.Errorf("duration must be positive, got %q", durationStr)
+	}
+	// The Outfit path is the second positional, after the duration.
+	outfitPath := ""
+	if len(rest) > 1 {
+		outfitPath = rest[1]
+	}
+	cfg, err := resolveRemoteConfig(outfitPath)
+	if err != nil {
+		return err
+	}
+	retainUntil := time.Now().Add(d)
+	_, err = remote.Keep(context.Background(), cfg, retainUntil)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("retain until: %s (in %s)\n", retainUntil.Format(time.RFC3339), d)
 	return nil
 }
 
@@ -595,6 +656,9 @@ func cmdRemoteStatus(args []string) error {
 	}
 	if text := lastActiveText(resp.LastActiveAt, resp.IdleSeconds); text != "" {
 		fmt.Printf("last active: %s\n", text)
+	}
+	if resp.RetainUntil != "" {
+		fmt.Printf("retain until: %s\n", resp.RetainUntil)
 	}
 	return nil
 }
