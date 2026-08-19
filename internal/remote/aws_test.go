@@ -6,6 +6,89 @@ import (
 	"testing"
 )
 
+func TestControlPlaneFromOutputs_MapsEveryStackOutput(t *testing.T) {
+	// The keys are the outputs the control-plane stack (remote/lib/llm-stack.ts)
+	// publishes for the config. If the template gains a new control-URL output,
+	// the mapping in controlPlaneFromOutputs must take it on: an output landed
+	// here but not mapped is dropped from every registered environment's
+	// remote.json without error — update_url was exactly that, which left
+	// `outfit remote keep` unusable on freshly registered environments.
+	outputs := map[string]string{
+		"StartUrl":               "https://start.example.aws/",
+		"StopUrl":                "https://stop.example.aws/",
+		"DeployUrl":              "https://deploy.example.aws/",
+		"StatsUrl":               "https://stats.example.aws/",
+		"EnvUrl":                 "https://env.example.aws/",
+		"UpdateUrl":              "https://update.example.aws/",
+		"Region":                 "eu-west-1",
+		"WeightsBucket":          "weights-bucket",
+		"VpcId":                  "vpc-123", // not part of the config
+		"SeedInstanceProfileArn": "arn:aws:iam::1:instance-profile/seed",
+	}
+
+	layer, err := controlPlaneFromOutputs("test-stack", outputs)
+	if err != nil {
+		t.Fatalf("controlPlaneFromOutputs: %v", err)
+	}
+
+	checks := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"StartURL", layer.Config.StartURL, outputs["StartUrl"]},
+		{"StopURL", layer.Config.StopURL, outputs["StopUrl"]},
+		{"DeployURL", layer.Config.DeployURL, outputs["DeployUrl"]},
+		{"StatsURL", layer.Config.StatsURL, outputs["StatsUrl"]},
+		{"EnvURL", layer.Config.EnvURL, outputs["EnvUrl"]},
+		{"UpdateURL", layer.Config.UpdateURL, outputs["UpdateUrl"]},
+		{"Region", layer.Config.Region, outputs["Region"]},
+		{"WeightsBucket", layer.WeightsBucket, outputs["WeightsBucket"]},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestControlPlaneFromOutputs_PredatesUpdateLambda(t *testing.T) {
+	// A stack deployed before the update Lambda exists carries no UpdateUrl
+	// output. Registration must still succeed — keep degrades to an error at
+	// the point it is used, not at deploy time.
+	outputs := map[string]string{
+		"StartUrl":      "https://start.example.aws/",
+		"StopUrl":       "https://stop.example.aws/",
+		"DeployUrl":     "https://deploy.example.aws/",
+		"Region":        "eu-west-1",
+		"StatsUrl":      "https://stats.example.aws/",
+		"EnvUrl":        "https://env.example.aws/",
+		"WeightsBucket": "weights-bucket",
+	}
+
+	layer, err := controlPlaneFromOutputs("test-stack", outputs)
+	if err != nil {
+		t.Fatalf("controlPlaneFromOutputs: %v", err)
+	}
+	if layer.Config.UpdateURL != "" {
+		t.Errorf("UpdateURL = %q, want empty for a stack without the output", layer.Config.UpdateURL)
+	}
+}
+
+func TestControlPlaneFromOutputs_MissingRequired(t *testing.T) {
+	for _, missing := range []string{"StartUrl", "StopUrl", "DeployUrl"} {
+		outputs := map[string]string{
+			"StartUrl":  "https://start.example.aws/",
+			"StopUrl":   "https://stop.example.aws/",
+			"DeployUrl": "https://deploy.example.aws/",
+		}
+		delete(outputs, missing)
+		if _, err := controlPlaneFromOutputs("test-stack", outputs); err == nil {
+			t.Errorf("missing %s: expected an error", missing)
+		}
+	}
+}
+
 func TestParseFloat(t *testing.T) {
 	cases := []struct {
 		in   string

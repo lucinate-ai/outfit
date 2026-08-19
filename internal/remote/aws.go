@@ -79,6 +79,14 @@ func DiscoverControlPlane(ctx context.Context, cfg aws.Config, stackName string)
 			outputs[aws.ToString(o.OutputKey)] = aws.ToString(o.OutputValue)
 		}
 	}
+	return controlPlaneFromOutputs(stackName, outputs)
+}
+
+// controlPlaneFromOutputs maps a control-plane stack's CloudFormation outputs
+// onto the config that drives its Lambdas. Pure, so the mapping is testable
+// without a network: a stack output added to the template but not here would
+// otherwise be dropped from every registered environment's remote.json.
+func controlPlaneFromOutputs(stackName string, outputs map[string]string) (ControlPlane, error) {
 	layer := ControlPlane{
 		Config: Config{
 			StartURL:  outputs["StartUrl"],
@@ -86,6 +94,7 @@ func DiscoverControlPlane(ctx context.Context, cfg aws.Config, stackName string)
 			DeployURL: outputs["DeployUrl"],
 			StatsURL:  outputs["StatsUrl"],
 			EnvURL:    outputs["EnvUrl"],
+			UpdateURL: outputs["UpdateUrl"],
 			Region:    outputs["Region"],
 		},
 		WeightsBucket: outputs["WeightsBucket"],
