@@ -11,6 +11,7 @@ outfit remote start      # boot it; prints the exports your agent needs (progres
 outfit remote status     # is it up? is it healthy?
 outfit remote logs       # what did it say? (readable after it's gone)
 outfit remote pause      # stop it now; a later start re-wakes it
+outfit remote keep 4h    # prevent the idle sweep from stopping it for 4 hours
 outfit remote stop       # terminate it now, rather than waiting for the idle timer
 ```
 
@@ -154,6 +155,30 @@ It appears once the control plane has been redeployed with `pnpm run deploy`
 older control plane simply omits it, and the commands print what they always
 did.
 
+## Keeping an instance alive
+
+```sh
+outfit remote keep 4h                          # retain for 4 hours from now
+outfit remote start --keep 2h                  # start and retain for 2 hours
+```
+
+`keep` sets the `Retain-Until` tag on the environment's instance, preventing
+the idle sweep from stopping or terminating it before the deadline. It is a
+minimum runtime — once the deadline passes, normal idle checking resumes. A
+manual `pause` or `stop` still takes effect: the tag guards against accidental
+death, not deliberate shutdown.
+
+`start --keep DURATION` sets the same tag at wake time, so the instance is
+retained from the moment it boots. Useful when you know you need the instance
+for a fixed period (e.g. overnight debugging) and don't want to type `keep`
+afterwards.
+
+The deadline appears in `status` output when the tag is present, so you can
+see how long the instance is protected for.
+
+It requires a control plane with the update Lambda (bootstrap with a recent
+version, or re-bootstrap).
+
 ## Reading the logs
 
 ```sh
@@ -256,6 +281,7 @@ something to reach for by habit.
 | Flag | Meaning |
 | ---- | ------- |
 | `--timeout` | How long `start` waits for the endpoint (default 15m) |
+| `--keep` | `start` only: retain the instance until `now + DURATION`, preventing the idle sweep from stopping it |
 | `-n`, `--dry-run` | `deploy` only: print what would be sent, without sending it |
 | `--reseed` | `deploy` only: re-fetch the weights even if they are already in S3 |
 

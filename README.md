@@ -194,10 +194,12 @@ outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
                                          # launch the harness (a leading Outfit or alias is
                                          #   applied first; --get shows it; --set stores it)
 outfit completion <shell>                # tab completion (bash, zsh, powershell)
-outfit remote <bootstrap|start|stop|status|metrics|logs|deploy|env|ls> [path]
+outfit remote <bootstrap|start|pause|stop|status|metrics|logs|deploy|env|ls|keep> [path]
                                          # control the remote GPU inference instance
                                          #   (bootstrap does the once-per-account setup;
                                          #    deploy sets what it serves, from the Outfit;
+                                         #    pause stops it while keeping it re-wakeable;
+                                         #    keep holds it against the idle sweep;
                                          #    logs reads the shipped logs, alive or not;
                                          #    env prints the running endpoint's env vars)
 ```
@@ -462,7 +464,10 @@ outfit remote status   # instance state, endpoint health, and when it last
                        # did any work
 outfit remote metrics  # tokens, GPU, CPU and RAM — plus the same last-active
 outfit remote logs     # what the engine (or the boot) said, even after it's gone
-outfit remote stop     # stop now instead of waiting for the idle timer
+outfit remote pause    # stop now, but keep it re-wakeable
+outfit remote keep 4h  # hold it against the idle sweep for 4 hours
+                       # (start --keep does the same at wake time)
+outfit remote stop     # terminate now instead of waiting for the idle timer
 ```
 
 Instances ship their engine and boot output to CloudWatch, so `outfit remote
@@ -470,13 +475,15 @@ logs` still works once the instance has terminated — including for a start tha
 failed before the engine came up (`--source boot`). See
 [docs/commands/remote.md](docs/commands/remote.md#reading-the-logs).
 
-Configuration is found in one of two places. A project's `Outfit` file can
-name it with a `REMOTE` instruction (`REMOTE remote.json`, resolved relative
-to the Outfit — like `PRESET`, so the pair travel together); otherwise the
-per-user `remote.json` in outfit's config directory
-(`${OUTFIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/outfit}`, see
-[docs/env-vars.md](docs/env-vars.md)) is used. Either
-way, paste the `OutfitRemoteConfig` output of the `remote/` deployment there:
+Configuration lives in a `remote.json`. A project's `Outfit` file can name
+one with a `REMOTE` instruction — either a path (`REMOTE remote.json`,
+resolved relative to the Outfit, like `PRESET`, so the pair travel together)
+or the name of a registered environment (`REMOTE dev-2`, whose file sits at
+`remotes/dev-2/remote.json` under outfit's config directory,
+`${OUTFIT_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/outfit}`). With no
+`REMOTE`, the `default` environment is used. Either way the file takes the
+`OutfitRemoteConfig` output of the `remote/` deployment — or `outfit remote
+deploy` writes it when it registers the environment:
 
 ```json
 {"start_url": "https://...lambda-url...on.aws/", "stop_url": "https://...", "region": "eu-west-1", "base_url": "http://198.51.100.7:8000/v1"}
@@ -487,8 +494,9 @@ and `status` report the address themselves — but `outfit apply` reads it, so a
 Outfit with a `REMOTE` line can leave `BASEURL` out and still point your agent
 at the endpoint. A `BASEURL` in the Outfit takes precedence.
 
-Each field can be overridden with `OUTFIT_REMOTE_START_URL`,
-`OUTFIT_REMOTE_STOP_URL` and `OUTFIT_REMOTE_REGION`. Requests are SigV4-signed
+Every URL and the region can be overridden with the matching
+[`OUTFIT_REMOTE_*`](docs/env-vars.md) environment variable. Requests are
+SigV4-signed
 with your AWS credentials (env, profile or SSO — the standard chain), which
 must be allowed `lambda:InvokeFunctionUrl`. A cold `start` takes a few
 minutes while the instance boots and loads the model; `--timeout` (default

@@ -27,6 +27,7 @@ from the environment or a `.env` beside the Outfit — never written into an
 | `OUTFIT_REMOTE_DEPLOY_URL` | Override the deploy Lambda Function URL. |
 | `OUTFIT_REMOTE_STATS_URL` | Override the stats Lambda Function URL. |
 | `OUTFIT_REMOTE_ENV_URL` | Override the env Lambda Function URL. |
+| `OUTFIT_REMOTE_UPDATE_URL` | Override the update Lambda Function URL (drives `keep`). |
 | `OUTFIT_REMOTE_REGION` | Override the AWS region (else `AWS_REGION`, else the region in the Function URL host). |
 | `OUTFIT_REMOTE_PACKAGE_MANAGER` | Pin the package manager (`pnpm`/`npm`) `outfit remote bootstrap` uses. |
 

@@ -44,7 +44,11 @@ type Config struct {
 	// endpoint without starting it. Optional — configs predating the env Lambda
 	// still work for start/stop/deploy.
 	EnvURL string `json:"env_url"`
-	Region string `json:"region"`
+	// UpdateURL is the Lambda for arbitrary post-provision instance commands
+	// (currently: set-keep). Optional — configs predating the update Lambda
+	// still work for start/stop/deploy; Keep will fail with a clear message.
+	UpdateURL string `json:"update_url"`
+	Region    string `json:"region"`
 	// BaseURL is the endpoint's own address (the environment's stable Elastic
 	// IP). It belongs to the deployment rather than to the Outfit, so it is
 	// written here and `apply` reads it back for an Outfit that states no
@@ -140,6 +144,9 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	if v := getenv("OUTFIT_REMOTE_ENV_URL"); v != "" {
 		cfg.EnvURL = v
 	}
+	if v := getenv("OUTFIT_REMOTE_UPDATE_URL"); v != "" {
+		cfg.UpdateURL = v
+	}
 	if v := getenv("OUTFIT_REMOTE_REGION"); v != "" {
 		cfg.Region = v
 	}
@@ -204,7 +211,11 @@ type Response struct {
 	ModelID        string `json:"modelId"`
 	ContextSize    int    `json:"contextSize"`
 	WeightsPrefix  string `json:"weightsPrefix"`
-	Error          string `json:"error"`
+	// RetainUntil is the instance's retention deadline, returned when the
+	// Retain-Until tag is present (set-keep or start --keep). camelCase to
+	// match the Lambda's JSON.
+	RetainUntil string `json:"retainUntil"`
+	Error       string `json:"error"`
 }
 
 // DeployConfig is what the deploy Lambda accepts: the runner-neutral
@@ -299,7 +310,20 @@ const StateInFlight = "in-flight"
 // error even though the boot continues server-side. Those are retried within
 // the caller's deadline: the wake is idempotent — a repeated call reattaches
 // to the same booting instance — so retrying never launches a second one.
-func Start(ctx context.Context, cfg Config, progress func(string), onState func(string)) (*Response, error) {
+//
+// When retainUntil is non-nil, the instance's Retain-Until tag is set so the
+// idle sweep does not terminate it before the stated deadline.
+func Start(ctx context.Context, cfg Config, progress func(string), onState func(string), retainUntil *time.Time) (*Response, error) {
+	startURL := cfg.StartURL
+	if retainUntil != nil {
+		u, err := url.Parse(startURL)
+		if err == nil {
+			q := u.Query()
+			q.Set("retainUntil", retainUntil.UTC().Format(time.RFC3339))
+			u.RawQuery = q.Encode()
+			startURL = u.String()
+		}
+	}
 	for {
 		// Supersedes whatever the previous attempt reported — including a
 		// no-capacity reply: this attempt has not refused anything yet, and a
@@ -308,7 +332,7 @@ func Start(ctx context.Context, cfg Config, progress func(string), onState func(
 		if onState != nil {
 			onState(StateInFlight)
 		}
-		resp, err := call(ctx, cfg, http.MethodPost, cfg.StartURL, nil)
+		resp, err := call(ctx, cfg, http.MethodPost, startURL, nil)
 		if err != nil {
 			var urlErr *url.Error
 			if ctx.Err() == nil && errors.As(err, &urlErr) {
@@ -403,6 +427,33 @@ func pauseURL(stopURL string) string {
 	q.Set("action", "pause")
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+// Keep sets the Retain-Until tag on the environment's instance, preventing the
+// idle sweep from terminating it before the stated deadline. A manual stop or
+// pause still takes effect: the tag guards against accidental death. The CLI
+// computes the deadline from a duration and passes the absolute time here.
+func Keep(ctx context.Context, cfg Config, retainUntil time.Time) (*Response, error) {
+	if cfg.UpdateURL == "" {
+		return nil, fmt.Errorf(
+			"no update_url configured: the remote deployment needs to be updated for keep support")
+	}
+	u, err := url.Parse(cfg.UpdateURL)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("cmd", "set-keep")
+	q.Set("retainUntil", retainUntil.UTC().Format(time.RFC3339))
+	u.RawQuery = q.Encode()
+	resp, err := call(ctx, cfg, http.MethodPost, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, controlReplyError("keep", resp)
+	}
+	return resp, nil
 }
 
 // Env returns the environment variables for an endpoint (base URL and API key)

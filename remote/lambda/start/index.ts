@@ -1,5 +1,6 @@
 import type { Context, LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import {
+  RETAIN_UNTIL_TAG,
   associateEip,
   errorName,
   findLatestAmi,
@@ -67,6 +68,18 @@ function envFilter(env: string) {
   return [{ Name: `tag:${ENV_TAG_KEY}`, Values: [env] }];
 }
 
+/** Parse and validate the optional retainUntil query parameter. */
+function parseRetainUntil(raw: string | undefined): string | null {
+  if (!raw) {
+    return null;
+  }
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) {
+    return null;
+  }
+  return d.toISOString();
+}
+
 export async function handler(
   event: LambdaFunctionURLEvent,
   context: Context,
@@ -81,7 +94,9 @@ export async function handler(
   if (method === 'GET') {
     return status(env);
   }
-  return wake(env, context);
+  const rawRetainUntil = event.queryStringParameters?.retainUntil;
+  const retainUntil = parseRetainUntil(rawRetainUntil);
+  return wake(env, context, retainUntil);
 }
 
 /** GET — report one environment's state without side effects. */
@@ -114,13 +129,17 @@ async function status(env: string): Promise<LambdaFunctionURLResult> {
     checkHealth(instance.instanceId),
     readDaemonActivity(instance.instanceId),
   ]);
-  return jsonResponse(200, {
+  const result: Record<string, unknown> = {
     state: 'running',
     environment: env,
     healthy,
     base_url: baseUrl,
     ...activity,
-  });
+  };
+  if (instance.retainUntil) {
+    result.retainUntil = instance.retainUntil.toISOString();
+  }
+  return jsonResponse(200, result);
 }
 
 /**
@@ -153,7 +172,11 @@ async function readDaemonActivity(
 }
 
 /** POST — launch the environment's instance if needed and block until serving. */
-async function wake(env: string, context: Context): Promise<LambdaFunctionURLResult> {
+async function wake(
+  env: string,
+  context: Context,
+  retainUntil: string | null,
+): Promise<LambdaFunctionURLResult> {
   const deadline = Date.now() + context.getRemainingTimeInMillis() - DEADLINE_MARGIN_MS;
 
   // What to serve comes from the environment's deploy-config. No default
@@ -298,7 +321,17 @@ async function wake(env: string, context: Context): Promise<LambdaFunctionURLRes
   // ready; a 503 or connection refused means still loading.
   while (Date.now() < deadline) {
     if (await checkHealth(instanceId)) {
-      return ready(env, baseUrl);
+      // Best-effort retain tag: the wake must not fail because of it.
+      if (retainUntil) {
+        try {
+          await tagInstance(instanceId, RETAIN_UNTIL_TAG, retainUntil);
+        } catch (err) {
+          console.log(
+            JSON.stringify({ phase: 'retain', environment: env, instanceId, error: `tag ${errorName(err)}` }),
+          );
+        }
+      }
+      return ready(env, baseUrl, retainUntil);
     }
     await sleep(HEALTH_POLL_MS);
   }
@@ -508,15 +541,23 @@ async function checkHealth(instanceId: string): Promise<boolean> {
   }
 }
 
-async function ready(env: string, baseUrl: string): Promise<LambdaFunctionURLResult> {
+async function ready(
+  env: string,
+  baseUrl: string,
+  retainUntil: string | null,
+): Promise<LambdaFunctionURLResult> {
   // No wake is recorded here: the daemon counts an engine start as activity,
   // so the instance itself reports a fresh idle time and the idle check gives
   // the first request time to land without the control plane tracking it.
   console.log(JSON.stringify({ phase: 'ready', environment: env }));
-  return jsonResponse(200, {
+  const result: Record<string, unknown> = {
     state: 'ready',
     environment: env,
     base_url: baseUrl,
     api_key: await readEnvApiKey(env),
-  });
+  };
+  if (retainUntil) {
+    result.retainUntil = retainUntil;
+  }
+  return jsonResponse(200, result);
 }
