@@ -284,8 +284,8 @@ func outfitArg(fs *flag.FlagSet) string {
 
 // heartbeatEvery is how often a start that is still waiting says so. The start
 // endpoint blocks until the model is serving, which on a cold start is minutes,
-// so without this the command looks hung.
-const heartbeatEvery = 30 * time.Second
+// so without this the command looks hung. A variable so tests can shorten it.
+var heartbeatEvery = 30 * time.Second
 
 // startProgress reports what a slow start is doing. Everything it writes goes
 // to stderr, so `outfit remote start | grep '^export '` still yields just the

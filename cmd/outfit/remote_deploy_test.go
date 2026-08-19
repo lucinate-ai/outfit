@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -630,6 +631,104 @@ func TestStartProgress_HeartbeatReflectsState(t *testing.T) {
 		}
 		p.close()
 	})
+
+	// The attempt that finds capacity reports no state until it is ready — its
+	// in-flight report is what tells the heartbeat the capacity wait is over.
+	t.Run("in-flight after a capacity wait says starting", func(t *testing.T) {
+		p := newStartProgress(time.Hour) // no ticks; drive the line directly
+		p.setState("no-capacity")
+		if got := p.heartbeat(); !strings.Contains(got, "waiting for capacity") {
+			t.Errorf("after no-capacity, heartbeat = %q, want a capacity wait", got)
+		}
+		p.setState(remote.StateInFlight)
+		got := p.heartbeat()
+		if !strings.Contains(got, "still starting") {
+			t.Errorf("in-flight after a capacity wait, heartbeat = %q, want a starting line", got)
+		}
+		if strings.Contains(got, "waiting for capacity") {
+			t.Errorf("an in-flight attempt supersedes the capacity wait, got:\n%q", got)
+		}
+		p.close()
+	})
+}
+
+// The end-to-end shape of the capacity-wait bug: the first attempt is refused
+// for lack of capacity, the retry finds capacity and holds its request while
+// the instance boots. The heartbeat must say it is waiting for capacity during
+// the wait and switch to saying it is starting once the booting attempt is in
+// flight — the refused attempt's report must not outlive the attempt it
+// described.
+func TestRemoteStart_HeartbeatTracksTheCapacityWaitEnding(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	origEvery := heartbeatEvery
+	heartbeatEvery = 20 * time.Millisecond
+	t.Cleanup(func() { heartbeatEvery = origEvery })
+
+	origProbe := remote.ProbeTimeout
+	remote.ProbeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { remote.ProbeTimeout = origProbe })
+
+	// A reachable endpoint, so the post-ready probe adds no noise.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	defer l.Close()
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d/v1", l.Addr().(*net.TCPAddr).Port)
+
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte(`{"state":"no-capacity","retry_after_seconds":0}`))
+			return
+		}
+		// The attempt that finds capacity holds its request open while the
+		// instance boots and answers only when it is ready.
+		time.Sleep(300 * time.Millisecond)
+		w.Write([]byte(fmt.Sprintf(`{"state":"ready","base_url":"%s","api_key":"sk-test"}`, baseURL)))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	stderr := captureStderr(t, func() {
+		if err := cmdRemoteStart(nil); err != nil {
+			t.Fatalf("cmdRemoteStart: %v", err)
+		}
+	})
+
+	lines := strings.Split(strings.TrimSpace(stderr), "\n")
+	lastWaiting, startingAfterWaiting := -1, false
+	for i, line := range lines {
+		switch {
+		case strings.Contains(line, "waiting for capacity"):
+			lastWaiting = i
+		case lastWaiting != -1 && strings.Contains(line, "still starting"):
+			startingAfterWaiting = true
+		}
+	}
+	if lastWaiting == -1 {
+		t.Fatalf("no capacity-wait heartbeat in the output, so the wait was not observed:\n%s", stderr)
+	}
+	if !startingAfterWaiting {
+		t.Errorf("no 'still starting' heartbeat after the last capacity-wait line; the booting attempt still reads as a capacity wait:\n%s", stderr)
+	}
+	if calls != 2 {
+		t.Errorf("expected the start to be attempted twice, got %d", calls)
+	}
 }
 
 // -t is a shorthand for --timeout: a very short one makes a never-ready start
