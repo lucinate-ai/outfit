@@ -10,12 +10,14 @@ outfit remote deploy     # create an endpoint (environment) and tell it what to 
 outfit remote start      # boot it; prints the exports your agent needs (progress on stderr)
 outfit remote status     # is it up? is it healthy?
 outfit remote logs       # what did it say? (readable after it's gone)
-outfit remote stop       # shut it down now, rather than waiting for the idle timer
+outfit remote pause      # stop it now; a later start re-wakes it
+outfit remote stop       # terminate it now, rather than waiting for the idle timer
 ```
 
 The endpoint is the one [`remote/`](../../remote/) in this repository deploys: a
-GPU instance that exists only while you're using it, and terminates itself once
-you stop.
+GPU instance that exists only while you're using it. When it goes idle it is
+stopped (so a re-wake is fast), and terminated once it has been stopped long
+enough that the pause is over.
 
 ## Bootstrapping the account
 
@@ -55,12 +57,14 @@ eval "$(outfit remote start)"           # boots it (~10 min from cold) and sets
                                        # OPENAI_BASE_URL and OPENAI_API_KEY
 outfit apply                           # point your agent at it
 outfit harness                         # work
-outfit remote stop                     # done
+outfit remote pause                    # done for now: stopped, re-wakeable with start
+outfit remote stop                     # done for good: terminate it
 ```
 
-Forgetting `stop` is not a disaster — the endpoint terminates itself after a
-spell with no requests — but it's the difference between minutes and hours of
-GPU time.
+Forgetting `stop` is not a disaster — after a spell with no requests the
+endpoint is **stopped** (no more GPU billing; a start re-wakes it) and then
+**terminated** once the retention passes — but it's the difference between
+minutes and hours of GPU time.
 
 ## Pointing at your endpoint
 

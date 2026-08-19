@@ -208,7 +208,7 @@ export class LlmStack extends cdk.Stack {
     };
 
     const startFn = new nodejs.NodejsFunction(this, 'StartFn', {
-      description: 'Launches an environment instance (per-AZ capacity fallback) and waits until it serves',
+      description: 'Launches an environment instance (or re-wakes a stopped one; per-AZ capacity fallback) and waits until it serves',
       entry: path.join(__dirname, '..', 'lambda', 'start', 'index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -247,11 +247,29 @@ export class LlmStack extends cdk.Stack {
         resources: ['*'],
       }),
     );
+    // Re-wake: start a stopped instance of this environment. Tag-scoped, like
+    // the stop Lambda's actions.
+    startFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:StartInstances'],
+        resources: ['*'],
+        conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
+      }),
+    );
     startFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ec2:CreateTags'],
         resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
         conditions: { StringEquals: { 'ec2:CreateAction': 'RunInstances' } },
+      }),
+    );
+    // Started-At: the session start written when a stopped instance is
+    // re-woken — the max-runtime cap must measure the session, not first boot.
+    startFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:CreateTags'],
+        resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
+        conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
       }),
     );
     startFn.addToRolePolicy(
@@ -280,7 +298,8 @@ export class LlmStack extends cdk.Stack {
     );
 
     const stopFn = new nodejs.NodejsFunction(this, 'StopFn', {
-      description: 'Terminates environment instances - immediately (manual) or after idle (scheduled sweep)',
+      description:
+        'Stops idle environment instances (scheduled sweep) and terminates them after stop retention - or stops/terminates one immediately on request',
       entry: path.join(__dirname, '..', 'lambda', 'stop', 'index.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -290,14 +309,23 @@ export class LlmStack extends cdk.Stack {
       environment: {
         ...commonEnv,
         IDLE_THRESHOLD_MINUTES: String(cfg.idleThresholdMinutes),
+        STOP_RETENTION_MINUTES: String(cfg.stopRetentionMinutes),
         GRACE_PERIOD_MINUTES: String(cfg.gracePeriodMinutes),
         MAX_RUNTIME_MINUTES: String(cfg.maxRuntimeMinutes),
       },
     });
     stopFn.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ['ec2:TerminateInstances'],
+        actions: ['ec2:TerminateInstances', 'ec2:StopInstances'],
         resources: ['*'],
+        conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
+      }),
+    );
+    // Stopped-At: the control plane's own stop time — EC2 has no equivalent.
+    stopFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:CreateTags'],
+        resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
         conditions: { StringEquals: { [`ec2:ResourceTag/${TAG_KEY}`]: TAG_VALUE } },
       }),
     );

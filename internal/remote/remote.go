@@ -344,7 +344,9 @@ func Status(ctx context.Context, cfg Config) (*Response, error) {
 	return resp, nil
 }
 
-// Stop stops the instance immediately rather than waiting for the idle timer.
+// Stop stops the instance immediately rather than waiting for the idle timer:
+// it terminates it, discarding the boot disk and the weights on it, so the
+// next start is a full launch.
 func Stop(ctx context.Context, cfg Config) (*Response, error) {
 	resp, err := call(ctx, cfg, http.MethodPost, cfg.StopURL, nil)
 	if err != nil {
@@ -354,6 +356,35 @@ func Stop(ctx context.Context, cfg Config) (*Response, error) {
 		return nil, controlReplyError("stop", resp)
 	}
 	return resp, nil
+}
+
+// Pause stops the instance without terminating it: the boot disk and its
+// weights survive, so a later Start re-wakes it instead of launching fresh.
+// The instance is terminated by the control plane's sweep once it has been
+// stopped beyond the retention window.
+func Pause(ctx context.Context, cfg Config) (*Response, error) {
+	resp, err := call(ctx, cfg, http.MethodPost, pauseURL(cfg.StopURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, controlReplyError("pause", resp)
+	}
+	return resp, nil
+}
+
+// pauseURL points the stop Lambda at its pause mode: the same Function URL
+// with an action parameter, so both modes share the one configured endpoint
+// and old configs need no new entry.
+func pauseURL(stopURL string) string {
+	u, err := url.Parse(stopURL)
+	if err != nil {
+		return stopURL
+	}
+	q := u.Query()
+	q.Set("action", "pause")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Env returns the environment variables for an endpoint (base URL and API key)

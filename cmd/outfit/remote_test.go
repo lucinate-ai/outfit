@@ -311,6 +311,36 @@ func TestRemoteStop_PrintsState(t *testing.T) {
 	}
 }
 
+func TestRemotePause_PrintsState(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var gotAction string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("pause should POST, got %s", r.Method)
+		}
+		gotAction = r.URL.Query().Get("action")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+	writeRemoteConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdRemotePause(nil); err != nil {
+			t.Errorf("cmdRemotePause: %v", err)
+		}
+	})
+	if gotAction != "pause" {
+		t.Errorf("pause must ask the stop Lambda for its pause mode, got action=%q", gotAction)
+	}
+	for _, want := range []string{"state: stopping", "outfit remote start", "outfit remote stop"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("pause output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRemote_OutfitDiscovery(t *testing.T) {
 	isolateConfig(t) // no per-user config exists, so success proves discovery
 	stubAWSEnv(t)
