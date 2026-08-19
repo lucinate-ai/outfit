@@ -245,7 +245,7 @@ func TestStart_ReportsInFlightAfterACapacityWait(t *testing.T) {
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
 	var states []string
-	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }); err != nil {
+	if _, err := Start(context.Background(), cfg, func(string) {}, func(s string) { states = append(states, s) }, nil); err != nil {
 		t.Fatal(err)
 	}
 	lastNoCapacity, inFlightAfter, readyAfter := -1, false, false
