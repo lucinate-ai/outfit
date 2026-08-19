@@ -150,6 +150,11 @@ on a machine you run yourself, which does still report; see
 [`outfit fleet`](fleet.md).) In none of these cases does the rest of the
 report change.
 
+It appears once the control plane has been redeployed with `pnpm run deploy`
+(the `run` matters — plain `pnpm deploy` is pnpm's own built-in command). An
+older control plane simply omits it, and the commands print what they always
+did.
+
 ## Keeping an instance alive
 
 ```sh
@@ -173,11 +178,6 @@ see how long the instance is protected for.
 
 It requires a control plane with the update Lambda (bootstrap with a recent
 version, or re-bootstrap).
-
-## Reading the logs
-(the `run` matters — plain `pnpm deploy` is pnpm's own built-in command). An
-older control plane simply omits it, and the commands print what they always
-did.
 
 ## Reading the logs
 
