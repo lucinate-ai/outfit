@@ -8,22 +8,29 @@ what to serve from an Outfit: the `outfit remote` command group.
 ### Requirement: Remote command group
 
 The system SHALL provide a `remote` command group with the subcommands
-`bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, and `metrics`. `start`,
+`bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, `metrics`, and `keep`. `start`,
 `stop`, `status`, `metrics` and `deploy` each take an optional Outfit path:
 `start` SHALL boot the endpoint and block until it is serving, then perform a
 quick TCP probe of the inference endpoint — if the probe fails, a warning is
 printed to stderr explaining the network mismatch (see the Remote Start Probe
 specification) — and finally print the base URL and API key as shell exports;
+`start` SHALL also accept a `--keep DURATION` flag that sets the instance
+retention deadline to `now + DURATION`, preventing the idle sweep from
+terminating it before that time (see the Remote Keep specification);
 `stop` SHALL stop it immediately rather than waiting for its idle timer;
 `status` SHALL report instance state and endpoint health without side effects
-and SHALL NOT perform any TCP probe; `metrics` SHALL report instance state,
-token usage, resource consumption, and GPU information for a running instance;
-`deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered
-remote environments (see the Remote Environments specification). `bootstrap`
-SHALL stand up the account-level AWS control plane (once per account)
-by obtaining and driving the CDK project, and takes its own flags rather than
-an Outfit path (see the Endpoint Provisioning specification). An unrecognised
-subcommand SHALL fail naming the accepted ones.
+and SHALL NOT perform any TCP probe, and SHALL include the `Retain-Until`
+deadline when the instance has an active retention tag;
+`keep` SHALL set the `Retain-Until` tag on the environment's instance for the
+given duration, without starting or stopping the instance (see the Remote Keep
+specification); `metrics` SHALL report instance state, token usage, resource
+consumption, and GPU information for a running instance; `deploy` SHALL set
+what the endpoint serves. `ls` SHALL list the registered remote environments
+(see the Remote Environments specification). `bootstrap` SHALL stand up the
+account-level AWS control plane (once per account) by obtaining and driving the
+CDK project, and takes its own flags rather than an Outfit path (see the
+Endpoint Provisioning specification). An unrecognised subcommand SHALL fail
+naming the accepted ones.
 
 #### Scenario: Starting the endpoint
 
@@ -37,6 +44,12 @@ subcommand SHALL fail naming the accepted ones.
 - **THEN** a warning is printed to stderr with a remediation command, and the
   command still exits 0
 
+#### Scenario: Starting with a keep flag
+
+- **WHEN** the user runs `outfit remote start --keep 4h` and the endpoint reports ready
+- **THEN** the base URL and API key are printed as `export` lines, and the
+  instance retention deadline is set to 4 hours from now
+
 #### Scenario: Waiting through a cold start
 
 - **WHEN** the endpoint reports that it is still starting
@@ -48,6 +61,11 @@ subcommand SHALL fail naming the accepted ones.
 - **WHEN** the user runs `outfit remote ls`
 - **THEN** the registered environments are listed rather than any endpoint being
   contacted
+
+#### Scenario: Setting a keep deadline
+
+- **WHEN** the user runs `outfit remote keep 2h`
+- **THEN** the instance retention tag is set and the deadline is reported
 
 #### Scenario: Metrics reports instance figures
 
@@ -64,7 +82,7 @@ subcommand SHALL fail naming the accepted ones.
 
 - **WHEN** the user runs `outfit remote frobnicate`
 - **THEN** the command fails listing the accepted subcommands, which include
-  `bootstrap` and `metrics`
+  `bootstrap`, `metrics`, and `keep`
 
 ### Requirement: Reporting a start in progress
 
