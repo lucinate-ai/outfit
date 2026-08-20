@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.24.0] - 2026-08-20
+### Added
+- feat(remote): add keep subcommand and start --keep flag
+- feat(remote): tiered idle shutdown and remote pause
+
+### Changed
+- build(deps): bump the go-dependencies group with 8 updates
+- docs(openspec): archive start-heartbeat-in-flight and sync its spec
+- docs(openspec): archive tiered-idle-shutdown and graceful-instance-stop changes
+
+### Fixed
+- fix(remote): report in-flight start attempts to the heartbeat
+
 ## [1.23.0] - 2026-08-17
 ### Added
 - feat(remote): carry companion weights and add deploy --reseed
