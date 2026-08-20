@@ -23,8 +23,17 @@ import (
 // newRootCmd builds the command tree for one invocation of outfit.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:     "outfit",
-		Short:   "configure coding-agent model providers",
+		Use:   "outfit",
+		Short: "configure coding-agent model providers",
+		Long: `configures a coding agent — a harness — to use a model provider, by
+deep-merging provider settings into that harness's config. The supported
+harnesses are opencode, Pi and lucinate; the harness is chosen at runtime
+(--harness/-H, OUTFIT_HARNESS, or a stored default set with outfit harness
+--set), never baked into an Outfit, so the same Outfit applies to any of
+them.
+
+Each command's --help carries its full description; outfit list shows what a
+harness could be configured with, outfit show what it has been.`,
 		Version: version,
 		// The version prints as the bare version string, as the version
 		// subcommand does.
@@ -89,8 +98,15 @@ func harnessCmd() *cobra.Command {
 	var outfitPath outfitPathFlag
 	var route routeOptions
 	c := &cobra.Command{
-		Use:                "harness",
-		Short:              "launch the active harness, optionally applying an Outfit first",
+		Use:   "harness",
+		Short: "launch the active harness, optionally applying an Outfit first",
+		Long: `launches the active harness, forwarding any trailing args to it. A
+leading argument that names an Outfit — a registered alias or a path — is
+applied first and not forwarded; put -- before the harness's own args to
+keep them, and a leading -- opts out of this entirely. --outfit/-O applies
+an Outfit first, as if you had run apply before it. --get prints the active
+harness instead of launching it; --set <name> stores the default harness and
+exits. Honours -H/--harness and OUTFIT_HARNESS.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		SilenceErrors:      true,
@@ -278,8 +294,13 @@ func versionCmd() *cobra.Command {
 // no subcommand is named and reports the usage, as the old dispatch did.
 func fleetCmd() *cobra.Command {
 	fleet := &cobra.Command{
-		Use:                "fleet",
-		Short:              "observe and drive the engines in a fleet file",
+		Use:   "fleet",
+		Short: "observe and drive the engines in a fleet file",
+		Long: `observes and drives the engines named in a fleet file (fleet.yaml by
+default; --fleet names another). Observation is fleet-wide (status, metrics,
+logs); start, stop and route act on a single node, and with no node they
+list the fleet and touch nothing. A node that fails is a rendered row, never
+an error — only a problem with the fleet file itself fails a command.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		SilenceErrors:      true,
@@ -304,8 +325,13 @@ func fleetCmd() *cobra.Command {
 // when no subcommand is named and reports the usage, as the old dispatch did.
 func remoteCmd() *cobra.Command {
 	remote := &cobra.Command{
-		Use:                "remote",
-		Short:              "control the remote GPU inference instance",
+		Use:   "remote",
+		Short: "control the remote GPU inference instance",
+		Long: `runs the model on a cloud GPU that exists only while you use it, from
+the same Outfit. The endpoint's URLs come from the Outfit's REMOTE — a bare
+name selects an environment under ~/.config/outfit/remotes/<name>/, a path
+names a file — falling back to the default environment. Each subcommand's
+--help says what that step does.`,
 		Args:               cobra.ArbitraryArgs,
 		DisableFlagParsing: true,
 		SilenceErrors:      true,

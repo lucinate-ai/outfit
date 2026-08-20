@@ -66,8 +66,13 @@ func daemonCmd() *cobra.Command {
 	var apiAddr, apiToken, apiTokenFile, logLevel string
 	var loopback bool
 	c := &cobra.Command{
-		Use:           "daemon",
-		Short:         "supervise an engine via the control API",
+		Use:   "daemon",
+		Short: "supervise an engine via the control API",
+		Long: `supervises an engine behind the control API (status, start, stop,
+metrics, logs): it runs at most one engine, started detached, and records
+its exit rather than restarting it. It reads no Outfit and takes no Outfit
+path — what an engine runs comes from a start request's deploy config or the
+stored one. outfit serve --api runs the same API in the foreground.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

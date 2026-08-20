@@ -152,8 +152,10 @@ func remoteBootstrapCmd() *cobra.Command {
 		pkgMgr      string
 	)
 	c := &cobra.Command{
-		Use:               "bootstrap",
-		Short:             "set up the once-per-account control plane",
+		Use:   "bootstrap",
+		Short: "set up the once-per-account control plane",
+		Long: `does the once-per-account control-plane setup (Image Builder, the
+lifecycle Lambdas, shared bucket/roles/VPC) with a consent gate.`,
 		Args:              cobra.ArbitraryArgs,
 		SilenceErrors:     true,
 		SilenceUsage:      true,

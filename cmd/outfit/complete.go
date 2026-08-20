@@ -43,7 +43,9 @@ func completionCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "completion <shell>",
 		Short: "print a tab completion script for bash, zsh, or powershell",
-		Long: `Prints the tab completion script for the given shell.
+		Long: `Prints the tab completion script for the given shell. Once it is in place,
+TAB completes commands, flags, providers, harnesses, and your registered
+aliases.
 
 The script must be sourced by a running shell, or saved where a shell reads
 it at start-up:

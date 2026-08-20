@@ -104,8 +104,12 @@ func addCmd() *cobra.Command {
 	var s outfit.Selection
 	var harnessName string
 	c := &cobra.Command{
-		Use:           "add",
-		Short:         "deep-merge a provider into the active harness's config",
+		Use:   "add",
+		Short: "deep-merge a provider into the active harness's config",
+		Long: `deep-merges the provider into the active harness's config, preserving
+everything else. Specify a model (or an alias). --context sets the model's
+context window; --output sets the max output tokens (opencode requires it
+alongside a context, defaulting to a quarter of the context).`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -135,8 +139,10 @@ func removeCmd() *cobra.Command {
 	var s outfit.Selection
 	var harnessName string
 	c := &cobra.Command{
-		Use:           "remove",
-		Short:         "remove a provider, or a model, from the harness's config",
+		Use:   "remove",
+		Short: "remove a provider, or a model, from the harness's config",
+		Long: `removes the provider, or just the named model when a model/alias is
+given.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -445,8 +451,10 @@ func resolveAlias(arg string) (string, bool, error) {
 func applyCmd() *cobra.Command {
 	var providers, output, harnessName string
 	c := &cobra.Command{
-		Use:           "apply",
-		Short:         "apply an Outfit file (defaults to ./Outfit)",
+		Use:   "apply",
+		Short: "apply an Outfit file (defaults to ./Outfit)",
+		Long: `applies an Outfit file — a declarative, Dockerfile-style description of
+one provider selection — as if you had run the equivalent add.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -489,8 +497,10 @@ func applyCmd() *cobra.Command {
 func unapplyCmd() *cobra.Command {
 	var providers, harnessName string
 	c := &cobra.Command{
-		Use:           "unapply",
-		Short:         "remove what an Outfit file selects",
+		Use:   "unapply",
+		Short: "remove what an Outfit file selects",
+		Long: `removes what an Outfit file selects, as if you had run the equivalent
+remove. The inverse of apply.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -535,8 +545,15 @@ func aliasCmd() *cobra.Command {
 	var name string
 	var force, list bool
 	c := &cobra.Command{
-		Use:           "alias",
-		Short:         "register an Outfit under a short name",
+		Use:   "alias",
+		Short: "register an Outfit under a short name",
+		Long: `registers an Outfit under a short name, which then stands in wherever an
+Outfit path goes (apply, unapply, serve, harness). The name defaults to the
+Outfit's own ALIAS; --name/-n picks another, --force/-F re-points a name
+already registered, and --list/-l shows them all. A path on disk always wins
+over a name, so registering one changes nothing that works. Set OUTFIT_ALIAS
+to a registered name and every command given no Outfit uses it, before
+./Outfit is tried; an argument still wins.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -642,6 +659,7 @@ func unaliasCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:               "unalias",
 		Short:             "drop a registered name",
+		Long:              `drops a registered name. The Outfit file itself is left alone.`,
 		Args:              cobra.ArbitraryArgs,
 		SilenceErrors:     true,
 		SilenceUsage:      true,
@@ -732,6 +750,7 @@ func exportCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:           "export",
 		Short:         "print the harness's config as an Outfit",
+		Long:          `prints the active harness's config as an Outfit (outfit export > Outfit).`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -1298,8 +1317,11 @@ func namesAnOutfit(arg string) bool {
 func showCmd() *cobra.Command {
 	var harnessName string
 	c := &cobra.Command{
-		Use:           "show",
-		Short:         "show the providers and models the harness has configured",
+		Use:   "show",
+		Short: "show the providers and models the harness has configured",
+		Long: `lists the providers and models actually configured in the active
+harness's config (where list shows the catalogue of what you could
+configure), and the aliases you have registered.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -1389,8 +1411,11 @@ func listCmd() *cobra.Command {
 	var providers string
 	var showModels bool
 	c := &cobra.Command{
-		Use:           "list",
-		Short:         "list the provider catalogue",
+		Use:   "list",
+		Short: "list the provider catalogue",
+		Long: `lists the catalogue: the providers outfit knows about and, with
+--models, the models each could be configured with. (show, in contrast,
+lists what the active harness's config actually has.)`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -1479,8 +1504,12 @@ const defaultProvidersFile = "providers.yaml"
 func initProvidersCmd() *cobra.Command {
 	var force bool
 	c := &cobra.Command{
-		Use:           "init-providers",
-		Short:         "write the built-in providers.yaml out",
+		Use:   "init-providers",
+		Short: "write the built-in providers.yaml out",
+		Long: `writes the binary's built-in providers.yaml to the working directory
+(or [path]) so you can customise the catalogue and point outfit at it with
+--providers/OUTFIT_PROVIDERS. Refuses to overwrite an existing file unless
+--force is given.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

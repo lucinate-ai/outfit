@@ -367,8 +367,10 @@ func printRemoteEnv(resp *remote.Response) {
 
 func remoteEnvCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:               "env",
-		Short:             "print the running endpoint's env vars",
+		Use:   "env",
+		Short: "print the running endpoint's env vars",
+		Long: `returns the running endpoint's environment variables without
+starting it.`,
 		Args:              cobra.ArbitraryArgs,
 		SilenceErrors:     true,
 		SilenceUsage:      true,
@@ -400,8 +402,10 @@ func remoteStartCmd() *cobra.Command {
 	var printEnv bool
 	var keepD string
 	c := &cobra.Command{
-		Use:               "start",
-		Short:             "boot the instance and print its endpoint",
+		Use:   "start",
+		Short: "boot the instance and print its endpoint",
+		Long: `boots the instance and, with --env/-e, prints the exports your
+agent needs.`,
 		Args:              cobra.ArbitraryArgs,
 		SilenceErrors:     true,
 		SilenceUsage:      true,
@@ -611,6 +615,7 @@ func remoteStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:               "stop",
 		Short:             "shut the instance down",
+		Long:              `shuts the instance down rather than waiting for the idle timer.`,
 		Args:              cobra.ArbitraryArgs,
 		SilenceErrors:     true,
 		SilenceUsage:      true,
@@ -1272,8 +1277,11 @@ func remoteDeployCmd() *cobra.Command {
 		region      string
 	)
 	c := &cobra.Command{
-		Use:               "deploy",
-		Short:             "set what the instance serves, from the Outfit",
+		Use:   "deploy",
+		Short: "set what the instance serves, from the Outfit",
+		Long: `creates the environment the Outfit's REMOTE names — its own
+address, API key and allowed CIDR — and says what it serves (PROVIDER picks
+the engine, just as it does for serve).`,
 		Args:              cobra.ArbitraryArgs,
 		SilenceErrors:     true,
 		SilenceUsage:      true,

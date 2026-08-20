@@ -174,18 +174,22 @@
 
 ## 7. Docs and final verification
 
-- [x] 7. Update AGENTS.md: the `cmd/outfit` layout section (Cobra tree,
+- [x] 7.1 Update AGENTS.md: the `cmd/outfit` layout section (Cobra tree,
   pflag, `completion.bash`/`complete.go` removal, `TestCompletionCoversDispatch`
   replacement), the Traps section (the completion-table trap is replaced by
   tree-derived completion; note `NoOptDefVal`/`-O` and `DisableFlagParsing`
   for `harness`), and any `flag`-package references
-- [x] 7. Update the context block in `openspec/config.yaml` to reflect the
+- [x] 7.2 Update the context block in `openspec/config.yaml` to reflect the
   new dependencies (drop "no runtime dependencies" for the CLI layer; keep
   the internal/ domain packages dependency-free)
-- [x] 7. Final gate: `gofmt -l .` empty, `go vet ./...` clean,
+- [x] 7.3 Final gate: `gofmt -l .` empty, `go vet ./...` clean,
   `go test ./... -cover` green with total coverage >= 80%, and `go
   build -o outfit ./cmd/outfit`
-- [x] 7. Manual completion smoke on the built binary in both bash and zsh:
+- [x] 7.4 Manual completion smoke on the built binary in both bash and zsh:
   alias/provider/model slots, `--outfit` attached form, `remote <TAB>`
   subcommands, a previously-drifted flag (e.g. `list --models`), and the
   `fish` rejection
+- [x] 7.5 Port the old hand-written usage()'s per-command detail into each
+  command's `Long` (what `<cmd> --help` prints first), and give the root and
+  `completion` commands their own descriptions, so no per-command detail is
+  lost to the tree

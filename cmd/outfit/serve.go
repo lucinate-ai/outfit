@@ -161,8 +161,13 @@ func serveCmd() *cobra.Command {
 		logLevel string
 	)
 	c := &cobra.Command{
-		Use:           "serve",
-		Short:         "run the Outfit's inference server",
+		Use:   "serve",
+		Short: "run the Outfit's inference server",
+		Long: `runs the inference server the Outfit's PROVIDER names — llamacpp
+(llama-server) or omlx (Apple Silicon). With a PRESET it turns the matching
+section into the command, reading it in that engine's flag vocabulary;
+otherwise it derives one from the Outfit's own instructions. Prints the
+command before running it; --dry-run/-n prints without launching the server.`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
