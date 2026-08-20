@@ -67,6 +67,8 @@ export interface DaemonStatus {
   logPath?: string;
   lastActiveAt?: string;
   idleSeconds?: number;
+  /** The outfit binary's build-time version string, reported by the daemon. */
+  version?: string;
 }
 
 /**

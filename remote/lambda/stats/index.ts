@@ -7,7 +7,12 @@ import {
   runShellCommand,
 } from '../shared/aws';
 import { type DeployConfig } from '../shared/deploy-config';
-import { DAEMON_METRICS_CMD, parseDaemonMetrics } from '../shared/daemon';
+import {
+  DAEMON_METRICS_CMD,
+  DAEMON_STATUS_CMD,
+  parseDaemonMetrics,
+  parseDaemonStatus,
+} from '../shared/daemon';
 import {
   deployConfigParam,
   ENV_TAG_KEY,
@@ -29,7 +34,8 @@ function envFilter(env: string) {
  * contributes what only it knows — environment, instance id/type, uptime
  * since launch — and everything measured (engine token counters, GPU, CPU,
  * RAM) comes from the on-instance outfit daemon's /v1/metrics, fetched with
- * one SSM curl. Collection itself lives in outfit's internal/metrics.
+ * one SSM curl; the daemon's version rides along from /v1/status in a
+ * parallel second. Collection itself lives in outfit's internal/metrics.
  */
 export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   let env: string;
@@ -80,8 +86,14 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
 
   const errors: string[] = [];
   try {
-    const scrape = await runShellCommand(instance.instanceId, DAEMON_METRICS_CMD, 30);
-    const daemon = scrape.status === 'Success' ? parseDaemonMetrics(scrape.stdout) : null;
+    // Both scrapes go over SSM, so they run side by side — the same
+    // composition the start Lambda uses for its daemon probe — keeping the
+    // handler within its existing latency budget.
+    const [metrics, version] = await Promise.all([
+      runShellCommand(instance.instanceId, DAEMON_METRICS_CMD, 30),
+      readDaemonVersion(instance.instanceId),
+    ]);
+    const daemon = metrics.status === 'Success' ? parseDaemonMetrics(metrics.stdout) : null;
     if (daemon) {
       result.tokens = daemon.tokens;
       result.gpus = daemon.gpus;
@@ -97,6 +109,9 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     } else {
       errors.push('daemon: unreachable or unrecognisable metrics reply');
     }
+    if (version) {
+      result.version = version;
+    }
   } catch (err) {
     errors.push(`daemon: ${errorName(err)}`);
   }
@@ -105,4 +120,23 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
   }
 
   return jsonResponse(200, result);
+}
+
+/**
+ * Ask the instance's daemon which outfit build it runs, for the report's
+ * version line. Every failure — SSM error, unreachable daemon, an older
+ * daemon without the field — yields undefined, so a working metrics reply
+ * never degrades because the version is an add-on, not a health signal.
+ */
+async function readDaemonVersion(instanceId: string): Promise<string | undefined> {
+  try {
+    const result = await runShellCommand(instanceId, DAEMON_STATUS_CMD, 10);
+    if (result.status !== 'Success') {
+      return undefined;
+    }
+    return parseDaemonStatus(result.stdout)?.version || undefined;
+  } catch (err) {
+    console.log(JSON.stringify({ phase: 'daemon-version', error: errorName(err) }));
+    return undefined;
+  }
 }
