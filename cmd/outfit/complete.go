@@ -41,8 +41,33 @@ const (
 // leaves its own default (which would also support fish) alone.
 func completionCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:           "completion <shell>",
-		Short:         "print a tab completion script for bash, zsh, or powershell",
+		Use:   "completion <shell>",
+		Short: "print a tab completion script for bash, zsh, or powershell",
+		Long: `Prints the tab completion script for the given shell.
+
+The script must be sourced by a running shell, or saved where a shell reads
+it at start-up:
+
+  bash:
+    For the current session:
+      $ source <(outfit completion bash)
+    Or for every new session, save the script once where bash reads
+    completions (on macOS, ~/.bashrc can source it instead):
+      $ outfit completion bash > /etc/bash_completion.d/outfit
+
+  zsh:
+    Save the script once as a completion function:
+      $ mkdir -p ~/.zfunc && outfit completion zsh > ~/.zfunc/_outfit
+    And have ~/.zshrc load it:
+      fpath=(~/.zfunc $fpath)
+      autoload -Uz compinit && compinit
+
+  powershell:
+    For the current session:
+      > outfit completion powershell | Out-String | Invoke-Expression
+    Or put that line in the PowerShell profile to load it every session:
+      > Add-Content $PROFILE "outfit completion powershell | Out-String | Invoke-Expression"
+`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

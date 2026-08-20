@@ -314,6 +314,25 @@ func TestComplete_FlagValues(t *testing.T) {
 	}
 }
 
+// TestCompletionHelpTeachesSetup checks that `completion --help` says how to
+// install the script: the script is useless to a user who is not told to
+// source it or where to put it.
+func TestCompletionHelpTeachesSetup(t *testing.T) {
+	cmd, _, err := newRootCmd().Find([]string{"completion"})
+	if err != nil {
+		t.Fatalf("finding completion: %v", err)
+	}
+	for _, marker := range []string{
+		"source <(outfit completion bash)",
+		"outfit completion zsh > ~/.zfunc/_outfit",
+		"outfit completion powershell | Out-String | Invoke-Expression",
+	} {
+		if !strings.Contains(cmd.Long, marker) {
+			t.Errorf("completion help missing %q:\n%s", marker, cmd.Long)
+		}
+	}
+}
+
 // TestComplete_EqualsForm checks the attached-value form, which is how a
 // single-word shell hands over `--outfit=<TAB>` — the only way that flag can
 // take a path at all.
