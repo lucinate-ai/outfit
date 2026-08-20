@@ -1,0 +1,17 @@
+# A fleet of `outfit remote` environments, observed like machines.
+#
+#   outfit fleet status        # one row per environment: state and what it serves
+#   outfit fleet metrics -w    # a live dashboard
+#
+# Each node's `name` is the registered environment it drives — one per
+# `outfit remote deploy` — and what you type at `fleet start <node>`. `kind:
+# remote` marks it as a cloud environment rather than a host. No bearer tokens
+# here: the control plane signs each call, and the environment's URLs live in
+# its remote.json, not in this file. So, like every fleet file, this one names
+# environments, never an account.
+nodes:
+  - name: qwen
+    kind: remote
+
+  - name: llama
+    kind: remote

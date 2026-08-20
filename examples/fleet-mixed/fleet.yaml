@@ -1,0 +1,24 @@
+# A mixed fleet: a machine running `outfit daemon` and two `outfit remote`
+# environments, observed side by side. The same command reaches every node,
+# whatever kind it is.
+#
+#   outfit fleet status / metrics -w
+#
+# A daemon node names the machine (host) and the variable holding its bearer
+# token (tokenEnv). A remote node names its environment — its node name *is* the
+# env. The token and the control URLs stay out of this file — in the .env and
+# in each environment's remote.json — so it names machines and environments,
+# never secrets or accounts.
+nodes:
+  # A GPU box on the network, reached over the daemon's control API.
+  - name: gpu-box
+    host: 198.51.100.7
+    port: 4242
+    tokenEnv: GPU_BOX_TOKEN
+
+  # Two cloud environments, driven through their control plane.
+  - name: qwen
+    kind: remote
+
+  - name: llama
+    kind: remote

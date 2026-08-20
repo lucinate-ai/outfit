@@ -75,10 +75,24 @@ more than a type alias: the same function observes any set.
 
 ### The shared status source is additive in the client
 
-A small status-view value plus fact-to-text helpers live beside the existing shared
-metrics renderer. Both the remote and fleet status paths populate the view from their
-native types and then render their own layout on top. Existing output is preserved; what
-becomes single-sourced is the computation and wording of the shared facts.
+ A small status-view value plus fact-to-text helpers live beside the existing shared
+ metrics renderer. Both the remote and fleet status paths populate the view from their
+ native types and then render their own layout on top. Existing output is preserved; what
+ becomes single-sourced is the computation and wording of the shared facts.
+
+### The fleet file names an environment by its node name
+
+The node constructor is the one seam status, metrics, start and stop all build a node
+through, so that is where the kind dispatch lives: a `remote` entry loads the config of
+the registered environment keyed by the node's *name* and returns a `remoteNode`. The name
+is both what you type at `fleet start <node>` and the environment's key — there is no
+separate `remote:` field, because an environment is already user-named at
+`outfit remote deploy`, so its name is the right label. A daemon node, by contrast, needs
+a separate `host:` because a label is not where it listens. Because the name doubles as
+the registry key, it is validated as env-shaped (no `/`, no `.json`: a path-like name would
+be read as a registry subdirectory). Keeping the URLs out of the fleet file (in each
+environment's `remote.json`) is what lets the file stay committable in a public repo: it
+names environments, never an account.
 
 ## Risks / Trade-offs
 

@@ -18,17 +18,23 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/opencode"
+	"github.com/lucinate-ai/outfit/internal/remote"
 )
 
 // DefaultFile is the fleet file consulted when no --fleet is given, resolved
 // from the working directory the way ./Outfit is.
 const DefaultFile = "fleet.yaml"
 
-// KindDaemon is a node that is a machine running `outfit daemon`, reached over
-// its control API. It is the only kind implemented; the field exists so a
-// future remote-environment kind (an `outfit remote` environment, reached
-// through its stats Lambda) slots in without a file format change.
-const KindDaemon = "daemon"
+// The kinds a node entry can name. The default is daemon; a node with no
+// `kind:` is one. Each names how the fleet reaches and drives that node.
+const (
+	// KindDaemon is a machine running `outfit daemon`, reached over its
+	// control API. Addressed by its `host`.
+	KindDaemon = "daemon"
+	// KindRemote is an `outfit remote` environment, driven through its cloud
+	// control plane. Addressed by the registered environment it names.
+	KindRemote = "remote"
+)
 
 // Prefer is how routing ranks several nodes that could all serve a request.
 // Which answer is right depends on the fleet, not on the code, so it is a
@@ -75,7 +81,12 @@ type Config struct {
 // NodeConfig is one machine as the fleet file describes it. The live node the
 // client talks to is a Node (see node.go); this is just the entry.
 type NodeConfig struct {
-	// Name identifies the node in output and to `fleet start|stop <node>`.
+	// Name identifies the node in output and to `fleet start|stop <node>`. For
+	// a kind-remote node it is also the key of the registered environment it
+	// drives, <config-dir>/remotes/<name>/remote.json — the environment is
+	// already user-named at `outfit remote deploy`, so a remote node has no
+	// separate address to give. The control URLs live in that env's remote.json
+	// anyway, so nothing identifying a deployment is written into the fleet file.
 	Name string `yaml:"name"`
 	// Host is where the daemon answers — a LAN name, a tailscale name, or an
 	// address. Reachability is the client's problem, not the file's.
@@ -176,15 +187,27 @@ func (c *Config) validate() error {
 			return fmt.Errorf("duplicate node name %q", n.Name)
 		}
 		seen[n.Name] = true
-		if n.Host == "" {
-			return fmt.Errorf("node %q has no host", n.Name)
-		}
 		if n.Kind == "" {
 			n.Kind = KindDaemon
 		}
-		if n.Kind != KindDaemon {
+		switch n.Kind {
+		case KindDaemon:
+			if n.Host == "" {
+				return fmt.Errorf("node %q has no host", n.Name)
+			}
+		case KindRemote:
+			// The node's name *is* the registered environment's key, so it must
+			// be env-shaped; a path-like name would be read as a registry
+			// subdirectory rather than named.
+			if !remote.IsEnvName(n.Name) {
+				return fmt.Errorf(
+					"node %q is kind %q: its name must be a registered environment name (no /, no .json)",
+					n.Name, KindRemote)
+			}
+		default:
 			return fmt.Errorf(
-				"node %q has kind %q: only %q is supported yet", n.Name, n.Kind, KindDaemon)
+				"node %q has kind %q: supported kinds are %q and %q",
+				n.Name, n.Kind, KindDaemon, KindRemote)
 		}
 	}
 	return nil

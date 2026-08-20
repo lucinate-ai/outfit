@@ -40,3 +40,21 @@
 - [x] 4.2 `openspec validate unify-remote-fleet-node --strict` passes clean
 - [x] 4.3 Update `AGENTS.md`: the remote environment as a fleet node, fan-out over an
       explicit node set, and the single source the two status views draw from
+
+## 5. Declare remote nodes in the fleet file
+
+- [x] 5.1 Accept `kind: remote` in the fleet file (an omitted kind still defaults to
+      `daemon`); a remote node's name is the registered environment and it needs no `host`
+- [x] 5.2 Have the node constructor build a `remoteNode` for a `remote` entry, loading the
+      environment's config (keyed by the node's name) from the registry; an unregistered
+      environment is a per-node configuration error naming it, not a command failure
+- [x] 5.3 Tests: a fleet file listing a registered environment observes it through the
+      regular fan-out; an unregistered one is a `config-error` row; a daemon + remote file
+      observes in order
+
+## 6. Examples
+
+- [x] 6.1 Add `examples/fleet-remote` — a fleet of remote environments — with a short README:
+      how to have environments, how to list them as nodes, and the observe commands
+- [x] 6.2 Add `examples/fleet-mixed` — daemons and remote environments in one fleet — with a
+      short README and the daemon's token `.env.example`

@@ -27,6 +27,15 @@ code, so a change lands on one side and the other drifts again.
 - **Waking a remote environment is refused.** A node-level "start on this deploy config"
   is refused for a remote environment with a message naming the deploy path: a remote
   endpoint is provisioned by `outfit remote deploy`, not woken like a node.
+- **The fleet file declares remote nodes.** A fleet-file node's kind now accepts `remote`
+  (an omitted kind still defaults to `daemon`). A remote node's *name* is the registered
+  environment it drives — env-shaped (no `/`, no `.json`) — and it needs no host, so a
+  fleet of remote environments, or of daemons and remote environments mixed, observes and
+  drives through the same fan-out as a fleet of daemons. An unregistered environment is a
+  per-node configuration error naming it, not a command failure.
+- **Examples.** `examples/fleet-remote` (a fleet of remote environments) and
+  `examples/fleet-mixed` (daemons and remote environments), each with a short README of how
+  to run it.
 
 ## Capabilities
 
@@ -44,9 +53,13 @@ code, so a change lands on one side and the other drifts again.
 - `internal/fleet`: the node file gains a remote-backed node and its constructor; the
   fan-out file gains the explicit node-list fan-out, with the fleet-file fan-out
   delegating to it. Import graph stays acyclic — `internal/fleet` already imports
-  `internal/remote`.
+  `internal/remote`. The fleet-file config accepts a `remote` node kind and the node
+  constructor loads that environment's config from the registry, so status, metrics, start
+  and stop all reach a remote node with no change to the `fleet` command itself.
 - `cmd/outfit`: a shared status-view value and fact helpers added beside the existing
   shared metrics renderer, used by both the `remote` status and `fleet` status paths. No
   change to either command's output.
+- `examples/`: two new runnable guides (`fleet-remote`, `fleet-mixed`) and a short note in
+  `docs/commands/fleet.md` on the `remote` node kind.
 - No change to the `remote` control plane, its auth, or the `remote.DeployConfig` payload.
   No new dependencies.
