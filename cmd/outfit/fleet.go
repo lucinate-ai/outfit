@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -19,56 +18,55 @@ import (
 	"time"
 
 	"github.com/lucinate-ai/outfit/internal/fleet"
+	"github.com/spf13/cobra"
 )
 
-// cmdFleet dispatches the fleet subcommands.
-func cmdFleet(args []string) error {
+// fleetParentFallback reports the usage when no (named) subcommand is given,
+// and rejects the ones that are not named — the subcommands themselves are real
+// commands in the tree, so only the unknown and the bare cases reach here.
+func fleetParentFallback(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: outfit fleet <status|metrics|logs|route|start|stop> [node] [--fleet <path>]")
 	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "status":
-		return cmdFleetStatus(rest)
-	case "metrics":
-		return cmdFleetMetrics(rest)
-	case "logs":
-		return cmdFleetLogs(rest)
-	case "route":
-		return cmdFleetRoute(rest)
-	case "start":
-		return cmdFleetStart(rest)
-	case "stop":
-		return cmdFleetStop(rest)
-	default:
-		return fmt.Errorf(
-			"unknown fleet subcommand %q (expected status, metrics, logs, route, start or stop)", sub)
-	}
+	return fmt.Errorf(
+		"unknown fleet subcommand %q (expected status, metrics, logs, route, start or stop)", args[0])
 }
 
-// fleetFlags registers the flags every fleet subcommand shares and returns the
-// flag set plus the --fleet target.
-func fleetFlags(name string) (*flag.FlagSet, *string) {
-	fs := flag.NewFlagSet("fleet "+name, flag.ContinueOnError)
-	path := fs.String("fleet", "", "path to the fleet file (default ./fleet.yaml)")
-	return fs, path
+// cmdFleet runs the fleet subcommands through the tree — the seam the suite
+// calls directly.
+func cmdFleet(args []string) error {
+	return execCmd(fleetCmd(), args)
 }
 
-// cmdFleetStatus reports every node's engine state, one row per node. A node
+// fleetFileFlag is the --fleet flag's help, shared by every fleet subcommand.
+const fleetFileUsage = "path to the fleet file (default ./fleet.yaml)"
+
+// fleetStatusCmd reports every node's engine state, one row per node. A node
 // that cannot be reached is a row, not a failure: the rest of the fleet still
 // renders and the command still succeeds.
-func cmdFleetStatus(args []string) error {
-	fs, path := fleetFlags("status")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
+func fleetStatusCmd() *cobra.Command {
+	var path string
+	c := &cobra.Command{
+		Use:           "status",
+		Short:         "report every node's engine state",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			cfg, err := fleet.Resolve(path)
+			if err != nil {
+				return err
+			}
+			results := cfg.FanOut(context.Background(), fleet.StatusCall)
+			renderFleetStatus(os.Stdout, results)
+			return nil
+		},
 	}
-	cfg, err := fleet.Resolve(*path)
-	if err != nil {
-		return err
-	}
-	results := cfg.FanOut(context.Background(), fleet.StatusCall)
-	renderFleetStatus(os.Stdout, results)
-	return nil
+	c.Flags().StringVar(&path, "fleet", "", fleetFileUsage)
+	c.ValidArgsFunction = noPositionals
+	compRegister(c, "fleet", compFiles)
+	return c
 }
 
 // renderFleetStatus writes the status table: node, state, what it serves, and
@@ -120,32 +118,43 @@ func fleetRow(r fleet.NodeResult) (state, serving string) {
 	return r.Status.State, serving
 }
 
-// cmdFleetMetrics renders every node's engine and system metrics. --watch
+// fleetMetricsCmd renders every node's engine and system metrics. --watch
 // redraws the whole fleet on an interval.
-func cmdFleetMetrics(args []string) error {
-	fs, path := fleetFlags("metrics")
+func fleetMetricsCmd() *cobra.Command {
 	var (
+		path   string
 		format string
 		watch  bool
 	)
+	c := &cobra.Command{
+		Use:           "metrics",
+		Short:         "sample every node's engine metrics",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			if format != "bar" && format != "table" && format != "json" {
+				return fmt.Errorf("--format must be \"bar\", \"table\", or \"json\", got %q", format)
+			}
+			cfg, err := fleet.Resolve(path)
+			if err != nil {
+				return err
+			}
+			if watch {
+				return runFleetMetricsWatch(cfg, format)
+			}
+			results := cfg.FanOut(context.Background(), fleet.MetricsCall)
+			return renderFleetMetrics(os.Stdout, results, format)
+		},
+	}
+	fs := c.Flags()
+	fs.StringVar(&path, "fleet", "", fleetFileUsage)
 	fs.StringVar(&format, "format", "bar", "output format: bar (default), table or json")
-	fs.BoolVar(&watch, "watch", false, "redraw the fleet every 60 seconds")
-	fs.BoolVar(&watch, "w", false, "shorthand for --watch")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
-	if format != "bar" && format != "table" && format != "json" {
-		return fmt.Errorf("--format must be \"bar\", \"table\", or \"json\", got %q", format)
-	}
-	cfg, err := fleet.Resolve(*path)
-	if err != nil {
-		return err
-	}
-	if watch {
-		return runFleetMetricsWatch(cfg, format)
-	}
-	results := cfg.FanOut(context.Background(), fleet.MetricsCall)
-	return renderFleetMetrics(os.Stdout, results, format)
+	fs.BoolVarP(&watch, "watch", "w", false, "redraw the fleet every 60 seconds")
+	c.ValidArgsFunction = noPositionals
+	compRegister(c, "fleet", compFiles)
+	return c
 }
 
 // runFleetMetricsWatch redraws the fleet until interrupted. Each refresh is
@@ -256,36 +265,62 @@ func renderFleetMetricsJSON(w io.Writer, results []fleet.NodeResult) error {
 	return nil
 }
 
-// cmdFleetStart starts one named node's engine.
-func cmdFleetStart(args []string) error {
-	return driveOneNode("start", args, func(ctx context.Context, n fleet.Node) fleet.NodeResult {
-		status, err := n.Start(ctx)
-		return fleet.Result(n.Name(), err, status)
-	})
+// fleetStartCmd starts one named node's engine.
+func fleetStartCmd() *cobra.Command {
+	var path string
+	c := &cobra.Command{
+		Use:           "start",
+		Short:         "start an engine on one node",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return driveOneNode("start", path, args, func(ctx context.Context, n fleet.Node) fleet.NodeResult {
+				status, err := n.Start(ctx)
+				return fleet.Result(n.Name(), err, status)
+			})
+		},
+	}
+	c.Flags().StringVar(&path, "fleet", "", fleetFileUsage)
+	c.ValidArgsFunction = noPositionals
+	compRegister(c, "fleet", compFiles)
+	return c
 }
 
-// cmdFleetStop stops one named node's engine.
-func cmdFleetStop(args []string) error {
-	return driveOneNode("stop", args, func(ctx context.Context, n fleet.Node) fleet.NodeResult {
-		status, err := n.Stop(ctx)
-		return fleet.Result(n.Name(), err, status)
-	})
+// fleetStopCmd stops one named node's engine.
+func fleetStopCmd() *cobra.Command {
+	var path string
+	c := &cobra.Command{
+		Use:           "stop",
+		Short:         "stop an engine on one node",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return driveOneNode("stop", path, args, func(ctx context.Context, n fleet.Node) fleet.NodeResult {
+				status, err := n.Stop(ctx)
+				return fleet.Result(n.Name(), err, status)
+			})
+		},
+	}
+	c.Flags().StringVar(&path, "fleet", "", fleetFileUsage)
+	c.ValidArgsFunction = noPositionals
+	compRegister(c, "fleet", compFiles)
+	return c
 }
 
 // driveOneNode runs a mutating call against exactly one node. Fan-out is for
 // observation: starting or stopping every engine at once is a footgun, so
 // these demand a node name and otherwise list the fleet without touching
 // anything.
-func driveOneNode(verb string, args []string, call fleet.Call) error {
-	fs, path := fleetFlags(verb)
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
-	cfg, err := fleet.Resolve(*path)
+func driveOneNode(verb, path string, args []string, call fleet.Call) error {
+	cfg, err := fleet.Resolve(path)
 	if err != nil {
 		return err
 	}
-	rest := fs.Args()
+	rest := args
 	if len(rest) == 0 {
 		return fmt.Errorf(
 			"outfit fleet %s needs a node: %s\n(%s acts on one node at a time, never the whole fleet)",
@@ -309,29 +344,44 @@ func driveOneNode(verb string, args []string, call fleet.Call) error {
 	return nil
 }
 
-// cmdFleetRoute reports the node a harness launch would choose for an Outfit,
+// fleetRouteCmd reports the node a harness launch would choose for an Outfit,
 // and changes nothing: no config is pushed, no engine started, no harness
 // config written. It is how a routing decision is checked before an agent
 // depends on it, and how an unexpected choice is diagnosed after one.
-func cmdFleetRoute(args []string) error {
-	fs, path := fleetFlags("route")
-	var node, prefer string
+func fleetRouteCmd() *cobra.Command {
+	var path, node, prefer string
+	c := &cobra.Command{
+		Use:           "route",
+		Short:         "report which node a launch would take",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runFleetRoute(path, node, prefer, args)
+		},
+	}
+	fs := c.Flags()
+	fs.StringVar(&path, "fleet", "", fleetFileUsage)
 	fs.StringVar(&node, "node", "", "report this node rather than choosing one")
 	fs.StringVar(&prefer, "prefer", "", "rank nodes by `idle` or `active` (overrides the fleet file)")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	c.ValidArgsFunction = aliasSlot
+	compRegister(c, "fleet", compFiles)
+	return c
+}
 
+// runFleetRoute is the body of `outfit fleet route`.
+func runFleetRoute(path, node, prefer string, args []string) error {
 	var outfitPath string
-	if rest := fs.Args(); len(rest) > 0 {
-		outfitPath = rest[0]
+	if len(args) > 0 {
+		outfitPath = args[0]
 	}
 	sel, resolvedPath, err := readOutfit("outfit fleet route <outfit>", outfitPath)
 	if err != nil {
 		return err
 	}
 
-	target, fromFlag := *path, true
+	target, fromFlag := path, true
 	if target == "" {
 		target, fromFlag = sel.Fleet, false
 	}
@@ -391,3 +441,6 @@ func cmdFleetRoute(args []string) error {
 	fmt.Println("\nNo node could be woken for it either. Nothing has been started.")
 	return nil
 }
+
+// cmdFleetRoute runs the command through the tree — the seam the suite calls.
+func cmdFleetRoute(args []string) error { return execCmd(fleetRouteCmd(), args) }

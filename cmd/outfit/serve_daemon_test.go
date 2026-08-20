@@ -127,7 +127,7 @@ func TestCmdServe_DaemonFlagRemoved(t *testing.T) {
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
 	captureStderr(t, func() {
 		if err := cmdServe([]string{"-d", outfitPath}); err == nil ||
-			!strings.Contains(err.Error(), "not defined") {
+			!strings.Contains(err.Error(), "unknown") {
 			t.Errorf("serve -d = %v, want unknown-flag error", err)
 		}
 	})
@@ -140,11 +140,11 @@ func TestCmdServe_HasNoLoopbackFlag(t *testing.T) {
 	outfitPath := writePresetOutfit(t, "PROVIDER llamacpp\nPRESET ./preset.ini\nALIAS qwen\n")
 	captureStderr(t, func() {
 		if err := cmdServe([]string{"-a", "--loopback", outfitPath}); err == nil ||
-			!strings.Contains(err.Error(), "not defined") {
+			!strings.Contains(err.Error(), "unknown") {
 			t.Errorf("serve --loopback = %v, want unknown-flag error", err)
 		}
 		if err := cmdServe([]string{"-a", "-l", outfitPath}); err == nil ||
-			!strings.Contains(err.Error(), "not defined") {
+			!strings.Contains(err.Error(), "unknown") {
 			t.Errorf("serve -l = %v, want unknown-flag error", err)
 		}
 	})

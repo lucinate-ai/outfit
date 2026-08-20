@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"net"
 	"net/http"
@@ -782,74 +781,6 @@ func TestFormatBytes(t *testing.T) {
 		if got := formatBytes(tc.in); got != tc.want {
 			t.Errorf("formatBytes(%d) = %q, want %q", tc.in, got, tc.want)
 		}
-	}
-}
-
-func TestSortFlagsBeforeArgs(t *testing.T) {
-	// A flag set with one boolean and one value-taking flag, so the helper's
-	// two cases are both covered.
-	newFS := func() *flag.FlagSet {
-		fs := flag.NewFlagSet("test", flag.ContinueOnError)
-		fs.Bool("env", false, "a boolean flag")
-		fs.Bool("e", false, "a boolean shorthand")
-		fs.String("fleet", "", "a flag that takes a value")
-		return fs
-	}
-	tests := []struct {
-		name string
-		in   []string
-		want []string
-	}{
-		{"empty", []string{}, []string{}},
-		{"bool only", []string{"-env"}, []string{"-env"}},
-		{"positional only", []string{"path"}, []string{"path"}},
-		{"bool after positional", []string{"path", "-env"}, []string{"-env", "path"}},
-		{"bool before positional", []string{"-env", "path"}, []string{"-env", "path"}},
-		{"bool shorthand after positional", []string{"path", "-e"}, []string{"-e", "path"}},
-		// A value-taking flag must keep its value when it is moved: without
-		// that, the positional gets bound to the flag instead.
-		{
-			"value flag after positional",
-			[]string{"node", "--fleet", "f.yaml"},
-			[]string{"--fleet", "f.yaml", "node"},
-		},
-		{
-			"inline value needs no companion",
-			[]string{"node", "--fleet=f.yaml"},
-			[]string{"--fleet=f.yaml", "node"},
-		},
-		{
-			"value flag keeps its value among positionals",
-			[]string{"a", "--fleet", "f.yaml", "b"},
-			[]string{"--fleet", "f.yaml", "a", "b"},
-		},
-		// Everything after -- is positional, even if it looks like a flag.
-		// Positional order is preserved, since callers index into it.
-		{
-			"double dash ends flags",
-			[]string{"a", "--", "-notaflag"},
-			[]string{"--", "a", "-notaflag"},
-		},
-		// An unknown flag must not swallow the positional; the flag package
-		// reports it.
-		{
-			"unknown flag does not consume",
-			[]string{"node", "--nope"},
-			[]string{"--nope", "node"},
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := sortFlagsBeforeArgs(newFS(), tc.in)
-			if len(got) != len(tc.want) {
-				t.Fatalf("sortFlagsBeforeArgs(%v) = %v, want %v", tc.in, got, tc.want)
-			}
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("sortFlagsBeforeArgs(%v) = %v, want %v", tc.in, got, tc.want)
-				}
-			}
-		})
 	}
 }
 

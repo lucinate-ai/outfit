@@ -167,11 +167,22 @@ Alternatives considered:
 
 ### D4 — Completion: Cobra's engine, no custom `__complete`, no described candidates
 
-Cobra ships the hidden `__complete` command that speaks exactly the protocol
-this codebase hand-implements (candidate lines, final `:directive`; directives
-`:nofile` = `ShellCompDirectiveNoFileComp`, `:file`-plus-candidates =
-`ShellCompDirectiveDefault`). The custom engine in `complete.go` and the three
-embedded scripts are deleted.
+Cobra ships the hidden `__complete` command and generates the shell scripts
+that drive it. Its on-the-wire protocol is close to the one this codebase
+hand-implemented but not identical: candidate lines may carry a
+tab-separated description, the final directive line is the framework's
+integer directive (`:0` = files allowed, `:4` = no files), and the process
+writes a one-line status to its error stream on every call. The scripts the
+framework generates require the integer form — the old `:nofile`/`:file`
+spelling would parse as zero and silently re-enable file completion in the
+generated bash script — and the scripts are required to be generated, so the
+"Completion protocol" requirement is amended (see the delta spec) to the
+framework's byte stream rather than re-emitting the old spelling through a
+hand-rolled `__complete`. The guarantees that matter are preserved and become
+testable: exit zero, no stderr (the root's error stream is discarded — the
+framework's status line flows through it, while user-facing errors are still
+printed by main), and no candidates on a broken config or catalogue. The
+custom engine in `complete.go` and the three embedded scripts are deleted.
 
 - **`completion` command.** Cobra auto-adds a `completion` command with
   bash/zsh/**fish**/powershell; since a command named `completion` already
@@ -180,10 +191,17 @@ embedded scripts are deleted.
   an error naming the three supported shells — preserving the shell-completion
   spec scenario. Its `RunE` prints `GenBashCompletionV2` / `GenZshCompletion` /
   `GenPowerShellCompletionWithDesc` output for the root command.
-- **Candidates stay plain.** No `candidate\tdescription` pairs anywhere; the
-  `__complete` output bytes for every existing case stay what the engine emits
-  today (candidate set + directive), so the protocol scenarios in the spec
-  hold unamended.
+- **Descriptions ride along.** Candidate lines are `name\tdescription` where
+  Cobra has a description (command shorts, flag usages); the generated
+  scripts strip or present them per shell, so the set of candidates never
+  differs between shells. There is no custom emission to keep byte-stable, so
+  the old byte-parity goal is dropped in favour of the amended protocol.
+  Tests compare candidate sets with the description stripped.
+- **`harness` flag visibility.** `harness` runs with `DisableFlagParsing`, so
+  Cobra can only complete flags it can see on the command's own flag set.
+  The body's flag parsing therefore moves from a local `FlagSet` to the
+  command's: one registry serves both the body's parse and the completion
+  surface.
 - **Wiring, replacing the `commands` table** (the old `candidateKind` values
   map one-to-one onto Cobra constructs):
 

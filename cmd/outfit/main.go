@@ -1,39 +1,16 @@
 // Command outfit configures a coding agent ("harness") to use a model provider,
-// by deep-merging provider settings into that harness's config. opencode and the
-// Pi coding agent are supported; the harness is chosen at runtime with
-// --harness/-H or OUTFIT_HARNESS, or a stored default set via `outfit harness
-// --set`, and defaults to opencode.
+// by deep-merging provider settings into that harness's config. The supported
+// harnesses are opencode, the Pi coding agent, and lucinate; the harness is
+// chosen at runtime with --harness/-H or OUTFIT_HARNESS, or a stored default
+// set via `outfit harness --set`, and defaults to opencode. `outfit --help`
+// and each command's own help describe the surface; the commands are built as
+// a Cobra tree (see commands.go), so the help is what the tree says.
 //
 // Providers are defined in providers.yaml, which is embedded
 // into the binary at build time. For opencode the config is parsed as JSONC so
 // comments and existing settings outside the managed provider block are
-// preserved; for Pi the managed provider is merged into ~/.pi/agent/models.json.
-//
-// Usage:
-//
-//	outfit list
-//	outfit show   [--harness <name>]  # show what the harness has configured
-//	outfit add    --provider <name> [--model <id>] [--alias <name>]
-//	outfit remove --provider <name> [--model <id>] [--alias <name>]
-//	outfit apply   [path]  # apply an Outfit file (defaults to ./Outfit)
-//	outfit unapply [path]  # remove what an Outfit file selects
-//	outfit alias   [path] [-n <name>]  # name an Outfit; -l lists them
-//	outfit unalias <name>  # drop a registered name
-//	outfit serve  [path]   # run the PROVIDER's server (llama.cpp or oMLX)
-//	outfit export [-p name] # print the current config as an Outfit
-//	outfit init-providers [path] # write the embedded providers.yaml out
-//	outfit harness [-H name] [-O[=path]]  # launch the harness, optionally applying an
-//	                                      # Outfit first (--get shows it; --set stores the default)
-//	outfit completion <bash|zsh|powershell> # print the tab-completion script
-//	outfit remote bootstrap|start|stop|status|metrics|deploy|env|ls # control the remote GPU
-//	                                      # inference instance (bootstrap does the
-//	                                      # once-per-account control-plane setup; deploy
-//	                                      # sets what it serves; env returns the
-//	                                      # running endpoint's env vars; ls lists
-//	                                      # registered environments)
-//
-// Short flags: -p (provider), -m (model), -a (alias),
-// -c (context), -o (output), -u (base-url), -H (harness), -O (outfit).
+// preserved; for Pi the managed provider is merged into
+// ~/.pi/agent/models.json; for lucinate into ~/.lucinate/connections.json.
 //
 // The API base URL can be overridden for any provider with --base-url/-u or the
 // OUTFIT_BASE_URL environment variable; the flag wins over the env var, and
@@ -53,11 +30,8 @@ package main
 
 import (
 	"context"
-	"errors"
-	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -75,6 +49,8 @@ import (
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/outfitsrc"
 	"github.com/lucinate-ai/outfit/internal/remote"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // version is the binary's version. It defaults to "dev" and is overridden at
@@ -83,6 +59,20 @@ import (
 var version = "dev"
 
 func main() {
+	// A completion attempt must never spew over the prompt. The engine's
+	// error paths write straight to the process's standard error, so when
+	// this process is the engine there is no standard error: whatever state
+	// the machine is in, the answer is "no candidates". A bare `outfit
+	// __complete`, as a script sends it when nothing has been typed, is a
+	// question about the first word.
+	if len(os.Args) > 1 && os.Args[1] == "__complete" {
+		if f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0); err == nil {
+			os.Stderr = f
+		}
+		if len(os.Args) == 2 {
+			os.Args = append(os.Args, "")
+		}
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
@@ -90,209 +80,85 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		usage()
-		return nil
-	}
-	cmd, rest := args[0], args[1:]
-	switch cmd {
-	case "add":
-		return cmdAdd(rest)
-	case "remove":
-		return cmdRemove(rest)
-	case "list":
-		return cmdList(rest)
-	case "show":
-		return cmdShow(rest)
-	case "apply":
-		return cmdApply(rest)
-	case "unapply":
-		return cmdUnapply(rest)
-	case "alias":
-		return cmdAlias(rest)
-	case "unalias":
-		return cmdUnalias(rest)
-	case "serve":
-		return cmdServe(rest)
-	case "daemon":
-		return cmdDaemon(rest)
-	case "fleet":
-		return cmdFleet(rest)
-	case "export":
-		return cmdExport(rest)
-	case "init-providers":
-		return cmdInitProviders(rest)
-	case "harness":
-		return cmdHarness(rest)
-	case "completion":
-		return cmdCompletion(rest)
-	case "__complete":
-		// Hidden: the completion script's way of asking what could come next.
-		return cmdComplete(rest)
-	case "remote":
-		return cmdRemote(rest)
-	case "version", "-v", "--version":
-		fmt.Println(version)
-		return nil
-	case "help", "-h", "--help":
-		usage()
-		return nil
-	default:
-		usage()
-		return fmt.Errorf("unknown command %q", cmd)
-	}
+	root := newRootCmd()
+	root.SetArgs(args)
+	return root.Execute()
 }
 
-func usage() {
-	fmt.Fprintf(os.Stderr, `outfit — configure coding-agent model providers
-
-Usage:
-  outfit list
-  outfit show   [--harness <name>]         (providers/models the harness has configured)
-  outfit add    --provider <name> [--model <id>] [--alias <name>] [--context <size>] [--output <size>]
-  outfit remove --provider <name> [--model <id>] [--alias <name>]
-  outfit apply  [path] [--output <size>]   (defaults to ./Outfit)
-  outfit unapply [path]                    (remove what an Outfit selects)
-  outfit alias  [path] [-n <name>] [-l]    (name an Outfit; -l lists them)
-  outfit unalias <name>                    (drop a registered name)
-  outfit serve  [path] [--dry-run] [--api]  (run the PROVIDER's inference server)
-  outfit daemon [--api-addr <addr>] [--loopback] (supervise an engine via the control API)
-  outfit fleet  <status|metrics|start|stop> [node] [--fleet <path>]
-                                    (observe and drive the engines in fleet.yaml)
-  outfit export [--provider <name>]
-  outfit init-providers [path]      (defaults to ./providers.yaml)
-  outfit harness [<outfit>] [-H <name>] [--outfit[=<path>]] [args...]
-                                    (launch the harness; available: %s)
-  outfit completion <shell>         (tab completion: bash, zsh, powershell)
-   outfit remote <bootstrap|start|stop|status|metrics|deploy|env|ls> [path]
-                                    (control the remote GPU instance; bootstrap
-                                     does the once-per-account control-plane setup;
-                                     deploy sets what it serves, from the Outfit;
-                                     env returns the running endpoint's env vars;
-                                     ls lists registered environments)
-  outfit version                    (or -v/--version)
-
-Flags:
-  -p, --provider       provider name (see `+"`outfit list`"+`)
-  -m, --model          model id to set as default / to add or remove
-  -a, --alias          friendly name for the model (the harness key); for
-                       llama.cpp the server's reported model name under serve,
-                       and the preset section serve selects
-  -c, --context        context window size for the added model(s); accepts
-                       human suffixes (128k, 1m) or an absolute count (200000)
-  -o, --output         max output tokens for the added model(s); same format as
-                       --context. Defaults to a quarter of --context when unset
-  -u, --base-url       override the provider API base URL
-                       (or set OUTFIT_BASE_URL)
-  -H, --harness        which harness to configure (or set OUTFIT_HARNESS);
-                       overrides the stored default
-  -O, --outfit         (harness only) apply this Outfit before launching; given
-                       bare it applies ./`+outfit.DefaultFile+`, so attach the path
-                       when naming one: --outfit=<path>
-      --providers      path to a providers.yaml override
-                       (or set OUTFIT_PROVIDERS)
-
-add: deep-merges the provider into the active harness's config, preserving
-     everything else. Specify a model (or an alias). --context sets the model's
-     context window; --output sets the max output tokens (opencode requires it
-     alongside a context, defaulting to a quarter of the context).
-remove: removes the provider, or just the named model when a model/alias is
-        given.
-apply: applies an Outfit file — a declarative, Dockerfile-style description of
-       one provider selection — as if you had run the equivalent add.
-unapply: removes what an Outfit file selects, as if you had run the equivalent
-       remove. The inverse of apply.
-alias: registers an Outfit under a short name, which then stands in wherever an
-       Outfit path goes (apply, unapply, serve, harness). The name defaults to
-       the Outfit's own ALIAS; --name/-n picks another, --force/-F re-points a
-       name already registered, and --list/-l shows them all. A path on disk
-       always wins over a name, so registering one changes nothing that works.
-       Set OUTFIT_ALIAS to a registered name and every command given no Outfit
-       uses it, before ./`+outfit.DefaultFile+` is tried; an argument still wins.
-unalias: drops a registered name. The Outfit file itself is left alone.
-serve: runs the inference server the Outfit's PROVIDER names — llamacpp
-       (llama-server) or omlx (Apple Silicon). With a PRESET it turns the
-       matching section into the command, reading it in that engine's flag
-       vocabulary; otherwise it derives one from the Outfit's own instructions.
-       Prints the command before running it; --dry-run/-n prints without
-       launching the server.
-export: prints the active harness's config as an Outfit (outfit export > Outfit).
-init-providers: writes the binary's built-in providers.yaml to the working
-       directory (or [path]) so you can customise the catalogue and point
-       outfit at it with --providers/OUTFIT_PROVIDERS. Refuses to overwrite an
-       existing file unless --force is given.
-harness: launches the active harness, forwarding any trailing args to it. A
-       leading argument that names an Outfit — a registered alias or a path — is
-       applied first and not forwarded; put -- before the harness's own args to
-       keep them, and a leading -- opts out of this entirely.
-       --outfit/-O applies an Outfit first, as if you had run apply before it.
-       --get prints the active harness instead of launching it; --set <name>
-       stores the default harness and exits. Honours -H/--harness and
-       OUTFIT_HARNESS.
-show: lists the providers and models actually configured in the active harness's
-      config (where list shows the catalogue of what you could configure), and
-      the aliases you have registered.
-completion: prints a tab-completion script for bash, zsh, or powershell. Add
-      source <(outfit completion bash) to your ~/.bashrc (zsh: swap in zsh) and
-      TAB then completes commands, flags, providers, harnesses, and your
-      registered aliases.
-remote: runs the model on a cloud GPU that exists only while you use it, from
-       the same Outfit. bootstrap does the once-per-account control-plane setup (Image
-       Builder, the lifecycle Lambdas, shared bucket/roles/VPC) with a consent
-       gate; deploy creates the environment the Outfit's REMOTE names — its own
-       address, API key and allowed CIDR — and says what it serves (PROVIDER
-       picks the engine, just as it does for serve); start boots it and, with
-       --env/-e, prints the exports your agent needs; env returns the running
-       endpoint's environment variables without starting it; status reports its
-       state; stop shuts it down rather than waiting for the idle timer; ls
-       lists the registered environments. The endpoint's URLs come from the
-       Outfit's REMOTE — a bare name selects an environment under
-       ~/.config/outfit/remotes/<name>/, a path names a file — falling back to
-       the default environment.
-`, strings.Join(harness.Names(), ", "))
+// registerSelectionFlags registers the flags add and remove share, into a
+// Selection plus the separately-bound harness name (the harness is never part
+// of a Selection, so it cannot leak into an Outfit).
+func registerSelectionFlags(fs *pflag.FlagSet, s *outfit.Selection, harnessName *string) {
+	fs.StringVarP(&s.Provider, "provider", "p", "", "provider name")
+	fs.StringVarP(&s.Model, "model", "m", "", "model id")
+	fs.StringVarP(&s.Alias, "alias", "a", "", "friendly name for the model (overrides the harness key)")
+	fs.StringVarP(&s.Context, "context", "c", "", "context window size (e.g. 128k, 1m, 200000)")
+	fs.StringVarP(&s.Output, "output", "o", "", "max output tokens (defaults to a quarter of --context)")
+	fs.StringVar(&s.Providers, "providers", "", "path to a providers.yaml override")
+	fs.StringVarP(&s.BaseURL, "base-url", "u", "", "override the provider API base URL")
+	fs.StringVarP(harnessName, "harness", "H", "", "which harness to configure")
 }
 
-// parseSelection parses the flags shared by add and remove into a Selection,
-// plus the separately-returned harness name (the harness is never part of a
-// Selection, so it cannot leak into an Outfit).
-func parseSelection(name string, args []string) (outfit.Selection, string, error) {
+// addCmd deep-merges the named provider into the active harness's config.
+func addCmd() *cobra.Command {
 	var s outfit.Selection
 	var harnessName string
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.StringVar(&s.Provider, "provider", "", "provider name")
-	fs.StringVar(&s.Provider, "p", "", "provider name (shorthand)")
-	fs.StringVar(&s.Model, "model", "", "model id")
-	fs.StringVar(&s.Model, "m", "", "model id (shorthand)")
-	fs.StringVar(&s.Alias, "alias", "", "friendly name for the model (overrides the harness key)")
-	fs.StringVar(&s.Alias, "a", "", "friendly name for the model (shorthand)")
-	fs.StringVar(&s.Context, "context", "", "context window size (e.g. 128k, 1m, 200000)")
-	fs.StringVar(&s.Context, "c", "", "context window size (shorthand)")
-	fs.StringVar(&s.Output, "output", "", "max output tokens (defaults to a quarter of --context)")
-	fs.StringVar(&s.Output, "o", "", "max output tokens (shorthand)")
-	fs.StringVar(&s.Providers, "providers", "", "path to a providers.yaml override")
-	fs.StringVar(&s.BaseURL, "base-url", "", "override the provider API base URL")
-	fs.StringVar(&s.BaseURL, "u", "", "API base URL override (shorthand)")
-	fs.StringVar(&harnessName, "harness", "", "which harness to configure")
-	fs.StringVar(&harnessName, "H", "", "which harness to configure (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return s, "", err
+	c := &cobra.Command{
+		Use:           "add",
+		Short:         "deep-merge a provider into the active harness's config",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			if s.Provider == "" {
+				return fmt.Errorf("--provider/-p is required (see `outfit list`)")
+			}
+			h, _, err := harness.Resolve(harnessName)
+			if err != nil {
+				return err
+			}
+			return applySelection(s, h, "", opencode.EnvResolver(""))
+		},
 	}
-	if s.Provider == "" {
-		return s, "", fmt.Errorf("--provider/-p is required (see `outfit list`)")
-	}
-	return s, harnessName, nil
+	fs := c.Flags()
+	registerSelectionFlags(fs, &s, &harnessName)
+	fs.SetInterspersed(false)
+	compRegister(c, "provider", compProviders)
+	compRegister(c, "model", compModels)
+	compRegister(c, "harness", compHarnessNames)
+	return c
 }
 
-func cmdAdd(args []string) error {
-	sel, harnessName, err := parseSelection("add", args)
-	if err != nil {
-		return err
+// removeCmd removes the named provider, or just the named model.
+func removeCmd() *cobra.Command {
+	var s outfit.Selection
+	var harnessName string
+	c := &cobra.Command{
+		Use:           "remove",
+		Short:         "remove a provider, or a model, from the harness's config",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			if s.Provider == "" {
+				return fmt.Errorf("--provider/-p is required (see `outfit list`)")
+			}
+			h, _, err := harness.Resolve(harnessName)
+			if err != nil {
+				return err
+			}
+			return removeSelection(s, h, "")
+		},
 	}
-	h, _, err := harness.Resolve(harnessName)
-	if err != nil {
-		return err
-	}
-	return applySelection(sel, h, "", opencode.EnvResolver(""))
+	fs := c.Flags()
+	registerSelectionFlags(fs, &s, &harnessName)
+	fs.SetInterspersed(false)
+	compRegister(c, "provider", compProviders)
+	compRegister(c, "model", compModels)
+	compRegister(c, "harness", compHarnessNames)
+	return c
 }
 
 // envFileDir returns the local directory a `.env` beside outfitPath would
@@ -503,7 +369,9 @@ const outfitAliasEnv = "OUTFIT_ALIAS"
 // coincidence — letting it shadow the variable would make the export work in
 // some directories and not others.
 func outfitFromEnv() (string, string, error) {
-	name := os.Getenv(outfitAliasEnv)
+	// The CLI layer's one Viper reads the variable (see cli_viper.go):
+	// OUTFIT_ALIAS has no flag spelling, so only the env and its absence.
+	name := cliViper.GetString("alias")
 	if name == "" {
 		return "", "", nil
 	}
@@ -571,70 +439,87 @@ func resolveAlias(arg string) (string, bool, error) {
 	return path, true, nil
 }
 
-// cmdApply reads an Outfit file and applies it. The path defaults to ./Outfit
+// applyCmd reads an Outfit file and applies it. The path defaults to ./Outfit
 // when none is given, so a bare `outfit apply` works in a directory that
 // holds one.
-func cmdApply(args []string) error {
-	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
+func applyCmd() *cobra.Command {
 	var providers, output, harnessName string
+	c := &cobra.Command{
+		Use:           "apply",
+		Short:         "apply an Outfit file (defaults to ./Outfit)",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			h, _, err := harness.Resolve(harnessName)
+			if err != nil {
+				return err
+			}
+			var path string
+			if len(args) > 0 {
+				path = args[0]
+			}
+			sel, outfitPath, err := readOutfit("outfit apply <file>", path)
+			if err != nil {
+				return err
+			}
+			sel.Providers = providers
+			// A command-line --output/-o overrides the Outfit's OUTPUT instruction.
+			if output != "" {
+				sel.Output = output
+			}
+			return applySelection(sel, h, outfitPath, opencode.EnvResolver(envFileDir(outfitPath)))
+		},
+	}
+	fs := c.Flags()
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
-	fs.StringVar(&output, "output", "", "max output tokens (overrides the Outfit's OUTPUT)")
-	fs.StringVar(&output, "o", "", "max output tokens (shorthand)")
-	fs.StringVar(&harnessName, "harness", "", "which harness to configure")
-	fs.StringVar(&harnessName, "H", "", "which harness to configure (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	h, _, err := harness.Resolve(harnessName)
-	if err != nil {
-		return err
-	}
-
-	var path string
-	if rest := fs.Args(); len(rest) > 0 {
-		path = rest[0]
-	}
-	sel, outfitPath, err := readOutfit("outfit apply <file>", path)
-	if err != nil {
-		return err
-	}
-	sel.Providers = providers
-	// A command-line --output/-o overrides the Outfit's OUTPUT instruction.
-	if output != "" {
-		sel.Output = output
-	}
-	return applySelection(sel, h, outfitPath, opencode.EnvResolver(envFileDir(outfitPath)))
+	fs.StringVarP(&output, "output", "o", "", "max output tokens (overrides the Outfit's OUTPUT)")
+	fs.StringVarP(&harnessName, "harness", "H", "", "which harness to configure")
+	fs.SetInterspersed(false)
+	c.ValidArgsFunction = aliasSlot
+	compRegister(c, "providers", compFiles)
+	compRegister(c, "harness", compHarnessNames)
+	return c
 }
 
-// cmdUnapply reads an Outfit file and removes what it selects — the inverse of
+// unapplyCmd reads an Outfit file and removes what it selects — the inverse of
 // apply, as remove is to add. The path defaults to ./Outfit when none is given,
 // so a bare `outfit unapply` works in a directory that holds one.
-func cmdUnapply(args []string) error {
-	fs := flag.NewFlagSet("unapply", flag.ContinueOnError)
+func unapplyCmd() *cobra.Command {
 	var providers, harnessName string
+	c := &cobra.Command{
+		Use:           "unapply",
+		Short:         "remove what an Outfit file selects",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			h, _, err := harness.Resolve(harnessName)
+			if err != nil {
+				return err
+			}
+			var path string
+			if len(args) > 0 {
+				path = args[0]
+			}
+			sel, outfitPath, err := readOutfit("outfit unapply <file>", path)
+			if err != nil {
+				return err
+			}
+			sel.Providers = providers
+			return removeSelection(sel, h, outfitPath)
+		},
+	}
+	fs := c.Flags()
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
-	fs.StringVar(&harnessName, "harness", "", "which harness to configure")
-	fs.StringVar(&harnessName, "H", "", "which harness to configure (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	h, _, err := harness.Resolve(harnessName)
-	if err != nil {
-		return err
-	}
-
-	var path string
-	if rest := fs.Args(); len(rest) > 0 {
-		path = rest[0]
-	}
-	sel, outfitPath, err := readOutfit("outfit unapply <file>", path)
-	if err != nil {
-		return err
-	}
-	sel.Providers = providers
-	return removeSelection(sel, h, outfitPath)
+	fs.StringVarP(&harnessName, "harness", "H", "", "which harness to configure")
+	fs.SetInterspersed(false)
+	c.ValidArgsFunction = aliasSlot
+	compRegister(c, "providers", compFiles)
+	compRegister(c, "harness", compHarnessNames)
+	return c
 }
 
 // cmdAlias registers an Outfit under a short name, so it can be used anywhere a
@@ -646,20 +531,31 @@ func cmdUnapply(args []string) error {
 // llama-server under `serve`), while an alias in this registry names the Outfit
 // file to outfit. Taking one from the other is a convenience, not an identity —
 // --name/-n decouples them.
-func cmdAlias(args []string) error {
-	fs := flag.NewFlagSet("alias", flag.ContinueOnError)
+func aliasCmd() *cobra.Command {
 	var name string
 	var force, list bool
-	fs.StringVar(&name, "name", "", "register under this name instead of the Outfit's ALIAS")
-	fs.StringVar(&name, "n", "", "name to register under (shorthand)")
-	fs.BoolVar(&force, "force", false, "re-point a name that is already registered")
-	fs.BoolVar(&force, "F", false, "re-point an existing name (shorthand)")
-	fs.BoolVar(&list, "list", false, "list the registered aliases")
-	fs.BoolVar(&list, "l", false, "list the registered aliases (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:           "alias",
+		Short:         "register an Outfit under a short name",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runAlias(args, name, force, list)
+		},
 	}
+	fs := c.Flags()
+	fs.StringVarP(&name, "name", "n", "", "register under this name instead of the Outfit's ALIAS")
+	fs.BoolVarP(&force, "force", "F", false, "re-point a name that is already registered")
+	fs.BoolVarP(&list, "list", "l", false, "list the registered aliases")
+	fs.SetInterspersed(false)
+	c.ValidArgsFunction = aliasSlot
+	return c
+}
 
+// runAlias is the body of `outfit alias`.
+func runAlias(args []string, name string, force, list bool) error {
 	if list {
 		var b strings.Builder
 		if err := writeAliases(&b, true); err != nil {
@@ -674,8 +570,8 @@ func cmdAlias(args []string) error {
 	// Outfit in this directory, and honouring the variable could only
 	// re-register what is already registered.
 	arg := outfit.DefaultFile
-	if rest := fs.Args(); len(rest) > 0 {
-		arg = rest[0]
+	if len(args) > 0 {
+		arg = args[0]
 	}
 	// Parse the Outfit even when --name is given: registering a file that does
 	// not parse is a mistake worth catching now, not days later under `serve`.
@@ -740,15 +636,25 @@ func cmdAlias(args []string) error {
 	return nil
 }
 
-// cmdUnalias drops a registered alias. The Outfit it pointed at is untouched —
+// unaliasCmd drops a registered alias. The Outfit it pointed at is untouched —
 // only the name goes away.
-func cmdUnalias(args []string) error {
-	fs := flag.NewFlagSet("unalias", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
-		return err
+func unaliasCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:               "unalias",
+		Short:             "drop a registered name",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasOnlySlot,
+		RunE: func(c *cobra.Command, rest []string) error {
+			resolve(c)
+			return runUnalias(rest)
+		},
 	}
+}
 
-	rest := fs.Args()
+// runUnalias is the body of `outfit unalias`.
+func runUnalias(rest []string) error {
 	switch {
 	case len(rest) == 0:
 		return fmt.Errorf("unalias needs an alias name (see `outfit alias --list`)")
@@ -819,20 +725,35 @@ func writeAliases(b *strings.Builder, header bool) error {
 	return nil
 }
 
-// cmdExport reconstructs an Outfit from the active harness's config and prints
+// exportCmd reconstructs an Outfit from the active harness's config and prints
 // it to stdout, so an existing setup can be captured (outfit export > Outfit).
-func cmdExport(args []string) error {
-	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+func exportCmd() *cobra.Command {
 	var provider, providers, harnessName string
-	fs.StringVar(&provider, "provider", "", "provider to export")
-	fs.StringVar(&provider, "p", "", "provider to export (shorthand)")
-	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
-	fs.StringVar(&harnessName, "harness", "", "which harness to read")
-	fs.StringVar(&harnessName, "H", "", "which harness to read (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:           "export",
+		Short:         "print the harness's config as an Outfit",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			return runExport(provider, providers, harnessName)
+		},
 	}
+	fs := c.Flags()
+	fs.StringVarP(&provider, "provider", "p", "", "provider to export")
+	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
+	fs.StringVarP(&harnessName, "harness", "H", "", "which harness to read")
+	fs.SetInterspersed(false)
+	c.ValidArgsFunction = noPositionals
+	compRegister(c, "provider", compProviders)
+	compRegister(c, "providers", compFiles)
+	compRegister(c, "harness", compHarnessNames)
+	return c
+}
 
+// runExport is the body of `outfit export`.
+func runExport(provider, providers, harnessName string) error {
 	h, _, err := harness.Resolve(harnessName)
 	if err != nil {
 		return err
@@ -928,18 +849,6 @@ func exportLimit(sel outfit.Selection, st harness.ProviderState, values map[stri
 	return ""
 }
 
-func cmdRemove(args []string) error {
-	sel, harnessName, err := parseSelection("remove", args)
-	if err != nil {
-		return err
-	}
-	h, _, err := harness.Resolve(harnessName)
-	if err != nil {
-		return err
-	}
-	return removeSelection(sel, h, "")
-}
-
 // removeSelection removes a single provider selection from the active harness's
 // config. It is the shared core of `remove` and `unapply`: both resolve a
 // selection (from flags or an Outfit file) and hand it here. It is the inverse
@@ -1002,9 +911,11 @@ type outfitPathFlag struct {
 
 func (f *outfitPathFlag) String() string { return f.path }
 
-// Set records the flag. The flag package passes "true" for the valueless form
-// (see IsBoolFlag); that stands for the default Outfit, which is the empty path
-// readOutfit resolves to ./Outfit.
+func (f *outfitPathFlag) Type() string { return "string" }
+
+// Set records the flag. pflag passes the flag's NoOptDefVal for the valueless
+// form ("true"); that stands for the default Outfit, which is the empty path
+// readOutfit resolves as OUTFIT_ALIAS > ./Outfit.
 func (f *outfitPathFlag) Set(v string) error {
 	f.set = true
 	if v == "true" {
@@ -1014,155 +925,10 @@ func (f *outfitPathFlag) Set(v string) error {
 	return nil
 }
 
-// IsBoolFlag lets --outfit be given without a value.
-func (f *outfitPathFlag) IsBoolFlag() bool { return true }
-
-// cmdHarness launches the active harness, or with --set/--get manages and
-// reports the stored preference. The harness is resolved with the same
-// precedence as add/apply (--harness/-H > OUTFIT_HARNESS > preference >
-// default), and any trailing args after the flags are passed to the harness.
-// With --outfit/-O it applies an Outfit first, so a single command dresses the
-// harness and then runs it.
+// cmdHarness is the seam the suite calls the harness command through, the
+// way the tree does: fresh command, the body's parse, the launch.
 func cmdHarness(args []string) error {
-	fs := flag.NewFlagSet("harness", flag.ContinueOnError)
-	var set, harnessName, providers string
-	var get bool
-	var outfitPath outfitPathFlag
-	fs.StringVar(&set, "set", "", "store this harness as the default and exit")
-	fs.BoolVar(&get, "get", false, "print the active harness instead of launching it")
-	fs.StringVar(&harnessName, "harness", "", "which harness to launch")
-	fs.StringVar(&harnessName, "H", "", "which harness to launch (shorthand)")
-	fs.Var(&outfitPath, "outfit", "apply this Outfit before launching (bare: ./"+outfit.DefaultFile+")")
-	fs.Var(&outfitPath, "O", "apply this Outfit before launching (shorthand)")
-	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
-	var route routeOptions
-	fs.StringVar(&route.fleetPath, "fleet", "", "route through this fleet file (overrides the Outfit's FLEET)")
-	fs.StringVar(&route.node, "node", "", "pin the launch to this fleet node")
-	fs.StringVar(&route.prefer, "prefer", "", "rank fleet nodes by `idle` or `active` (overrides the fleet file)")
-	fs.BoolVar(&route.noWake, "no-wake", false, "fail rather than starting an engine on an idle fleet node")
-	fs.DurationVar(&route.wakeTimeout, "wake-timeout", 0, "how long to wait for a woken node's engine")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-
-	if set != "" {
-		if err := harness.SavePreference(set); err != nil {
-			return err
-		}
-		prefPath, _ := harness.PreferencePath()
-		fmt.Printf("Default harness set to %q (stored in %s).\n", set, prefPath)
-		return nil
-	}
-
-	h, source, err := harness.Resolve(harnessName)
-	if err != nil {
-		return err
-	}
-
-	// --get reports the harness rather than running anything, so it applies
-	// nothing either.
-	if get {
-		pref, _ := harness.LoadPreference()
-		fmt.Printf("Active harness: %s (from %s)\n", h.Name(), source)
-		if pref == "" {
-			fmt.Printf("Stored preference: none (defaults to %s)\n", harness.Default)
-		} else {
-			fmt.Printf("Stored preference: %s\n", pref)
-		}
-		fmt.Printf("Available: %s\n", strings.Join(harness.Names(), ", "))
-		return nil
-	}
-
-	// Take the first positional argument as the Outfit to wear when it names
-	// one — a registered alias, a path, or a directory holding one. Everything
-	// else is forwarded to the harness untouched, so this can only claim an
-	// argument the harness could not have used anyway. An explicit `--` opts
-	// out, for an alias that collides with one of the harness's own
-	// subcommands.
-	rest := fs.Args()
-	if !outfitPath.set && !flagsTerminated(args, rest) && len(rest) > 0 && namesAnOutfitOrAlias(rest[0]) {
-		outfitPath.set, outfitPath.path = true, rest[0]
-		// Reslice rather than rebuild: rest shares its backing array with args,
-		// so appending to it would write over the caller's arguments.
-		rest = rest[1:]
-		// The `--` that separated outfit's Outfit from the harness's own args is
-		// ours to drop; any other `--` belongs to the harness and is forwarded.
-		if len(rest) > 0 && rest[0] == "--" {
-			rest = rest[1:]
-		}
-	}
-
-	// A .env beside the applied Outfit is where its keys live, so the launched
-	// agent is given the same ones. Without an Outfit there is no such file and
-	// only the environment (plus any provider key outfit resolves) is passed on.
-	// remoteResp carries the live key of a remote endpoint, fetched while
-	// applying so the config is written knowing it will be there.
-	var envDir string
-	var sel outfit.Selection
-	var remoteResp *remote.Response
-	var choice *fleet.Choice
-	if outfitPath.set {
-		var err error
-		sel, envDir, remoteResp, choice, err = applyBeforeLaunch(outfitPath, providers, h, rest, route)
-		if err != nil {
-			return err
-		}
-	} else if route.fleetPath != "" {
-		return fmt.Errorf("--fleet needs an Outfit: it is the Outfit's model that decides which node can serve you")
-	}
-	// The resolver the launch uses knows the remote key too, so every key the
-	// agent is given comes from the same place the apply step reported.
-	resolve := remoteLaunchResolver(opencode.EnvResolver(envDir), remoteResp)
-
-	// Launch the harness, forwarding stdio and any trailing args.
-	bin := h.Command()
-	cmd := exec.Command(bin, rest...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Env = harnessEnv(providers, resolve, remoteResp)
-	// A routed launch points the agent at the node that was chosen. As on the
-	// remote path, an explicit setting in the environment already won: routing
-	// fills what is unset rather than overriding a deliberate choice.
-	if choice != nil {
-		cmd.Env = setEnvIfBlank(cmd.Env, "OPENAI_BASE_URL", choice.BaseURL)
-		if choice.APIKey != "" {
-			cmd.Env = setEnvIfBlank(cmd.Env, "OPENAI_API_KEY", choice.APIKey)
-		}
-	}
-	// A worn Outfit brings its whole local environment to the launched agent:
-	// its adjacent .env fills any gaps left above, and its ENV instructions
-	// override everything. These shape only the child's environment — outfit
-	// never mutates its own — and follow the same precedence the remote commands
-	// use: ENV > process environment > .env.
-	if outfitPath.set {
-		cmd.Env = overlayLocalEnv(cmd.Env, sel, envDir)
-	}
-	// lucinate reads an OpenAI-compatible key from LUCINATE_OPENAI_API_KEY when
-	// its stored secret is empty — which is exactly how outfit configures it, with
-	// no secret on disk. Supply the active provider's key here so the launched
-	// agent can authenticate the model it boots into, without ever writing it to
-	// lucinate's config. An explicit setting already in the child's env wins.
-	if h.Name() == "lucinate" {
-		if choice != nil && choice.APIKey != "" {
-			cmd.Env = setEnvIfBlank(cmd.Env, "LUCINATE_OPENAI_API_KEY", choice.APIKey)
-		}
-		if key, ok := lucinateLaunchKey(providers, resolve, sel, outfitPath.set); ok {
-			cmd.Env = setEnvIfAbsent(cmd.Env, "LUCINATE_OPENAI_API_KEY", key)
-		}
-	}
-	if err := cmd.Run(); err != nil {
-		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%s not found — install the %s harness or add it to your PATH", bin, h.Name())
-		}
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			// The harness ran and chose its own exit code; surface it verbatim.
-			os.Exit(exitErr.ExitCode())
-		}
-		return err
-	}
-	return nil
+	return execCmd(harnessCmd(), args)
 }
 
 // harnessEnv is the environment for the agent outfit launches: this process's,
@@ -1523,21 +1289,34 @@ func namesAnOutfit(arg string) bool {
 	return filepath.Base(arg) == outfit.DefaultFile
 }
 
-// cmdShow prints the providers and models currently configured in the active
+// showCmd prints the providers and models currently configured in the active
 // harness's config. It takes the same --harness/-H override (and the same
 // flag > env > preference > default precedence) as every other command, so you
 // can inspect any harness without changing the stored default. Where `list`
 // shows the catalogue of what you could configure, `show` shows what is
 // actually configured right now.
-func cmdShow(args []string) error {
-	fs := flag.NewFlagSet("show", flag.ContinueOnError)
+func showCmd() *cobra.Command {
 	var harnessName string
-	fs.StringVar(&harnessName, "harness", "", "which harness to read")
-	fs.StringVar(&harnessName, "H", "", "which harness to read (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:           "show",
+		Short:         "show the providers and models the harness has configured",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, _ []string) error {
+			resolve(c)
+			return runShow(harnessName)
+		},
 	}
+	c.Flags().StringVarP(&harnessName, "harness", "H", "", "which harness to read")
+	c.Flags().SetInterspersed(false)
+	c.ValidArgsFunction = noPositionals
+	compRegister(c, "harness", compHarnessNames)
+	return c
+}
 
+// runShow is the body of `outfit show`.
+func runShow(harnessName string) error {
 	h, source, err := harness.Resolve(harnessName)
 	if err != nil {
 		return err
@@ -1606,16 +1385,32 @@ func cmdShow(args []string) error {
 	return nil
 }
 
-func cmdList(args []string) error {
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
+func listCmd() *cobra.Command {
 	var providers string
 	var showModels bool
+	c := &cobra.Command{
+		Use:           "list",
+		Short:         "list the provider catalogue",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runList(args, providers, showModels)
+		},
+	}
+	fs := c.Flags()
 	fs.StringVar(&providers, "providers", "", "path to a providers.yaml override")
 	fs.BoolVar(&showModels, "models", false, "also fetch each provider's current models live from its endpoint")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+	fs.SetInterspersed(false)
+	// An optional positional narrows the listing to one provider.
+	c.ValidArgsFunction = compProviders
+	compRegister(c, "providers", compFiles)
+	return c
+}
 
+// runList is the body of `outfit list`.
+func runList(args []string, providers string, showModels bool) error {
 	cat, err := catalog.LoadFrom(catalog.ResolveCatalogPath(providers))
 	if err != nil {
 		return err
@@ -1624,11 +1419,11 @@ func cmdList(args []string) error {
 	// An optional positional argument narrows the listing to one provider, which
 	// is the natural way to ask for a single provider's live models.
 	names := cat.SortedProviderNames()
-	if rest := fs.Args(); len(rest) > 0 {
-		if _, ok := cat.Providers[rest[0]]; !ok {
-			return fmt.Errorf("unknown provider %q (see `outfit list`)", rest[0])
+	if len(args) > 0 {
+		if _, ok := cat.Providers[args[0]]; !ok {
+			return fmt.Errorf("unknown provider %q (see `outfit list`)", args[0])
 		}
-		names = []string{rest[0]}
+		names = []string{args[0]}
 	}
 
 	// Only resolve keys and hit the network when --models is asked for; a plain
@@ -1677,24 +1472,35 @@ func cmdList(args []string) error {
 // --providers/OUTFIT_PROVIDERS are typically pointed at.
 const defaultProvidersFile = "providers.yaml"
 
-// cmdInitProviders writes the binary's embedded providers.yaml to the working
+// initProvidersCmd writes the binary's embedded providers.yaml to the working
 // directory (or an explicit path) as a starting point for a custom catalogue.
 // It refuses to clobber an existing file unless --force is given, so a stray
 // run can't destroy a catalogue the user has been editing.
-func cmdInitProviders(args []string) error {
-	fs := flag.NewFlagSet("init-providers", flag.ContinueOnError)
+func initProvidersCmd() *cobra.Command {
 	var force bool
-	fs.BoolVar(&force, "force", false, "overwrite an existing file")
-	fs.BoolVar(&force, "F", false, "overwrite an existing file (shorthand)")
-	if err := fs.Parse(args); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:           "init-providers",
+		Short:         "write the built-in providers.yaml out",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			path := defaultProvidersFile
+			if len(args) > 0 {
+				path = args[0]
+			}
+			return runInitProviders(path, force)
+		},
 	}
+	c.Flags().BoolVarP(&force, "force", "F", false, "overwrite an existing file")
+	c.Flags().SetInterspersed(false)
+	c.ValidArgsFunction = fileSlot
+	return c
+}
 
-	path := defaultProvidersFile
-	if rest := fs.Args(); len(rest) > 0 {
-		path = rest[0]
-	}
-
+// runInitProviders is the body of `outfit init-providers`.
+func runInitProviders(path string, force bool) error {
 	if !force {
 		if _, err := os.Stat(path); err == nil {
 			return fmt.Errorf("%s already exists; pass a different path or use --force to overwrite", path)
@@ -1713,3 +1519,16 @@ func cmdInitProviders(args []string) error {
 	fmt.Printf("  OUTFIT_PROVIDERS=%s outfit list\n", path)
 	return nil
 }
+
+// Test seams: the suite calls these the way the tree does — each runs its
+// command through execCmd rather than parsing a private FlagSet.
+func cmdAdd(args []string) error           { return execCmd(addCmd(), args) }
+func cmdRemove(args []string) error        { return execCmd(removeCmd(), args) }
+func cmdList(args []string) error          { return execCmd(listCmd(), args) }
+func cmdShow(args []string) error          { return execCmd(showCmd(), args) }
+func cmdApply(args []string) error         { return execCmd(applyCmd(), args) }
+func cmdUnapply(args []string) error       { return execCmd(unapplyCmd(), args) }
+func cmdAlias(args []string) error         { return execCmd(aliasCmd(), args) }
+func cmdUnalias(args []string) error       { return execCmd(unaliasCmd(), args) }
+func cmdExport(args []string) error        { return execCmd(exportCmd(), args) }
+func cmdInitProviders(args []string) error { return execCmd(initProvidersCmd(), args) }

@@ -1,5 +1,22 @@
 ## MODIFIED Requirements
 
+### Requirement: Completion protocol
+
+The hidden `outfit __complete <words…>` SHALL print one candidate per line
+followed by a final directive line — a `:`-prefixed integer taken from the
+completion framework's directive set: `:0` when filesystem paths belong
+alongside the candidates, `:4` when they do not (the framework's scripts are
+what parse it, and they require the integer form). A candidate line may carry
+a tab-separated description after the candidate, which the generated scripts
+consume per shell. It SHALL never return an error and never write to stderr:
+an unreadable config, an unloadable catalogue, or nonsense input all mean "no
+candidates", so a completion attempt can never spew over the user's prompt.
+
+#### Scenario: Broken config stays quiet
+
+- **WHEN** outfit's own config file is unreadable and completion is attempted
+- **THEN** `__complete` exits zero with no candidates and no stderr output
+
 ### Requirement: Completion scripts
 
 `outfit completion <shell>` SHALL print a completion script for `bash`, `zsh`,
