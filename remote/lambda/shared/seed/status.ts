@@ -63,8 +63,15 @@ export interface StreamSummary {
 
 /**
  * The most recently written stream for a seed. One stream per attempt
- * (`<seedId>/<instanceId>`), so ordering by last event time picks the current
- * attempt and never mixes it with an earlier one's records.
+ * (`<seedId>/<instanceId>`), so picking the one with the newest last-event
+ * time selects the current attempt and never mixes it with an earlier one's
+ * records.
+ *
+ * `orderBy: 'LastEventTime'` is not requested — CloudWatch Logs rejects it
+ * combined with `logStreamNamePrefix` ("Cannot order by LastEventTime with a
+ * logStreamNamePrefix"). Streams are fetched by prefix instead (its default
+ * order, by name, does not matter here) and the newest is picked client-side —
+ * cheap, since a seed realistically has only a handful of attempt-streams.
  */
 export async function latestStream(seedId: string): Promise<StreamSummary | null> {
   try {
@@ -72,16 +79,19 @@ export async function latestStream(seedId: string): Promise<StreamSummary | null
       new DescribeLogStreamsCommand({
         logGroupName: SEED_LOG_GROUP,
         logStreamNamePrefix: `${seedId}/`,
-        orderBy: 'LastEventTime',
-        descending: true,
-        limit: 1,
       }),
     );
-    const stream = result.logStreams?.[0];
-    if (!stream?.logStreamName) {
-      return null;
+    const streams = result.logStreams ?? [];
+    let newest: StreamSummary | null = null;
+    for (const stream of streams) {
+      if (!stream.logStreamName) {
+        continue;
+      }
+      if (!newest || (stream.lastEventTimestamp ?? 0) > (newest.lastEventTimestamp ?? 0)) {
+        newest = { streamName: stream.logStreamName, lastEventTimestamp: stream.lastEventTimestamp };
+      }
     }
-    return { streamName: stream.logStreamName, lastEventTimestamp: stream.lastEventTimestamp };
+    return newest;
   } catch (err) {
     if (errorName(err) === 'ResourceNotFoundException') {
       return null;

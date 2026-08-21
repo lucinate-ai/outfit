@@ -1,8 +1,40 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstanceInfo } from '../lambda/shared/aws';
 import type { SeedRecord } from '../lambda/shared/seed/contract';
-import { buildStatus, joinState } from '../lambda/shared/seed/status';
 import { decideSeedReap } from '../lambda/shared/seed/reap';
+
+// Captures every DescribeLogStreams call so latestStream's regression test can
+// assert on the exact params sent — the bug this guards (orderBy combined with
+// logStreamNamePrefix) is an AWS API contract violation that only a real
+// DescribeLogStreams call surfaces, never a return-value-only mock.
+const describeCalls: unknown[] = [];
+let describeStreams: { logStreamName?: string; lastEventTimestamp?: number }[] = [];
+
+vi.mock('@aws-sdk/client-cloudwatch-logs', () => ({
+  CloudWatchLogsClient: class {
+    async send(cmd: { input?: unknown }) {
+      describeCalls.push(cmd.input);
+      return { logStreams: describeStreams };
+    }
+  },
+  DescribeLogStreamsCommand: class {
+    input: unknown;
+    constructor(input: unknown) {
+      this.input = input;
+    }
+  },
+  GetLogEventsCommand: class {},
+  PutLogEventsCommand: class {},
+  CreateLogStreamCommand: class {},
+}));
+
+let buildStatus: typeof import('../lambda/shared/seed/status').buildStatus;
+let joinState: typeof import('../lambda/shared/seed/status').joinState;
+let latestStream: typeof import('../lambda/shared/seed/status').latestStream;
+
+beforeAll(async () => {
+  ({ buildStatus, joinState, latestStream } = await import('../lambda/shared/seed/status'));
+});
 
 function record(phase: SeedRecord['Phase'], extra: Partial<SeedRecord> = {}): SeedRecord {
   return { SeedId: 'vllm--m', Runner: 'vllm', ModelId: 'org/m', Phase: phase, ...extra };
@@ -11,6 +43,44 @@ function record(phase: SeedRecord['Phase'], extra: Partial<SeedRecord> = {}): Se
 const alive: InstanceInfo = { instanceId: 'i-1', state: 'running' };
 const pending: InstanceInfo = { instanceId: 'i-1', state: 'pending' };
 const dying: InstanceInfo = { instanceId: 'i-1', state: 'shutting-down' };
+
+describe('finding the latest stream', () => {
+  beforeEach(() => {
+    describeCalls.length = 0;
+    describeStreams = [];
+  });
+
+  it('never combines orderBy with logStreamNamePrefix', async () => {
+    // The regression this guards: CloudWatch Logs rejects that combination
+    // with "Cannot order by LastEventTime with a logStreamNamePrefix," which
+    // surfaced as a 502 on every `outfit remote seed status` call — never
+    // caught by a test that mocks the SDK call's return value alone.
+    await latestStream('vllm--m');
+    expect(describeCalls).toHaveLength(1);
+    const input = describeCalls[0] as Record<string, unknown>;
+    expect(input.logStreamNamePrefix).toBe('vllm--m/');
+    expect(input).not.toHaveProperty('orderBy');
+    expect(input).not.toHaveProperty('descending');
+    expect(input).not.toHaveProperty('limit');
+  });
+
+  it('picks the stream with the newest last-event time, not the first returned', async () => {
+    describeStreams = [
+      { logStreamName: 'vllm--m/i-old', lastEventTimestamp: 100 },
+      { logStreamName: 'vllm--m/i-new', lastEventTimestamp: 300 },
+      { logStreamName: 'vllm--m/i-mid', lastEventTimestamp: 200 },
+    ];
+    expect(await latestStream('vllm--m')).toEqual({
+      streamName: 'vllm--m/i-new',
+      lastEventTimestamp: 300,
+    });
+  });
+
+  it('returns null when the seed has no streams yet', async () => {
+    describeStreams = [];
+    expect(await latestStream('vllm--m')).toBeNull();
+  });
+});
 
 describe('joining records with the instance', () => {
   // Every cell of the table in status.ts. The two that matter are the ones
