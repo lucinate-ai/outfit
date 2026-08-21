@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/lucinate-ai/outfit/internal/catalog"
 	"github.com/lucinate-ai/outfit/internal/opencode"
+	"github.com/lucinate-ai/outfit/internal/outfit"
+	"github.com/spf13/pflag"
 	"github.com/tailscale/hujson"
 )
 
@@ -138,9 +141,28 @@ func TestVersionFlag(t *testing.T) {
 	}
 }
 
+// parseSelectionForTest registers add's flags exactly as addCmd does and
+// parses, without running the command — the pflag replacement for the old
+// parseSelection seam.
+func parseSelectionForTest(args []string) (outfit.Selection, string, error) {
+	var s outfit.Selection
+	var h string
+	fs := pflag.NewFlagSet("add", pflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	registerSelectionFlags(fs, &s, &h)
+	fs.SetInterspersed(false)
+	if err := fs.Parse(args); err != nil {
+		return s, h, err
+	}
+	if s.Provider == "" {
+		return s, h, fmt.Errorf("--provider/-p is required (see `outfit list`)")
+	}
+	return s, h, nil
+}
+
 func TestParseSelection(t *testing.T) {
 	// Long flags.
-	s, _, err := parseSelection("add", []string{"--provider", "openrouter", "--model", "m", "--alias", "friendly"})
+	s, _, err := parseSelectionForTest([]string{"--provider", "openrouter", "--model", "m", "--alias", "friendly"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +171,7 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Short flags.
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "-m", "x", "-a", "y"})
+	s, _, err = parseSelectionForTest([]string{"-p", "ollama", "-m", "x", "-a", "y"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,19 +180,19 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Missing provider.
-	if _, _, err := parseSelection("add", []string{"-m", "llama3.2"}); err == nil {
+	if _, _, err := parseSelectionForTest([]string{"-m", "llama3.2"}); err == nil {
 		t.Error("expected error when --provider is missing")
 	}
 
 	// Base URL flag, long and short forms.
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "--base-url", "https://long.example/v1"})
+	s, _, err = parseSelectionForTest([]string{"-p", "ollama", "--base-url", "https://long.example/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.BaseURL != "https://long.example/v1" {
 		t.Errorf("--base-url parsed wrong: %q", s.BaseURL)
 	}
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "-u", "https://short.example/v1"})
+	s, _, err = parseSelectionForTest([]string{"-p", "ollama", "-u", "https://short.example/v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,14 +201,14 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Context flag, long and short.
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "--context", "128k"})
+	s, _, err = parseSelectionForTest([]string{"-p", "ollama", "--context", "128k"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Context != "128k" {
 		t.Errorf("--context parsed wrong: %+v", s)
 	}
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "-c", "200000"})
+	s, _, err = parseSelectionForTest([]string{"-p", "ollama", "-c", "200000"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,14 +217,14 @@ func TestParseSelection(t *testing.T) {
 	}
 
 	// Output flag, long and short.
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "--output", "32k"})
+	s, _, err = parseSelectionForTest([]string{"-p", "ollama", "--output", "32k"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Output != "32k" {
 		t.Errorf("--output parsed wrong: %+v", s)
 	}
-	s, _, err = parseSelection("add", []string{"-p", "ollama", "-o", "16000"})
+	s, _, err = parseSelectionForTest([]string{"-p", "ollama", "-o", "16000"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +237,7 @@ func TestParseSelection(t *testing.T) {
 		{"-p", "ollama", "-m", "llama3.2", "--harness", "pi"},
 		{"-p", "ollama", "-m", "llama3.2", "-H", "pi"},
 	} {
-		_, h, err := parseSelection("add", args)
+		_, h, err := parseSelectionForTest(args)
 		if err != nil {
 			t.Fatal(err)
 		}

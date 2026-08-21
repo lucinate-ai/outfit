@@ -9,7 +9,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net"
@@ -28,6 +27,8 @@ import (
 	"github.com/lucinate-ai/outfit/internal/metrics"
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/remote"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // logLevelUsage is the --log-level flag's help, shared by `outfit daemon` and
@@ -61,35 +62,49 @@ func commandLogger(logLevel string) (*slog.Logger, error) {
 // be started next to. Nothing starts on boot either: the engine runs only when
 // a start request asks, from the config that request carries or the one stored
 // from a previous ask.
-func cmdDaemon(args []string) error {
-	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+func daemonCmd() *cobra.Command {
 	var apiAddr, apiToken, apiTokenFile, logLevel string
 	var loopback bool
+	c := &cobra.Command{
+		Use:   "daemon",
+		Short: "supervise an engine via the control API",
+		Long: `supervises an engine behind the control API (status, start, stop,
+metrics, logs): it runs at most one engine, started detached, and records
+its exit rather than restarting it. It reads no Outfit and takes no Outfit
+path — what an engine runs comes from a start request's deploy config or the
+stored one. outfit serve --api runs the same API in the foreground.`,
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runDaemonCommand(args, apiAddr, apiToken, apiTokenFile, logLevel, loopback, c.Flags())
+		},
+	}
+	fs := c.Flags()
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
-	fs.BoolVar(&loopback, "loopback", false, "bind the control API to loopback on the default port ("+daemon.LoopbackAPIAddr+"); needs no token")
-	fs.BoolVar(&loopback, "l", false, "like --loopback")
+	fs.BoolVarP(&loopback, "loopback", "l", false, "bind the control API to loopback on the default port ("+daemon.LoopbackAPIAddr+"); needs no token")
 	fs.StringVar(&apiTokenFile, "api-token-file", "", "read the control API's bearer token from this file")
 	fs.StringVar(&apiToken, "api-token", "", "the control API's bearer token")
 	fs.StringVar(&logLevel, "log-level", "", logLevelUsage)
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
-	if rest := fs.Args(); len(rest) > 0 {
+	c.ValidArgsFunction = aliasSlot
+	compRegister(c, "log-level", compLogLevel)
+	return c
+}
+
+// runDaemonCommand is the body of `outfit daemon`.
+func runDaemonCommand(args []string, apiAddr, apiToken, apiTokenFile, logLevel string, loopback bool, flags *pflag.FlagSet) error {
+	if len(args) > 0 {
 		return fmt.Errorf(
 			"outfit daemon takes no Outfit (got %q): it runs what a start request tells it to.\n"+
 				"Push a config with `outfit fleet start <node>` from a machine holding the Outfit, "+
 				"or launch through it with `outfit harness`",
-			rest[0])
+			args[0])
 	}
 	// Whether --api-addr was typed at all, not whether it differs from the
 	// default: --api-addr :4242 --loopback is still a conflict, and a
 	// compare-against-default check would let it pass.
-	addrExplicit := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "api-addr" {
-			addrExplicit = true
-		}
-	})
+	addrExplicit := flags.Changed("api-addr")
 	apiAddr, err := daemonAPIAddr(apiAddr, addrExplicit, loopback)
 	if err != nil {
 		return err
@@ -545,3 +560,6 @@ func bindBaseURL(host, port string) string {
 	}
 	return "http://" + net.JoinHostPort(host, port)
 }
+
+// cmdDaemon runs the command through the tree — the seam the suite calls.
+func cmdDaemon(args []string) error { return execCmd(daemonCmd(), args) }

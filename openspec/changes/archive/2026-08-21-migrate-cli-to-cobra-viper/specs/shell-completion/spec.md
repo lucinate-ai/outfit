@@ -1,11 +1,22 @@
-# Shell Completion Specification
+## MODIFIED Requirements
 
-## Purpose
+### Requirement: Completion protocol
 
-Define tab completion: the `outfit completion <shell>` scripts and the hidden
-`outfit __complete` protocol they call, which is the single source of truth for
-what completes to what across bash, zsh, and PowerShell.
-## Requirements
+The hidden `outfit __complete <words…>` SHALL print one candidate per line
+followed by a final directive line — a `:`-prefixed integer taken from the
+completion framework's directive set: `:0` when filesystem paths belong
+alongside the candidates, `:4` when they do not (the framework's scripts are
+what parse it, and they require the integer form). A candidate line may carry
+a tab-separated description after the candidate, which the generated scripts
+consume per shell. It SHALL never return an error and never write to stderr:
+an unreadable config, an unloadable catalogue, or nonsense input all mean "no
+candidates", so a completion attempt can never spew over the user's prompt.
+
+#### Scenario: Broken config stays quiet
+
+- **WHEN** outfit's own config file is unreadable and completion is attempted
+- **THEN** `__complete` exits zero with no candidates and no stderr output
+
 ### Requirement: Completion scripts
 
 `outfit completion <shell>` SHALL print a completion script for `bash`, `zsh`,
@@ -29,38 +40,21 @@ repository.
 - **THEN** the printed script is one generated for the current command tree and
   obtains its candidates by calling the hidden `outfit __complete`
 
-### Requirement: Completion protocol
-
-The hidden `outfit __complete <words…>` SHALL print one candidate per line
-followed by a final directive line — a `:`-prefixed integer taken from the
-completion framework's directive set: `:0` when filesystem paths belong
-alongside the candidates, `:4` when they do not (the framework's scripts are
-what parse it, and they require the integer form). A candidate line may carry
-a tab-separated description after the candidate, which the generated scripts
-consume per shell. It SHALL never return an error and never write to stderr:
-an unreadable config, an unloadable catalogue, or nonsense input all mean "no
-candidates", so a completion attempt can never spew over the user's prompt.
-
-#### Scenario: Broken config stays quiet
-
-- **WHEN** outfit's own config file is unreadable and completion is attempted
-- **THEN** `__complete` exits zero with no candidates and no stderr output
-
 ### Requirement: Completion surface coverage
 
 Completion SHALL cover the full visible command surface, derived from the
 registered command tree rather than a separate hand-maintained table: command
 names (the hidden `__complete` excluded), each command's flags in both their
 long and short forms, its subcommands where it has them, and context-aware
-values — provider names from the resolved catalogue
-(honouring a `--providers` override already on the line), harness names,
-registered alias names where an Outfit path is accepted, and the supported
-shells for `completion`. The catalogue no longer enumerates models, so
-`--model`/`-m` has no static candidate source; it SHALL still consume its value
-so a following flag completes normally. For a command with subcommands, the
-first positional slot SHALL offer those subcommands and any later slot SHALL fall
-through to what the command otherwise accepts. Positional slots beyond a
-command's arity SHALL offer nothing.
+values — provider names from the resolved catalogue (honouring a `--providers`
+override already on the line), harness names, registered alias names where an
+Outfit path is accepted, and the supported shells for `completion`. The
+catalogue no longer enumerates models, so `--model`/`-m` has no static
+candidate source; it SHALL still consume its value so a following flag
+completes normally. For a command with subcommands, the first positional slot
+SHALL offer those subcommands and any later slot SHALL fall through to what the
+command otherwise accepts. Positional slots beyond a command's arity SHALL
+offer nothing.
 
 #### Scenario: Unalias offers exactly the registered names
 
@@ -100,4 +94,3 @@ command's arity SHALL offer nothing.
 - **WHEN** the user completes `outfit add -p openrouter -m <TAB>`
 - **THEN** no model candidates are offered and no error occurs
 - **AND** a flag typed after `--model <value>` still completes normally
-

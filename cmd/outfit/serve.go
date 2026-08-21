@@ -8,7 +8,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"net/url"
 	"os"
@@ -21,6 +20,7 @@ import (
 	"github.com/lucinate-ai/outfit/internal/outfit"
 	"github.com/lucinate-ai/outfit/internal/outfitsrc"
 	"github.com/lucinate-ai/outfit/internal/preset"
+	"github.com/spf13/cobra"
 )
 
 // llamaServerBinary is the llama.cpp server executable that `serve` launches.
@@ -153,26 +153,44 @@ func engineFor(provider string) (serveEngine, error) {
 // prints the command before running it. The Outfit path defaults to ./Outfit.
 // Serve is strictly foreground; with --api the control API is served alongside
 // the engine. Long-lived supervision is `outfit daemon`'s job.
-func cmdServe(args []string) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+func serveCmd() *cobra.Command {
 	var (
 		dryRun   bool
 		apiOn    bool
 		apiAddr  string
 		logLevel string
 	)
-	fs.BoolVar(&dryRun, "dry-run", false, "print the server command without running it")
-	fs.BoolVar(&dryRun, "n", false, "print the command without running it (shorthand)")
-	fs.BoolVar(&apiOn, "api", false, "expose the control API beside the foreground engine")
-	fs.BoolVar(&apiOn, "a", false, "expose the control API (shorthand)")
+	c := &cobra.Command{
+		Use:   "serve",
+		Short: "run the Outfit's inference server",
+		Long: `runs the inference server the Outfit's PROVIDER names — llamacpp
+(llama-server) or omlx (Apple Silicon). With a PRESET it turns the matching
+section into the command, reading it in that engine's flag vocabulary;
+otherwise it derives one from the Outfit's own instructions. Prints the
+command before running it; --dry-run/-n prints without launching the server.`,
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runServe(args, dryRun, apiOn, apiAddr, logLevel)
+		},
+	}
+	fs := c.Flags()
+	fs.BoolVarP(&dryRun, "dry-run", "n", false, "print the server command without running it")
+	fs.BoolVarP(&apiOn, "api", "a", false, "expose the control API beside the foreground engine")
 	fs.StringVar(&apiAddr, "api-addr", daemon.DefaultAPIAddr, "control API listen address")
 	// Accepted with or without --api, so the same command line works both
 	// ways. Without --api there is no API to summarise and nothing supervised,
 	// so it governs nothing — which is better than rejecting it.
 	fs.StringVar(&logLevel, "log-level", "", logLevelUsage)
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	c.ValidArgsFunction = aliasSlot
+	compRegister(c, "log-level", compLogLevel)
+	return c
+}
+
+// runServe is the body of `outfit serve`.
+func runServe(args []string, dryRun, apiOn bool, apiAddr, logLevel string) error {
 	// A mistyped level is refused up front, whether or not this serve will host
 	// the API — a flag outfit accepted and then ignored would be worse than a
 	// flag it rejected. The API path resolves it again once the Outfit's .env
@@ -182,8 +200,8 @@ func cmdServe(args []string) error {
 	}
 
 	var path string
-	if rest := fs.Args(); len(rest) > 0 {
-		path = rest[0]
+	if len(args) > 0 {
+		path = args[0]
 	}
 	sel, outfitPath, err := readOutfit("outfit serve <file>", path)
 	if err != nil {
@@ -470,3 +488,6 @@ func hostPortFromURL(raw string) (host, port string, err error) {
 	}
 	return u.Hostname(), u.Port(), nil
 }
+
+// cmdServe runs the command through the tree — the seam the suite calls.
+func cmdServe(args []string) error { return execCmd(serveCmd(), args) }
