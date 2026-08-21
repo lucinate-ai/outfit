@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 
 	"github.com/lucinate-ai/outfit/internal/daemon"
 	"github.com/lucinate-ai/outfit/internal/metrics"
@@ -89,11 +90,25 @@ func (n *daemonNode) Logs(ctx context.Context, offset int64, limit int) (daemon.
 	return n.client.Logs(ctx, offset, limit)
 }
 
-// NewNode builds the live Node for one fleet-file entry, resolving its token.
-// A token reference that resolves to nothing fails here — before any call is
-// attempted — so the error names the variable rather than surfacing later as
-// a 401.
+// NewNode builds the live Node for one fleet-file entry. A daemon node resolves
+// its bearer token here — a reference that resolves to nothing fails before any
+// call is attempted, naming the variable rather than surfacing later as a 401.
+// A remote node loads its registered environment's control config; a missing
+// environment fails the same way, as a per-node error the fan-out renders as a
+// row rather than a blanked view.
 func (c *Config) NewNode(entry NodeConfig) (Node, error) {
+	if entry.Kind == KindRemote {
+		// The node's name is the registered environment's key.
+		path, err := remote.EnvConfigPath(entry.Name)
+		if err != nil {
+			return nil, err
+		}
+		cfg, err := remote.LoadConfigFile(path, os.Getenv)
+		if err != nil {
+			return nil, err
+		}
+		return NewRemoteNode(entry.Name, cfg)
+	}
 	token, err := c.Token(entry)
 	if err != nil {
 		return nil, err

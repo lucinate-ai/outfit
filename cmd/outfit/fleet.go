@@ -92,30 +92,18 @@ func fleetRow(r fleet.NodeResult) (state, serving string) {
 	if !r.OK() {
 		return string(r.Outcome), r.Detail()
 	}
-	serving = r.Status.Model
-	if r.Status.Runner != "" {
-		if serving == "" {
-			serving = r.Status.Runner
-		} else {
-			serving = r.Status.Runner + "  " + serving
-		}
+	// The shared facts come from the same source the remote status view reads,
+	// so the two cannot word or compute them differently.
+	f := statusFact{
+		State:         r.Status.State,
+		Model:         r.Status.Model,
+		Runner:        r.Status.Runner,
+		Version:       r.Status.Version,
+		UptimeSeconds: r.Status.UptimeSeconds,
+		LastActiveAt:  r.Status.LastActiveAt,
+		IdleSeconds:   r.Status.IdleSeconds,
 	}
-	if r.Status.UptimeSeconds > 0 {
-		serving += fmt.Sprintf("  (up %s)", formatDuration(r.Status.UptimeSeconds))
-	}
-	// How long since the node last did work — the question a fleet view exists
-	// to answer. Deliberately not labelled "idle": the STATE column already
-	// uses that word for "nothing started", and one table should not carry two
-	// meanings of it. Shown only when the daemon has recorded activity —
-	// without a last-active time there is nothing to measure from, and
-	// reporting a node quiet since boot would invent data it does not have.
-	if r.Status.LastActiveAt != "" {
-		serving += fmt.Sprintf("  (last active %s ago)", formatDuration(r.Status.IdleSeconds))
-	}
-	if r.Status.Version != "" {
-		serving += fmt.Sprintf("  (%s)", r.Status.Version)
-	}
-	return r.Status.State, serving
+	return f.State, f.servingText()
 }
 
 // fleetMetricsCmd renders every node's engine and system metrics. --watch
