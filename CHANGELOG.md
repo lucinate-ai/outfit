@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.24.1] - 2026-08-21
+### Changed
+- docs: correct remote log path
+- refactor: migrate the CLI to cobra and viper
+
+### Fixed
+- fix(remote): relay daemon version through the stats Lambda
+
 ## [1.24.0] - 2026-08-20
 ### Added
 - feat(remote): add keep subcommand and start --keep flag
