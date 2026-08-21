@@ -202,6 +202,25 @@ describe('launching, and the idempotency escape', () => {
     expect(runInstance.mock.calls[0][0].clientToken).not.toBe('seed-vllm--org-m-auto');
   });
 
+  it('escapes an idempotency mismatch when the boot script has changed since the token was last used', async () => {
+    // EC2 refuses to honour a repeated ClientToken whose arguments changed —
+    // most commonly because a later deploy updated the boot script for the
+    // same seed id. That refusal is proof the old request is unrelated, so it
+    // is escaped exactly like a stale instance rather than failing the seed.
+    const mismatch = new Error('Arguments on this idempotent request are inconsistent');
+    mismatch.name = 'IdempotentParameterMismatch';
+    runInstance.mockRejectedValueOnce(mismatch).mockResolvedValueOnce('i-new');
+    getInstance.mockResolvedValueOnce({ instanceId: 'i-new', state: 'pending' });
+
+    const result = await launch();
+
+    expect(runInstance).toHaveBeenCalledTimes(2);
+    expect(result.instanceId).toBe('i-new');
+    const [first, second] = runInstance.mock.calls.map((c) => c[0].clientToken);
+    expect(first).toBe('seed-vllm--org-m-auto');
+    expect(second).not.toBe(first);
+  });
+
   it('recovers from a moment of eventual-consistency lag without relaunching', async () => {
     // DescribeInstances is eventually consistent right after RunInstances;
     // relaunching on the first NotFound would double the instances.

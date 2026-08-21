@@ -9,6 +9,7 @@
  */
 
 import {
+  errorName,
   getInstance,
   getParameterValue,
   requireEnv,
@@ -240,17 +241,32 @@ export async function launchSeedInstance(
   };
 
   const attempt = async (generation: string): Promise<{ instanceId: string; state: string }> => {
-    const instanceId = await runInstance({
-      imageId,
-      instanceType: env.instanceType,
-      subnetId: env.subnetId,
-      securityGroupId: env.securityGroupId,
-      instanceProfileArn: env.instanceProfileArn,
-      userData,
-      tags,
-      terminateOnShutdown: true,
-      clientToken: seedClientToken(job.seedId, generation),
-    });
+    let instanceId: string;
+    try {
+      instanceId = await runInstance({
+        imageId,
+        instanceType: env.instanceType,
+        subnetId: env.subnetId,
+        securityGroupId: env.securityGroupId,
+        instanceProfileArn: env.instanceProfileArn,
+        userData,
+        tags,
+        terminateOnShutdown: true,
+        clientToken: seedClientToken(job.seedId, generation),
+      });
+    } catch (err) {
+      // The fixed AUTO_GENERATION token can also collide with an earlier
+      // request for the same seed whose *arguments* have since changed — a
+      // boot script updated by a later deploy, most commonly — which EC2
+      // refuses rather than silently returning either request's instance.
+      // That refusal is itself proof the old request is unrelated to this
+      // one, so it is escaped exactly like a stale instance rather than
+      // failing the seed.
+      if (errorName(err) === 'IdempotentParameterMismatch') {
+        return { instanceId: '', state: 'stale' };
+      }
+      throw err;
+    }
     // DescribeInstances is eventually consistent right after RunInstances, so
     // a brand-new instance may not be visible on the first check — but an
     // idempotency hit against the fixed AUTO_GENERATION token can also return
