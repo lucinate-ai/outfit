@@ -36,6 +36,13 @@ before it finishes would copy an incomplete model.
 - **THEN** a fetch is started, and the reply identifies it well enough to follow
   its progress
 
+#### Scenario: A companion added to stored weights is fetched
+
+- **WHEN** a deployment names a companion, and its main weights are already
+  stored from an earlier deployment that named no companion
+- **THEN** the weights are treated as absent and a fetch is started, rather
+  than the stored weights being reused without the companion
+
 #### Scenario: A half-finished fetch is not mistaken for success
 
 - **WHEN** an earlier fetch failed part way, leaving some files behind
