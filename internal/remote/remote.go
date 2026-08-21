@@ -403,9 +403,12 @@ func Stop(ctx context.Context, cfg Config) (*Response, error) {
 // Pause stops the instance without terminating it: the boot disk and its
 // weights survive, so a later Start re-wakes it instead of launching fresh.
 // The instance is terminated by the control plane's sweep once it has been
-// stopped beyond the retention window.
-func Pause(ctx context.Context, cfg Config) (*Response, error) {
-	resp, err := call(ctx, cfg, http.MethodPost, pauseURL(cfg.StopURL), nil)
+// stopped beyond the retention window. When force is set, the stop is marked
+// forced on the way over: the control plane takes the box down without first
+// asking the engine to shut down, which is what a wedged engine or daemon
+// needs.
+func Pause(ctx context.Context, cfg Config, force bool) (*Response, error) {
+	resp, err := call(ctx, cfg, http.MethodPost, pauseURL(cfg.StopURL, force), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -415,16 +418,41 @@ func Pause(ctx context.Context, cfg Config) (*Response, error) {
 	return resp, nil
 }
 
+// Restart stops the instance in the pause manner — without terminating it, so
+// the boot disk and its weights survive, the re-wake is fast, and the
+// environment's address does not change — and then wakes it up, reusing
+// Start's retry and deadline behaviour until the model serves again. force
+// marks the stop as forced: the engine is not asked to shut down first. When
+// the wake fails after the stop takes effect, the error says the instance is
+// stopped and that Start will bring it back — the very state a manual pause
+// leaves behind.
+func Restart(ctx context.Context, cfg Config, force bool, progress func(string), onState func(string)) (*Response, error) {
+	if _, err := Pause(ctx, cfg, force); err != nil {
+		return nil, err
+	}
+	progress("stopped; waking it")
+	resp, err := Start(ctx, cfg, progress, onState, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w — the instance is stopped; `outfit remote start` will bring it back", err)
+	}
+	return resp, nil
+}
+
 // pauseURL points the stop Lambda at its pause mode: the same Function URL
 // with an action parameter, so both modes share the one configured endpoint
-// and old configs need no new entry.
-func pauseURL(stopURL string) string {
+// and old configs need no new entry. force additionally marks the stop as
+// forced — the same parameter the terminate mode reads — so a control plane
+// that predates it simply ignores it and makes the graceful stop.
+func pauseURL(stopURL string, force bool) string {
 	u, err := url.Parse(stopURL)
 	if err != nil {
 		return stopURL
 	}
 	q := u.Query()
 	q.Set("action", "pause")
+	if force {
+		q.Set("force", "true")
+	}
 	u.RawQuery = q.Encode()
 	return u.String()
 }

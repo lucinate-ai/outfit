@@ -46,7 +46,11 @@ export async function handler(event: StopEvent): Promise<LambdaFunctionURLResult
  * `action` query parameter chooses the shutdown: `pause` (the default for a
  * manual `outfit remote pause`) stops without terminating, so the instance can
  * be re-woken; anything else terminates, which is what a manual
- * `outfit remote stop` wants.
+ * `outfit remote stop` wants. A further query parameter, `force=true`, marks
+ * the stop as forced: the engine is not asked to shut down first, so a wedged
+ * engine or daemon cannot prevent the box from going down (a manual
+ * `outfit remote restart -F`). The stop-time tag, the EC2 call and the reply
+ * are the same either way.
  */
 async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {
   let env: string;
@@ -62,14 +66,23 @@ async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunction
   if (method === 'GET') {
     return jsonResponse(200, { state: instance?.state ?? 'stopped', environment: env });
   }
+  const force = event.queryStringParameters?.force === 'true';
   if (instance) {
     if (event.queryStringParameters?.action === 'pause') {
-      return pauseInstance(instance, env);
+      return pauseInstance(instance, env, force);
     }
-    await stopEngineDaemon(instance.instanceId);
+    if (!force) {
+      await stopEngineDaemon(instance.instanceId);
+    }
     await terminateInstance(instance.instanceId);
     console.log(
-      JSON.stringify({ mode: 'manual', action: 'terminate', environment: env, instanceId: instance.instanceId }),
+      JSON.stringify({
+        mode: 'manual',
+        action: 'terminate',
+        environment: env,
+        instanceId: instance.instanceId,
+        force,
+      }),
     );
     return jsonResponse(200, { state: 'terminating', environment: env });
   }
@@ -82,8 +95,15 @@ async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunction
  * means a crash in between leaves a stopped instance with its stop time
  * recorded; a tagless already-stopped instance is self-healed the same way the
  * sweep does. The sweep then owns the eventual termination after retention.
+ * When force is set the engine is not asked to shut down first — the EC2 stop
+ * takes the box down with the engine still in it, which is what a wedged
+ * engine needs — but everything else about the stop is unchanged.
  */
-async function pauseInstance(instance: InstanceInfo, env: string): Promise<LambdaFunctionURLResult> {
+async function pauseInstance(
+  instance: InstanceInfo,
+  env: string,
+  force: boolean,
+): Promise<LambdaFunctionURLResult> {
   if (instance.state === 'stopped') {
     if (!instance.stoppedAt) {
       await tagInstance(instance.instanceId, STOPPED_AT_TAG, new Date().toISOString());
@@ -94,10 +114,18 @@ async function pauseInstance(instance: InstanceInfo, env: string): Promise<Lambd
     return jsonResponse(200, { state: 'stopped', environment: env });
   }
   await tagInstance(instance.instanceId, STOPPED_AT_TAG, new Date().toISOString());
-  await stopEngineDaemon(instance.instanceId);
+  if (!force) {
+    await stopEngineDaemon(instance.instanceId);
+  }
   await stopInstance(instance.instanceId);
   console.log(
-    JSON.stringify({ mode: 'manual', action: 'stop', environment: env, instanceId: instance.instanceId }),
+    JSON.stringify({
+      mode: 'manual',
+      action: 'stop',
+      environment: env,
+      instanceId: instance.instanceId,
+      force,
+    }),
   );
   return jsonResponse(200, { state: 'stopping', environment: env });
 }

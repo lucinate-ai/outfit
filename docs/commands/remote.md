@@ -11,6 +11,7 @@ outfit remote start      # boot it; prints the exports your agent needs (progres
 outfit remote status     # is it up? is it healthy?
 outfit remote logs       # what did it say? (readable after it's gone)
 outfit remote pause      # stop it now; a later start re-wakes it
+outfit remote restart    # fresh engine, same address: stop it and wake it again
 outfit remote keep 4h    # prevent the idle sweep from stopping it for 4 hours
 outfit remote stop       # terminate it now, rather than waiting for the idle timer
 ```
@@ -179,6 +180,30 @@ see how long the instance is protected for.
 It requires a control plane with the update Lambda (bootstrap with a recent
 version, or re-bootstrap).
 
+## Restarting the engine
+
+```sh
+outfit remote restart             # fresh engine, same endpoint
+outfit remote restart --force     # skip the graceful engine stop
+```
+
+`restart` stops the instance the way `pause` does — without terminating it, so
+the boot disk and its weights survive — and then wakes it, blocking until the
+model serves again. Because the box is only stopped, the address does not
+change and the re-wake loads the weights already on disk: the fastest way back
+to a fresh engine. Nothing about what the endpoint serves changes; that is
+[deploy](#creating-an-endpoint-deploy)'s job.
+
+The stop asks the on-instance daemon to shut the engine down politely first.
+When the engine or its daemon is wedged and will not answer, `--force` skips
+that step and takes the box down directly — the EC2 stop does not go through
+the daemon, so it still lands. It also kills whatever the engine is doing,
+which is why the default stays polite.
+
+With the instance already stopped, `restart` just wakes it — the same as
+`start`. Like `start`, it takes a `--timeout` (default 15m) and prints the
+endpoint's base URL when it serves, so you can check the address is unchanged.
+
 ## Reading the logs
 
 ```sh
@@ -280,7 +305,8 @@ something to reach for by habit.
 
 | Flag | Meaning |
 | ---- | ------- |
-| `--timeout` | How long `start` waits for the endpoint (default 15m) |
+| `--timeout` | How long `start` or `restart` waits for the endpoint (default 15m) |
+| `-F`, `--force` | `restart` only: skip the graceful engine stop and take the instance down directly |
 | `--keep` | `start` only: retain the instance until `now + DURATION`, preventing the idle sweep from stopping it |
 | `-n`, `--dry-run` | `deploy` only: print what would be sent, without sending it |
 | `--reseed` | `deploy` only: re-fetch the weights even if they are already in S3 |

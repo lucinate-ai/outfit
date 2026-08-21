@@ -50,10 +50,13 @@ beforeAll(async () => {
 });
 
 /** The stop URL as `outfit remote <verb>` calls it: one environment, an optional mode. */
-function stopEvent(action?: string, method: 'GET' | 'POST' = 'POST') {
+function stopEvent(action?: string, method: 'GET' | 'POST' = 'POST', force?: boolean) {
   const query: Record<string, string> = { env: 'dev' };
   if (action) {
     query.action = action;
+  }
+  if (force) {
+    query.force = 'true';
   }
   return {
     queryStringParameters: query,
@@ -166,6 +169,48 @@ describe('manual pause (stop, never terminate)', () => {
     expect(stopEngineDaemon).not.toHaveBeenCalled();
     expect(stopInstance).not.toHaveBeenCalled();
     expect(terminateInstance).not.toHaveBeenCalled();
+  });
+});
+
+describe('manual stop (forced)', () => {
+  it('terminates without stopping the engine first', async () => {
+    findManagedInstance.mockResolvedValue({ instanceId: 'i-run', state: 'running' });
+
+    const body = bodyOf(await handler(stopEvent(undefined, 'POST', true), {} as Context));
+    expect(body.state).toBe('terminating');
+    expect(stopEngineDaemon).not.toHaveBeenCalled();
+    expect(terminateInstance).toHaveBeenCalledWith('i-run');
+    expect(stopInstance).not.toHaveBeenCalled();
+  });
+
+  it('records the stop time and stops the instance without stopping the engine', async () => {
+    findManagedInstance.mockResolvedValue({ instanceId: 'i-run', state: 'running' });
+
+    const body = bodyOf(await handler(stopEvent('pause', 'POST', true), {} as Context));
+    expect(body.state).toBe('stopping');
+    expect(stopEngineDaemon).not.toHaveBeenCalled();
+    expect(stopInstance).toHaveBeenCalledWith('i-run');
+    expect(terminateInstance).not.toHaveBeenCalled();
+    expect(tagInstance).toHaveBeenCalledWith(
+      'i-run',
+      'Stopped-At',
+      expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+    );
+  });
+
+  it('is a noop for an already-stopped instance whose stop time is recorded', async () => {
+    findManagedInstance.mockResolvedValue({
+      instanceId: 'i-off',
+      state: 'stopped',
+      stoppedAt: new Date('2026-08-17T10:00:00Z'),
+    });
+
+    const body = bodyOf(await handler(stopEvent('pause', 'POST', true), {} as Context));
+    expect(body.state).toBe('stopped');
+    expect(stopEngineDaemon).not.toHaveBeenCalled();
+    expect(stopInstance).not.toHaveBeenCalled();
+    expect(terminateInstance).not.toHaveBeenCalled();
+    expect(tagInstance).not.toHaveBeenCalled();
   });
 });
 
