@@ -108,6 +108,7 @@ const statusReply = JSON.stringify({
   logPath: '/var/lib/outfit/daemon/engine.log',
   lastActiveAt: '2026-08-09T12:00:00Z',
   idleSeconds: 42,
+  version: '1.18.0',
 });
 
 describe('parseDaemonStatus', () => {
@@ -117,6 +118,7 @@ describe('parseDaemonStatus', () => {
     expect(parsed!.state).toBe('running');
     expect(parsed!.lastActiveAt).toBe('2026-08-09T12:00:00Z');
     expect(parsed!.idleSeconds).toBe(42);
+    expect(parsed!.version).toBe('1.18.0');
   });
 
   it('parses a reply from a daemon that has never run an engine', () => {
