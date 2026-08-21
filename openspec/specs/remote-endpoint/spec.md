@@ -8,8 +8,9 @@ what to serve from an Outfit: the `outfit remote` command group.
 ### Requirement: Remote command group
 
 The system SHALL provide a `remote` command group with the subcommands
-`bootstrap`, `start`, `stop`, `status`, `deploy`, `ls`, `metrics`, and `keep`. `start`,
-`stop`, `status`, `metrics` and `deploy` each take an optional Outfit path:
+`bootstrap`, `start`, `stop`, `restart`, `status`, `deploy`, `ls`, `metrics`,
+and `keep`. `start`, `stop`, `restart`, `status`, `metrics` and `deploy` each
+take an optional Outfit path:
 `start` SHALL boot the endpoint and block until it is serving, then perform a
 quick TCP probe of the inference endpoint — if the probe fails, a warning is
 printed to stderr explaining the network mismatch (see the Remote Start Probe
@@ -18,6 +19,13 @@ specification) — and finally print the base URL and API key as shell exports;
 retention deadline to `now + DURATION`, preventing the idle sweep from
 terminating it before that time (see the Remote Keep specification);
 `stop` SHALL stop it immediately rather than waiting for its idle timer;
+`restart` SHALL stop the endpoint in the manner of a pause — without
+terminating it, so its boot disk, its weights and its stable address are
+preserved — and SHALL immediately start it again, blocking until it is serving
+and reporting progress as `start` does (see the Reporting a start in progress
+specification); `restart` SHALL accept a `--force` flag with a `-F` short form
+that, when set, performs the stop without first asking the engine to shut down
+(see the Endpoint Lifecycle specification for forced stops);
 `status` SHALL report instance state and endpoint health without side effects
 and SHALL NOT perform any TCP probe, and SHALL include the `Retain-Until`
 deadline when the instance has an active retention tag;
@@ -55,6 +63,32 @@ naming the accepted ones.
 - **WHEN** the endpoint reports that it is still starting
 - **THEN** the command waits and retries until it is ready or the timeout
   passes, rather than failing on the first attempt
+
+#### Scenario: Restarting the endpoint
+
+- **WHEN** the user runs `outfit remote restart` for a running environment and
+  the endpoint reports ready again
+- **THEN** the instance was stopped and re-woken without being terminated, the
+  command blocked until the model was serving again, and the environment's
+  address is the one its configuration records
+
+#### Scenario: Forcing a restart skips the engine stop
+
+- **WHEN** the user runs `outfit remote restart --force` (or `-F`)
+- **THEN** the instance is stopped without the engine being asked to shut down
+  first, and the command then blocks until the model is serving again
+
+#### Scenario: Restarting a stopped endpoint starts it
+
+- **WHEN** the user runs `outfit remote restart` for an environment whose instance is already stopped
+- **THEN** the instance is re-woken rather than replaced, and the command blocks
+  until the model is serving again, as with a plain start
+
+#### Scenario: A failed re-wake says how to recover
+
+- **WHEN** the stop half of a restart has taken effect but the wake fails
+- **THEN** the command fails saying the instance is stopped and that
+  `outfit remote start` will bring it back
 
 #### Scenario: Listing environments
 
