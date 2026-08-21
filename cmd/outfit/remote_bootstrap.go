@@ -260,6 +260,11 @@ func runRemoteBootstrap(runnersFlag, hfToken, ref, dir, region string, dryRun, a
 	if err := setCdkContext(cdkDir, "runners", strings.Join(runners, ",")); err != nil {
 		return err
 	}
+	if outfitVersion := remote.ReleaseVersion(version); outfitVersion != "" {
+		if err := setCdkContext(cdkDir, "outfitVersion", outfitVersion); err != nil {
+			return err
+		}
+	}
 
 	fmt.Fprintf(os.Stderr, "\nUsing %s to run the CDK project.\n", pm.name)
 	if err := runBootstrapSequence(ctx, cdkDir, runners, alreadyBootstrapped, forceBake, pm); err != nil {

@@ -32,6 +32,22 @@ func TestResolveRef(t *testing.T) {
 	}
 }
 
+func TestReleaseVersion(t *testing.T) {
+	cases := []struct{ version, want string }{
+		{"v1.10.0", "1.10.0"},
+		{"1.10.0", "1.10.0"}, // goreleaser strips the v
+		{"dev", ""},
+		{"", ""},
+		{"v1.10.0-5-gabc1234", ""},
+		{"v1.10.0-dirty", ""},
+	}
+	for _, c := range cases {
+		if got := ReleaseVersion(c.version); got != c.want {
+			t.Errorf("ReleaseVersion(%q) = %q, want %q", c.version, got, c.want)
+		}
+	}
+}
+
 // makeTarGz builds a gzipped tar with the given name->content entries.
 func makeTarGz(t *testing.T, files map[string]string) []byte {
 	t.Helper()
