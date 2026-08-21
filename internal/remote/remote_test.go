@@ -416,7 +416,7 @@ func TestPause(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	pause, err := Pause(context.Background(), cfg)
+	pause, err := Pause(context.Background(), cfg, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,6 +433,183 @@ func TestPause(t *testing.T) {
 	}
 }
 
+// pauseURL keeps the pause mode (action on the stop URL) and, only when asked
+// for, marks the stop forced; a URL the parser rejects is handed back as-is,
+// so a malformed config fails later where it always failed.
+func TestPauseURL(t *testing.T) {
+	if got := pauseURL("https://stop.example/", false); got != "https://stop.example/?action=pause" {
+		t.Errorf("unforced pause URL = %q, want the pause mode and nothing else", got)
+	}
+	if got := pauseURL("https://stop.example/", true); got != "https://stop.example/?action=pause&force=true" {
+		t.Errorf("forced pause URL = %q, want action and force", got)
+	}
+	if got := pauseURL("://bad", true); got != "://bad" {
+		t.Errorf("unparseable URL should be returned as-is, got %q", got)
+	}
+}
+
+// A forced pause marks the stop forced on the way over (force=true beside
+// action=pause) so the control plane can skip the graceful engine stop; an
+// unforced one sends nothing, so an old control plane sees exactly what it
+// always saw.
+func TestPause_ForceParameter(t *testing.T) {
+	stubAWSEnv(t)
+	var gotAction, gotForce [2]string
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAction[calls] = r.URL.Query().Get("action")
+		gotForce[calls] = r.URL.Query().Get("force")
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	if _, err := Pause(context.Background(), cfg, true); err != nil {
+		t.Fatal(err)
+	}
+	if gotAction[0] != "pause" || gotForce[0] != "true" {
+		t.Errorf("forced pause must send action=pause&force=true, got action=%q force=%q", gotAction[0], gotForce[0])
+	}
+	if _, err := Pause(context.Background(), cfg, false); err != nil {
+		t.Fatal(err)
+	}
+	if gotAction[1] != "pause" {
+		t.Errorf("unforced pause must still select the stop Lambda's pause mode, got action=%q", gotAction[1])
+	}
+	if gotForce[1] != "" {
+		t.Errorf("unforced pause must not send a force parameter, got force=%q", gotForce[1])
+	}
+}
+
+// A restart is a pause-style stop followed by the wake, in that order: the
+// stop keeps the boot disk (action=pause), and the wake blocks until ready.
+func TestRestart_StopsThenWakes(t *testing.T) {
+	stubAWSEnv(t)
+	var order []string
+	var stopQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "pause" {
+			order = append(order, "stop")
+			stopQuery = r.URL.RawQuery
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		order = append(order, "wake")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	var progress []string
+	resp, err := Restart(context.Background(), cfg, false, func(msg string) { progress = append(progress, msg) }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.State != "ready" || resp.BaseURL != "http://198.51.100.1:8000/v1" {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+	if len(order) != 2 || order[0] != "stop" || order[1] != "wake" {
+		t.Fatalf("expected the stop before the wake, got %v", order)
+	}
+	// The stop is pause-style and unforced: the boot disk survives, the engine
+	// is stopped politely.
+	if !strings.Contains(stopQuery, "action=pause") || strings.Contains(stopQuery, "force=") {
+		t.Errorf("unforced restart must stop in pause mode without force, got %q", stopQuery)
+	}
+	if len(progress) == 0 || !strings.Contains(progress[0], "stopped; waking") {
+		t.Errorf("expected a stop-phase progress line, got %v", progress)
+	}
+}
+
+func TestRestart_ForceMarksTheStop(t *testing.T) {
+	stubAWSEnv(t)
+	var stopQuery string
+	var woke bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "pause" {
+			stopQuery = r.URL.RawQuery
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		woke = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	if _, err := Restart(context.Background(), cfg, true, func(string) {}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stopQuery, "action=pause") || !strings.Contains(stopQuery, "force=true") {
+		t.Errorf("forced restart must stop in pause mode with force=true, got %q", stopQuery)
+	}
+	if !woke {
+		t.Error("forced restart must still wake the instance")
+	}
+}
+
+// A failed stop never reaches the wake: the instance may still be running, so
+// starting it again is pointless and the error is the stop's.
+func TestRestart_StopFailureNeverWakes(t *testing.T) {
+	stubAWSEnv(t)
+	woke := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") != "pause" {
+			woke = true
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"terminated","message":"cannot stop"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Restart(context.Background(), cfg, false, func(string) {}, nil)
+	if err == nil || !strings.Contains(err.Error(), "cannot stop") {
+		t.Errorf("expected the stop's error, got %v", err)
+	}
+	if woke {
+		t.Error("a failed stop must not wake the instance")
+	}
+}
+
+// When the stop took effect but the wake then fails, the error says the
+// instance is stopped and names the command that recovers it.
+func TestRestart_WakeFailureNamesRecovery(t *testing.T) {
+	stubAWSEnv(t)
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("action") == "pause" {
+			calls = append(calls, "stop")
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		calls = append(calls, "wake")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"terminated","message":"cannot start"}`))
+	}))
+	defer server.Close()
+
+	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
+	_, err := Restart(context.Background(), cfg, false, func(string) {}, nil)
+	if err == nil {
+		t.Fatal("expected a wake failure")
+	}
+	if !strings.Contains(err.Error(), "stopped") ||
+		!strings.Contains(err.Error(), "outfit remote start") {
+		t.Errorf("expected the recovery hint in the error, got %v", err)
+	}
+	if len(calls) != 2 || calls[0] != "stop" || calls[1] != "wake" {
+		t.Fatalf("expected the wake to be attempted after the stop, got %v", calls)
+	}
+}
+
 func TestPause_NonSuccess(t *testing.T) {
 	stubAWSEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -442,7 +619,7 @@ func TestPause_NonSuccess(t *testing.T) {
 	defer server.Close()
 
 	cfg := Config{StartURL: server.URL, StopURL: server.URL, Region: "eu-west-1"}
-	_, err := Pause(context.Background(), cfg)
+	_, err := Pause(context.Background(), cfg, false)
 	if err == nil || !strings.Contains(err.Error(), "pause") ||
 		!strings.Contains(err.Error(), "cannot stop") {
 		t.Errorf("expected a pause error with the reply's detail, got %v", err)

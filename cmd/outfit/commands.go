@@ -345,6 +345,7 @@ names a file — falling back to the default environment. Each subcommand's
 		remoteBootstrapCmd(),
 		remoteStartCmd(),
 		remotePauseCmd(),
+		remoteRestartCmd(),
 		remoteStopCmd(),
 		remoteStatusCmd(),
 		remoteMetricsCmd(),

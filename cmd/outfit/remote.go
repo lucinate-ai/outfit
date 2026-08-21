@@ -46,10 +46,10 @@ import (
 // commands in the tree, so only the unknown and the bare cases reach here.
 func remoteParentFallback(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|stop|status|metrics|logs|deploy|env|ls|keep> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|restart|stop|status|metrics|logs|deploy|env|ls|keep> [path]")
 	}
 	return fmt.Errorf(
-		"unknown remote subcommand %q (expected bootstrap, start, pause, stop, status, metrics, logs, deploy, env, ls or keep)", args[0])
+		"unknown remote subcommand %q (expected bootstrap, start, pause, restart, stop, status, metrics, logs, deploy, env, ls or keep)", args[0])
 }
 
 // cmdRemote runs the remote subcommands through the tree — the seam the suite
@@ -599,7 +599,7 @@ func runRemotePause(args []string) error {
 	if err != nil {
 		return err
 	}
-	resp, err := remote.Pause(context.Background(), cfg)
+	resp, err := remote.Pause(context.Background(), cfg, false)
 	if err != nil {
 		return err
 	}
@@ -608,6 +608,76 @@ func runRemotePause(args []string) error {
 	// sweep terminates it once the stop retention passes.
 	fmt.Printf("state: %s\n", resp.State)
 	fmt.Println("the endpoint can be re-woken with `outfit remote start`, or terminated now with `outfit remote stop`")
+	return nil
+}
+
+func remoteRestartCmd() *cobra.Command {
+	var force bool
+	var timeout time.Duration
+	const timeoutUsage = "overall time to wait for the endpoint"
+	c := &cobra.Command{
+		Use:   "restart",
+		Short: "stop the instance and bring it back",
+		Long: `stops the instance without terminating it, then wakes it and blocks
+until the model serves again. The boot disk and its weights survive, and the
+endpoint's address is unchanged. With --force the graceful engine stop is
+skipped: for when the engine or its daemon will not answer it.`,
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteRestart(args, force, timeout)
+		},
+	}
+	fs := c.Flags()
+	fs.BoolVarP(&force, "force", "F", false, "skip the graceful engine stop")
+	fs.DurationVarP(&timeout, "timeout", "t", 15*time.Minute, timeoutUsage)
+	return c
+}
+
+// runRemoteRestart is the body of `outfit remote restart`. It stops the
+// instance in the pause manner — without terminating it, so the boot disk and
+// weights survive and the address does not change — and reuses the wake's own
+// deadline and retry handling to block until the model serves again.
+func runRemoteRestart(args []string, force bool, timeout time.Duration) error {
+	cfg, err := resolveRemoteConfig(outfitArg(args))
+	if err != nil {
+		return err
+	}
+
+	progress := newStartProgress(heartbeatEvery)
+	defer progress.close()
+
+	// A lenient status call up front: its reply only feeds a progress line
+	// saying where the instance is now (running, or already stopped / no
+	// instance). It gates nothing — the stop Lambda is correct for every
+	// state — so a failed check just means we do not know the starting point.
+	if status, err := remote.Status(context.Background(), cfg); err == nil {
+		switch status.State {
+		case "stopped", "undeployed":
+			progress.line(fmt.Sprintf("the instance is already %s; waking it", status.State))
+		default:
+			progress.line(fmt.Sprintf("the instance is %s; stopping it, then waking it", status.State))
+		}
+	}
+
+	stopPhase := "stopping the instance, then waking it"
+	if force {
+		stopPhase = "stopping the instance (the graceful engine stop is skipped), then waking it"
+	}
+	progress.line(stopPhase)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	resp, err := remote.Restart(ctx, cfg, force, progress.line, progress.setState)
+	if err != nil {
+		return err
+	}
+	progress.close()
+	progress.line(fmt.Sprintf("ready after %s", progress.elapsed()))
+	fmt.Printf("base url: %s\n", resp.BaseURL)
 	return nil
 }
 
@@ -1479,6 +1549,7 @@ func detectPublicCIDR(ctx context.Context) (string, error) {
 func cmdRemoteBootstrap(args []string) error { return execCmd(remoteBootstrapCmd(), args) }
 func cmdRemoteStart(args []string) error     { return execCmd(remoteStartCmd(), args) }
 func cmdRemotePause(args []string) error     { return execCmd(remotePauseCmd(), args) }
+func cmdRemoteRestart(args []string) error   { return execCmd(remoteRestartCmd(), args) }
 func cmdRemoteStop(args []string) error      { return execCmd(remoteStopCmd(), args) }
 func cmdRemoteStatus(args []string) error    { return execCmd(remoteStatusCmd(), args) }
 func cmdRemoteMetrics(args []string) error   { return execCmd(remoteMetricsCmd(), args) }

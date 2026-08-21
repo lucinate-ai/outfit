@@ -458,16 +458,17 @@ Running a model on your own cloud GPU box? [`remote/`](remote/) deploys one.
 while you are using it, and stops itself after a period of idleness.
 
 ```sh
-outfit remote start    # boot the instance, wait for the model to load,
-                       # then print OPENAI_BASE_URL / OPENAI_API_KEY exports
-outfit remote status   # instance state, endpoint health, and when it last
-                       # did any work
-outfit remote metrics  # tokens, GPU, CPU and RAM — plus the same last-active
-outfit remote logs     # what the engine (or the boot) said, even after it's gone
-outfit remote pause    # stop now, but keep it re-wakeable
-outfit remote keep 4h  # hold it against the idle sweep for 4 hours
-                       # (start --keep does the same at wake time)
-outfit remote stop     # terminate now instead of waiting for the idle timer
+outfit remote start     # boot the instance, wait for the model to load,
+                         # then print OPENAI_BASE_URL / OPENAI_API_KEY exports
+outfit remote status    # instance state, endpoint health, and when it last
+                         # did any work
+outfit remote metrics   # tokens, GPU, CPU and RAM — plus the same last-active
+outfit remote logs      # what the engine (or the boot) said, even after it's gone
+outfit remote pause     # stop now, but keep it re-wakeable
+outfit remote restart   # fresh engine, same address: stop it, then wake it
+outfit remote keep 4h   # hold it against the idle sweep for 4 hours
+                         # (start --keep does the same at wake time)
+outfit remote stop      # terminate now instead of waiting for the idle timer
 ```
 
 Instances ship their engine and boot output to CloudWatch, so `outfit remote
