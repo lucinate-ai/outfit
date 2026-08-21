@@ -38,19 +38,25 @@ const TAG_VALUE = 'endpoint';
 const SEED_TAG_VALUE = 'seed';
 
 /**
- * Bundle the seeder to a single file and hand back the directory to publish.
+ * Bundle the seeder to a single file and hand back its path to publish.
  *
  * Done at synth time, in the stack, for the same reason `NodejsFunction` does
  * it internally: it removes any ordering hazard between a `pnpm build` step and
  * `cdk deploy`, and ties the published bundle to the stack version that
  * references it. The instance then fetches one file with the AWS CLI it already
  * has, so nothing needs baking into an image.
+ *
+ * The path returned must be the file itself, not its directory: `s3assets.Asset`
+ * zips a directory path before publishing, and the instance's `aws s3 cp`
+ * expects to run the fetched object directly as `node /opt/seed.mjs` — handed a
+ * zip instead, node fails on the "PK" magic bytes as a syntax error.
  */
 function bundleSeeder(): string {
   const outdir = fs.mkdtempSync(path.join(os.tmpdir(), 'seeder-bundle-'));
+  const outfile = path.join(outdir, 'seed.mjs');
   buildSync({
     entryPoints: [path.join(__dirname, '..', 'seeder', 'src', 'index.ts')],
-    outfile: path.join(outdir, 'seed.mjs'),
+    outfile,
     bundle: true,
     platform: 'node',
     format: 'esm',
@@ -61,7 +67,7 @@ function bundleSeeder(): string {
       js: "import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);",
     },
   });
-  return outdir;
+  return outfile;
 }
 
 /**

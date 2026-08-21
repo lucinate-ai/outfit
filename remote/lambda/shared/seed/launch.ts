@@ -13,6 +13,7 @@ import {
   getParameterValue,
   requireEnv,
   runInstance,
+  sleep,
 } from '../aws';
 import { type DeployConfig } from '../deploy-config';
 import { runnerSpec } from '../../runners';
@@ -200,19 +201,28 @@ export interface LaunchedSeed {
 }
 
 /** Instance states that mean an idempotency hit handed back a dead instance. */
-const DEAD_STATES = new Set(['shutting-down', 'terminated', 'stopping', 'stopped']);
+const DEAD_STATES = new Set(['shutting-down', 'terminated', 'stopping', 'stopped', 'stale']);
+
+/**
+ * How many times to recheck a just-launched instance's visibility before
+ * concluding the id is stale rather than merely new. A genuinely fresh
+ * instance is normally visible on the first check; this budget is for the
+ * rare eventual-consistency lag, not the common case.
+ */
+const VISIBILITY_ATTEMPTS = 4;
+const VISIBILITY_DELAY_MS = 1500;
 
 /**
  * Launch a seed instance, converging concurrent starts onto one.
  *
  * The deterministic ClientToken is what makes that work: EC2 treats a repeated
- * token within 24 hours as the same call and returns the same instance, so two
- * Lambdas racing here produce one instance without a lock.
+ * token within its idempotency window as the same call and returns the same
+ * instance, so two Lambdas racing here produce one instance without a lock.
  *
- * The same 24-hour window is also a hazard — a seed retried hours after an
- * earlier attempt terminated would be handed that dead instance back. Rather
- * than trying to predict that, the state of whatever comes back is checked, and
- * a dead one is escaped with a fresh generation. Detection is reliable;
+ * The same window is also a hazard — a seed retried well after an earlier
+ * attempt terminated would be handed that dead instance back. Rather than
+ * trying to predict that, the state of whatever comes back is checked, and a
+ * dead one is escaped with a fresh generation. Detection is reliable;
  * prediction is not.
  */
 export async function launchSeedInstance(
@@ -241,13 +251,23 @@ export async function launchSeedInstance(
       terminateOnShutdown: true,
       clientToken: seedClientToken(job.seedId, generation),
     });
-    // DescribeInstances is eventually consistent right after RunInstances; a
-    // brand-new instance that cannot be found yet is alive by definition.
-    try {
-      return { instanceId, state: (await getInstance(instanceId)).state };
-    } catch {
-      return { instanceId, state: 'pending' };
+    // DescribeInstances is eventually consistent right after RunInstances, so
+    // a brand-new instance may not be visible on the first check — but an
+    // idempotency hit against the fixed AUTO_GENERATION token can also return
+    // an instance id from a much earlier session whose record has since aged
+    // out of DescribeInstances entirely, and that looks identical: NotFound.
+    // A short retry absorbs genuine lag; still-not-found after it means the
+    // id is stale, not new, so it is escaped exactly like a live-but-dead one.
+    for (let i = 0; i < VISIBILITY_ATTEMPTS; i++) {
+      try {
+        return { instanceId, state: (await getInstance(instanceId)).state };
+      } catch {
+        if (i < VISIBILITY_ATTEMPTS - 1) {
+          await sleep(VISIBILITY_DELAY_MS);
+        }
+      }
     }
+    return { instanceId, state: 'stale' };
   };
 
   // A forced re-seed skips the shared token entirely — it must never be

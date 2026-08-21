@@ -1,8 +1,8 @@
 /**
  * The launch path's two risky pieces: reading the infrastructure out of the
  * environment (where a mistyped variable name is silent until deploy time), and
- * the idempotency escape — EC2's 24-hour ClientToken window handing back a
- * terminated instance to a seed that is legitimately being retried.
+ * the idempotency escape — EC2's ClientToken window handing back a dead or
+ * long-vanished instance to a seed that is legitimately being retried.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -202,14 +202,39 @@ describe('launching, and the idempotency escape', () => {
     expect(runInstance.mock.calls[0][0].clientToken).not.toBe('seed-vllm--org-m-auto');
   });
 
-  it('treats an instance it cannot describe yet as alive, not as stale', async () => {
+  it('recovers from a moment of eventual-consistency lag without relaunching', async () => {
     // DescribeInstances is eventually consistent right after RunInstances;
-    // relaunching on that would double the instances.
+    // relaunching on the first NotFound would double the instances.
     runInstance.mockResolvedValue('i-1');
-    getInstance.mockRejectedValue(new Error('InvalidInstanceID.NotFound'));
+    getInstance
+      .mockRejectedValueOnce(new Error('InvalidInstanceID.NotFound'))
+      .mockResolvedValueOnce({ instanceId: 'i-1', state: 'pending' });
 
-    await launch();
+    const result = await launch();
 
     expect(runInstance).toHaveBeenCalledTimes(1);
+    expect(result.instanceId).toBe('i-1');
   });
+
+  it('escapes an idempotency hit whose id never becomes visible, not just a dead one', async () => {
+    // The regression this guards: the fixed AUTO_GENERATION token can hit an
+    // instance id from a much earlier session that has since aged out of
+    // DescribeInstances entirely — indistinguishable from "too new to see
+    // yet" by a single check, and previously treated as alive forever.
+    runInstance.mockResolvedValueOnce('i-old').mockResolvedValueOnce('i-new');
+    getInstance
+      .mockRejectedValueOnce(new Error('InvalidInstanceID.NotFound'))
+      .mockRejectedValueOnce(new Error('InvalidInstanceID.NotFound'))
+      .mockRejectedValueOnce(new Error('InvalidInstanceID.NotFound'))
+      .mockRejectedValueOnce(new Error('InvalidInstanceID.NotFound'))
+      .mockResolvedValueOnce({ instanceId: 'i-new', state: 'pending' });
+
+    const result = await launch();
+
+    expect(runInstance).toHaveBeenCalledTimes(2);
+    expect(result.instanceId).toBe('i-new');
+    const [first, second] = runInstance.mock.calls.map((c) => c[0].clientToken);
+    expect(first).toBe('seed-vllm--org-m-auto');
+    expect(second).not.toBe(first);
+  }, 15_000);
 });
