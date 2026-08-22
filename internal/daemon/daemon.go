@@ -53,6 +53,10 @@ type Daemon struct {
 	// time.Now. Injected the same way Collector.Run and BuildArgv are, so a
 	// test can age an engine without waiting.
 	Now func() time.Time
+	// Prewarm reads the model's files into the page cache ahead of the
+	// engine's own read, off the start's critical path. Nil means
+	// prewarmModel; a test supplies a recorder.
+	Prewarm func(modelPath string)
 	// Logger receives the API request summaries and the engine lifecycle
 	// records. Nil discards, so a daemon constructed in a test is silent
 	// unless it asks not to be; the CLI sets it, and sets Sup.Logger to the
@@ -251,6 +255,16 @@ func (d *Daemon) StartEngine() error {
 		slog.String("source", source),
 		slog.String("runner", runner),
 		slog.String("model", model))
+	// Warm the model's page cache before the engine faults it in: it must run
+	// (or at least be launched) before Start so the sequential read gets ahead
+	// of the copy, and it is a goroutine, so it never delays the start itself.
+	if dc != nil && dc.ModelID != "" {
+		prewarm := d.Prewarm
+		if prewarm == nil {
+			prewarm = prewarmModel
+		}
+		prewarm(dc.ModelID)
+	}
 	if err := d.Sup.Start(argv); err != nil {
 		d.log().Error("engine start failed",
 			slog.String("source", source), slog.String("error", err.Error()))
