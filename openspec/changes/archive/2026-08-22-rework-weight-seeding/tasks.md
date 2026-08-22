@@ -171,8 +171,8 @@
 
 - [x] 11.1 `pnpm build`, `pnpm test`, `pnpm synth` in `remote/`; `go test ./...
   -cover` and `gofmt` at the repo root.
-> 11.2–11.7 were run against a real AWS account (account 800260117131,
-> us-east-1) once the control plane was redeployed with the current code. Two
+> 11.2–11.7 were run against a real AWS account (us-east-1) once the control
+> plane was redeployed with the current code. Two
 > real bugs surfaced only by a live seed and are now fixed: the seeder bundle
 > was published to S3 as a zipped directory rather than the plain `.mjs` file
 > the boot script fetches and runs, so every seed failed at the first `node`
