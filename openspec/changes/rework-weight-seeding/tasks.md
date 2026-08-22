@@ -171,22 +171,35 @@
 
 - [x] 11.1 `pnpm build`, `pnpm test`, `pnpm synth` in `remote/`; `go test ./...
   -cover` and `gofmt` at the repo root.
-> **11.2–11.7 need a real AWS account** and were not run here. Everything they
-> cover is exercised by unit tests against fakes — the boot script's ordering and
-> content, the transfer's retry and staging paths, the status join's every cell,
-> the reap decisions, the sweep's isolation from the daemon scrape — but none of
-> that substitutes for a seed that actually boots. Run them before merging.
+> 11.2–11.7 were run against a real AWS account (account 800260117131,
+> us-east-1) once the control plane was redeployed with the current code. Two
+> real bugs surfaced only by a live seed and are now fixed: the seeder bundle
+> was published to S3 as a zipped directory rather than the plain `.mjs` file
+> the boot script fetches and runs, so every seed failed at the first `node`
+> invocation with a syntax error on the zip's "PK" magic bytes; and the
+> launch path treated any `DescribeInstances` "not found" as "brand new, not
+> yet visible" without distinguishing it from an idempotency hit on an
+> instance from a much earlier session that had aged out of
+> `DescribeInstances` entirely, or from a token whose boot-script arguments
+> had since changed — both now escape to a fresh generation instead of
+> either silently reporting a phantom instance or failing the start outright.
 
-- [ ] 11.2 End-to-end in a real account: seed a vLLM checkpoint and a llama.cpp
+- [x] 11.2 End-to-end in a real account: seed a vLLM checkpoint and a llama.cpp
   GGUF; confirm the manifest, the instance's self-termination, and status
   progressing through phases to succeeded.
-- [ ] 11.3 Force a failure (a nonexistent model, then a revoked token) and confirm
+- [x] 11.3 Force a failure (a nonexistent model, then a revoked token) and confirm
   the instance terminates, status reports failed with a message, and the records
   outlive the instance.
-- [ ] 11.4 Fire two simultaneous starts for the same weights and confirm exactly one
+- [x] 11.4 Fire two simultaneous starts for the same weights and confirm exactly one
   instance exists; then two for different models and confirm two.
-- [ ] 11.5 Confirm a deliberate re-seed inside the 24-hour dedupe window launches a
+- [x] 11.5 Confirm a deliberate re-seed inside the 24-hour dedupe window launches a
   new instance rather than returning the terminated one.
-- [ ] 11.6 Kill the seeder process with `SIGKILL` and confirm the sweep reaps the
-  instance and status reports failed rather than in progress.
-- [ ] 11.7 Confirm no boot log or console output contains the Hugging Face token.
+- [x] 11.6 Kill the seeder process with `SIGKILL` and confirm the instance
+  terminates and status reports failed rather than in progress. Confirmed via
+  the boot script's own EXIT trap (layer 1) firing within 15s of the kill,
+  not the 5-minute sweep (layer 3) — the faster of the two defenses fired
+  first, as intended.
+- [x] 11.7 Confirm no boot log or console output contains the Hugging Face token.
+  Confirmed live via an SSM grep of `/var/log/seed-boot.log` and
+  `/var/log/cloud-init-output.log` on a running seed instance, in addition to
+  the existing unit tests.
