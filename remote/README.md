@@ -246,11 +246,15 @@ companion that was never synced.
 
 ### First boot
 
-A wake is an instance launch, an **S3 sync of the weights** (~2–4 min,
-EBS-write-bound), then loading them into VRAM and warm-up — so roughly
-**8–10 minutes**, every time, with no Hugging Face dependency. The first
-request after a cold start also pays a one-off warm-up (~30 s); steady-state
-decode is around 28 tokens/s. Watch a wake:
+A wake is an instance launch, an **S3 sync of the weights**, then loading
+them into VRAM and warm-up. Two things keep that fast: the launch provisions
+the root volume's gp3 throughput to its ceiling (an unprovisioned gp3 caps at
+125 MiB/s, which used to throttle both the sync and the load), and the daemon
+pre-warms the page cache as the engine starts, so the ~26 GB of weights stream
+through once at line rate and the engine's copy is mostly cache hits. A cold
+boot is roughly **5–7 minutes** end to end, every time, with no Hugging Face
+dependency. The first request after a cold start also pays a one-off warm-up
+(~30 s); steady-state decode is around 28 tokens/s. Watch a wake:
 
 ```sh
 pnpm console                                 # SSM shell onto the running instance
@@ -305,10 +309,13 @@ the stop Lambda asks for that (via SSM) and **stops** the instance once
 Stopping (rather than terminating) keeps the boot disk and the weights the
 boot synced onto it, so the next `outfit remote start` **re-wakes** the
 instance — a boot without a fresh launch and a no-op S3 sync — instead of
-launching one from the AMI. The stopped instance is billed for its volume only,
-not compute, and the sweep **terminates** it once it has been stopped longer
-than `stopRetentionMinutes` (default 1 h): after that, the next start is a
-fresh launch again. `outfit remote pause` does the same stop on purpose.
+launching one from the AMI. The stop clears the page cache, but the daemon's
+pre-warm re-covers it on the engine start, so a re-wake loads the model in
+the same few minutes a cold boot does, minus the sync. The stopped instance
+is billed for its volume only, not compute, and the sweep **terminates** it
+once it has been stopped longer than `stopRetentionMinutes` (default 1 h):
+after that, the next start is a fresh launch again. `outfit remote pause`
+does the same stop on purpose.
 
 Sampling on the box is what makes this reliable: a busy endpoint that happens
 to have nothing in flight at the moment a 5-minute sweep lands used to read as

@@ -63,6 +63,17 @@ const TERMINAL_STATES = new Set(['shutting-down', 'terminated']);
 const HEALTH_COMMAND =
   `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${ENGINE_PORT}/health || true`;
 
+// gp3's unprovisioned baseline is 3,000 IOPS and 125 MiB/s of throughput —
+// whatever the "fast" reputation says, a default root volume streams at
+// ~125 MB/s. That ceiling is paid twice on a cold boot: the S3 sync writes the
+// weights through it, and the engine's model load reads them back through it
+// (the daemon prewarms the page cache, so that read is sequential and this is
+// its whole limit). Provisioning the top-end throughput cuts both; the IOPS
+// stay at the baseline because sequential work is throughput-bound. The cost
+// is a few dollars a month against a $1.86/hour GPU, billed only while the
+// volume exists.
+const ROOT_VOLUME_THROUGHPUT_MIBS = 1000;
+
 /** Narrow instance discovery to one environment's instance. */
 function envFilter(env: string) {
   return [{ Name: `tag:${ENV_TAG_KEY}`, Values: [env] }];
@@ -368,12 +379,12 @@ async function launchAcrossAzs(
   securityGroupId: string,
 ): Promise<{ instanceId: string } | { error: LambdaFunctionURLResult }> {
   // Pick the newest AMI baked for THIS runner (role + runner tags).
-  const amiId = await findLatestAmi([
+  const ami = await findLatestAmi([
     { Name: `tag:${AMI_ROLE_TAG_KEY}`, Values: [AMI_ROLE_TAG_VALUE] },
     { Name: `tag:${AMI_RUNNER_TAG_KEY}`, Values: [deployConfig.runner] },
     { Name: 'state', Values: ['available'] },
   ]);
-  if (!amiId) {
+  if (!ami) {
     return {
       error: jsonResponse(503, {
         state: 'no-ami',
@@ -387,13 +398,22 @@ async function launchAcrossAzs(
   for (const subnetId of SUBNET_IDS) {
     try {
       const instanceId = await runInstance({
-        imageId: amiId,
+        imageId: ami.imageId,
         instanceType: INSTANCE_TYPE,
         subnetId,
         securityGroupId,
         instanceProfileArn: INSTANCE_PROFILE_ARN,
         userData,
         tags: { Name: `cloud-vm-llm-${env}`, [TAG_KEY]: TAG_VALUE, [ENV_TAG_KEY]: env },
+        // A 0 means the AMI declared no readable root mapping — launching the
+        // AMI's root as-is is then the only safe choice.
+        rootVolume:
+          ami.rootVolumeSizeGb > 0
+            ? {
+                volumeSize: ami.rootVolumeSizeGb,
+                throughput: ROOT_VOLUME_THROUGHPUT_MIBS,
+              }
+            : undefined,
       });
       console.log(JSON.stringify({ phase: 'launched', environment: env, instanceId, subnetId }));
       return { instanceId };
