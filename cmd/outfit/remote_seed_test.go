@@ -302,7 +302,7 @@ func TestRemoteSeed_UnknownSubcommand(t *testing.T) {
 }
 
 func TestRemoteSeed_NoSubcommandShowsUsage(t *testing.T) {
-	err := cmdRemoteSeed(nil)
+	err := cmdRemoteSeed([]string{})
 	if err == nil || !strings.Contains(err.Error(), "start|status|ls|stop") {
 		t.Errorf("want usage, got %v", err)
 	}

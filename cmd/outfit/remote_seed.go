@@ -2,37 +2,43 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/lucinate-ai/outfit/internal/remote"
+	"github.com/spf13/cobra"
 )
 
-// cmdRemoteSeed dispatches the seed subcommands. Seeds are account-wide — one
+// remoteSeedCmd is the seed subcommand parent. Seeds are account-wide — one
 // model seeded once serves every environment that names it — so unlike the
 // other remote subcommands these do not act on an environment. What to seed
 // still comes from an Outfit, resolved exactly as `outfit remote deploy`
 // resolves it, so seeding and deploying in the same directory always speak
 // about the same model.
-func cmdRemoteSeed(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote seed <start|status|ls|stop> [args]")
+func remoteSeedCmd() *cobra.Command {
+	seed := &cobra.Command{
+		Use:                "seed",
+		Short:              "start, watch and stop model weight seeds",
+		Args:               cobra.ArbitraryArgs,
+		DisableFlagParsing: true,
+		SilenceErrors:      true,
+		SilenceUsage:       true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			if len(args) == 0 {
+				return fmt.Errorf("usage: outfit remote seed <start|status|ls|stop> [args]")
+			}
+			return fmt.Errorf("unknown seed subcommand %q (expected start, status, ls or stop)", args[0])
+		},
 	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "start":
-		return cmdRemoteSeedStart(rest)
-	case "status":
-		return cmdRemoteSeedStatus(rest)
-	case "ls", "list":
-		return cmdRemoteSeedList(rest)
-	case "stop":
-		return cmdRemoteSeedStop(rest)
-	default:
-		return fmt.Errorf("unknown seed subcommand %q (expected start, status, ls or stop)", sub)
-	}
+	seed.AddCommand(
+		remoteSeedStartCmd(),
+		remoteSeedStatusCmd(),
+		remoteSeedListCmd(),
+		remoteSeedStopCmd(),
+	)
+	return seed
 }
 
 // seedControlConfig finds the control plane. The seed endpoints are shared
@@ -50,23 +56,36 @@ func seedControlConfig(ctx context.Context, region string) (remote.Config, error
 	return layer.Config, nil
 }
 
-func cmdRemoteSeedStart(args []string) error {
-	fs := flag.NewFlagSet("remote seed start", flag.ContinueOnError)
+func remoteSeedStartCmd() *cobra.Command {
 	var (
 		force    bool
 		revision string
 		region   string
 	)
+	c := &cobra.Command{
+		Use:               "start",
+		Short:             "seed a model's weights into S3",
+		Args:              cobra.ArbitraryArgs,
+		SilenceErrors:     true,
+		SilenceUsage:      true,
+		ValidArgsFunction: aliasSlot,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteSeedStart(args, force, revision, region)
+		},
+	}
+	fs := c.Flags()
 	fs.BoolVar(&force, "force", false, "seed weights that are already stored, replacing them")
 	fs.StringVar(&revision, "revision", "", "commit or branch to fetch (default: the repository's default branch)")
 	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
-	}
+	return c
+}
 
+// runRemoteSeedStart is the body of `outfit remote seed start`.
+func runRemoteSeedStart(args []string, force bool, revision, region string) error {
 	// Like deploy, this reads the Outfit for what to seed, so it always needs
 	// one — there is nothing else that says which model.
-	sel, outfitPath, err := readOutfit("outfit remote seed start <file>", outfitArg(fs))
+	sel, outfitPath, err := readOutfit("outfit remote seed start <file>", outfitArg(args))
 	if err != nil {
 		return err
 	}
@@ -112,14 +131,26 @@ func cmdRemoteSeedStart(args []string) error {
 	return nil
 }
 
-func cmdRemoteSeedStatus(args []string) error {
-	fs := flag.NewFlagSet("remote seed status", flag.ContinueOnError)
+func remoteSeedStatusCmd() *cobra.Command {
 	var region string
-	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:           "status <seed-id>",
+		Short:         "report a seed's progress",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteSeedStatus(args, region)
+		},
 	}
-	seedID := fs.Arg(0)
+	c.Flags().StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
+	return c
+}
+
+// runRemoteSeedStatus is the body of `outfit remote seed status`.
+func runRemoteSeedStatus(args []string, region string) error {
+	seedID := outfitArg(args)
 	if seedID == "" {
 		return fmt.Errorf("usage: outfit remote seed status <seed-id> (list them with `outfit remote seed ls`)")
 	}
@@ -171,14 +202,26 @@ func isTerminalSeedState(state string) bool {
 	return state == "succeeded" || state == "failed" || state == "stopped"
 }
 
-func cmdRemoteSeedList(args []string) error {
-	fs := flag.NewFlagSet("remote seed ls", flag.ContinueOnError)
+func remoteSeedListCmd() *cobra.Command {
 	var region string
-	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:           "ls",
+		Aliases:       []string{"list"},
+		Short:         "list seeds",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteSeedList(region)
+		},
 	}
+	c.Flags().StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
+	return c
+}
 
+// runRemoteSeedList is the body of `outfit remote seed ls`.
+func runRemoteSeedList(region string) error {
 	ctx := context.Background()
 	cfg, err := seedControlConfig(ctx, region)
 	if err != nil {
@@ -201,14 +244,26 @@ func cmdRemoteSeedList(args []string) error {
 	return nil
 }
 
-func cmdRemoteSeedStop(args []string) error {
-	fs := flag.NewFlagSet("remote seed stop", flag.ContinueOnError)
+func remoteSeedStopCmd() *cobra.Command {
 	var region string
-	fs.StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
-	if err := fs.Parse(sortFlagsBeforeArgs(fs, args)); err != nil {
-		return err
+	c := &cobra.Command{
+		Use:           "stop <seed-id>",
+		Short:         "stop a running seed",
+		Args:          cobra.ArbitraryArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(c *cobra.Command, args []string) error {
+			resolve(c)
+			return runRemoteSeedStop(args, region)
+		},
 	}
-	seedID := fs.Arg(0)
+	c.Flags().StringVar(&region, "region", "", "AWS region of the control plane (default: AWS_REGION or us-east-1)")
+	return c
+}
+
+// runRemoteSeedStop is the body of `outfit remote seed stop`.
+func runRemoteSeedStop(args []string, region string) error {
+	seedID := outfitArg(args)
 	if seedID == "" {
 		return fmt.Errorf("usage: outfit remote seed stop <seed-id>")
 	}
@@ -258,3 +313,5 @@ func humanAge(seconds int) string {
 		return fmt.Sprintf("%dh%dm", seconds/3600, (seconds%3600)/60)
 	}
 }
+
+func cmdRemoteSeed(args []string) error { return execCmd(remoteSeedCmd(), args) }

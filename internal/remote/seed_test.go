@@ -327,7 +327,7 @@ func TestConfig_SeedURLOverride(t *testing.T) {
 // `outfit remote seed` reported "no seed_url configured" against every real
 // deployment while the stubbed CLI tests passed.
 func TestControlPlaneFromOutputs_CarriesEveryURL(t *testing.T) {
-	layer, err := controlPlaneFromOutputs(map[string]string{
+	layer, err := controlPlaneFromOutputs("cloud-vm-llm", map[string]string{
 		"StartUrl":      "http://start",
 		"StopUrl":       "http://stop",
 		"DeployUrl":     "http://deploy",
@@ -336,7 +336,7 @@ func TestControlPlaneFromOutputs_CarriesEveryURL(t *testing.T) {
 		"SeedUrl":       "http://seed",
 		"Region":        "eu-west-1",
 		"WeightsBucket": "bucket",
-	}, "cloud-vm-llm")
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,11 +363,11 @@ func TestControlPlaneFromOutputs_CarriesEveryURL(t *testing.T) {
 // A control plane deployed before the seed Lambda existed still works for every
 // other subcommand; only the seed subcommand complains, and it says what to add.
 func TestControlPlaneFromOutputs_ToleratesAnOlderStack(t *testing.T) {
-	layer, err := controlPlaneFromOutputs(map[string]string{
+	layer, err := controlPlaneFromOutputs("cloud-vm-llm", map[string]string{
 		"StartUrl":  "http://start",
 		"StopUrl":   "http://stop",
 		"DeployUrl": "http://deploy",
-	}, "cloud-vm-llm")
+	})
 	if err != nil {
 		t.Fatalf("an older stack must still resolve: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestControlPlaneFromOutputs_ToleratesAnOlderStack(t *testing.T) {
 }
 
 func TestControlPlaneFromOutputs_RejectsAStackMissingTheControlURLs(t *testing.T) {
-	_, err := controlPlaneFromOutputs(map[string]string{"StartUrl": "http://start"}, "cloud-vm-llm")
+	_, err := controlPlaneFromOutputs("cloud-vm-llm", map[string]string{"StartUrl": "http://start"})
 	if err == nil || !strings.Contains(err.Error(), "missing its control-URL outputs") {
 		t.Errorf("want a missing-outputs error, got %v", err)
 	}
