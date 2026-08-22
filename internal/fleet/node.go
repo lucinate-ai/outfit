@@ -39,6 +39,16 @@ const (
 	OutcomeUnsupported Outcome = "unsupported"
 )
 
+// ProgressStarter is an optional node capability: a start whose call reports
+// its situation as it works, one status line at a time. A node whose start is
+// a single request and a single reply (a daemon that queues the work and
+// returns) has no such situation and does not implement it. A caller that can
+// show progress (the dashboard) asserts for it and falls back to Start when
+// it is absent.
+type ProgressStarter interface {
+	StartWithProgress(ctx context.Context, progress func(string)) (daemon.StatusResponse, error)
+}
+
 // Node is one member of the fleet. Only daemonNode implements it today; the
 // interface exists so a remote-environment kind (an `outfit remote`
 // environment read through its stats Lambda, which already yields

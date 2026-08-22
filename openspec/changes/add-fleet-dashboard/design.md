@@ -45,23 +45,30 @@ See proposal.md — Why. The shapes that constrain the design:
 
 ## Decisions
 
-### Bubble Tea, with lipgloss and bubbles' viewport
+### Bubble Tea and lipgloss; grid overflow is the model's own row math
 
 The TUI framework is `charmbracelet/bubbletea` (the Elm-architecture program
-loop), `lipgloss` for the framed panels, and `bubbles/viewport` for grid
-overflow. Alternatives:
+loop) and `lipgloss` for the framed panels. Grid overflow was planned on
+`bubbles/viewport` and dropped while implementing: lipgloss 1.x's `MaxWidth`
+mangles the border it is combined with, its `Width` wraps long lines (which
+breaks the shared bar block's alignment), so each tile line is hard-cut
+anyway — and with every line already exactly tile-width, scrolling the grid
+is one integer (the first visible row) plus a slice of the already-rendered
+rows. Owning that integer in the model is less code than driving a widget,
+and the layout becomes a pure function the tests table directly. Alternatives:
 
 - **Hand-rolled over `golang.org/x/term`**: measured +17 KB stripped / +3 KB
   gzipped, against +790 KB stripped / +227 KB gzipped for the Bubble Tea stack.
   Size is not the deciding factor either way — on a 6 MB download the difference
-  is 0.05% vs 3.7%. The hand-rolled option means owning raw-mode terminal code
+  is 0.05% vs 3.7% (final landing, with `bubbles` dropped: +383 KB stripped /
+  +107 KB gzipped, ≈1.8%). The hand-rolled option means owning raw-mode terminal code
   (Ctrl+C is byte `0x03` in raw mode, not a signal; arrow keys are `ESC [ A`
-  sequences with a bare-ESC disambiguation window; terminal size must be re-read
-  on resize) and re-owning it as the deferred features (log pane, filter,
-  multi-select) grow the key surface. Bubble Tea's model/update/view split also
-  makes the interesting logic — selection, confirmation, refresh scheduling — a
-  pure function testable in-process with `tea.TestProgram`, while the terminal
-  layer stays untested glue either way.
+   sequences with a bare-ESC disambiguation window; terminal size must be re-read
+   on resize) and re-owning it as the deferred features (log pane, filter,
+   multi-select) grow the key surface. Bubble Tea's model/update/view split also
+   makes the interesting logic — selection, confirmation, refresh scheduling — a
+   pure function testable in-process (its test stack, `x/exp/teatest`), while
+   the terminal layer stays untested glue either way.
 - The repo's per-surface-framework precedent (Cobra for the command tree, Viper
   for the env binding) is the same category of decision: the TUI framework owns
   the interactive surface end to end.
@@ -89,17 +96,50 @@ be built (an unresolved token reference) is held as a standing
 never entered into the live set.
 
 Each refresh is a `tea.Cmd` running in its own goroutine:
-`FanOutNodes(ctx, fleet.MetricsCall, nodes)` with a context deadline of one
-refresh interval, wrapped so the result arrives as a message tagged with a
-generation number. Two invariants fall out of that shape:
+`FanOutNodes(ctx, fleet.MetricsCall, nodes)` with a context deadline of the
+group's interval, wrapped so the result arrives as a message tagged with a
+generation number. The nodes split into two groups by the fleet file's own
+`kind` (the entry's, not the `Node` contract's — no interface change):
 
-- **No overlap.** A tick that arrives while a refresh is in flight is dropped; a
-  stale result (generation older than the model's) is discarded, so a slow round
-  can never paint over a fast one.
+- The **local machines** (`kind: daemon`, the default) refresh on the tick —
+  a short interval, seconds, because each read is a socket to a machine on
+  the sideboard.
+- The **cloud environments** (`kind: remote`) refresh on a slower deadline —
+  a minute. Each of their statuses is a signed call through the control
+  plane, a Lambda invocation, so the board would spend real calls polling a
+  neighbor's pace for nothing: scale-to-zero instances change state on the
+  scale of minutes, not seconds. The deadline moves when the cloud round
+  starts; the tick checks it and starts the cloud round only when it has
+  passed. On a cold open it has never been spent, so the first tick starts
+  both groups.
+
+The cadence is the group's: the tick reschedules itself whenever it fires —
+one tick, one due round per group — and a round starts in a group only when
+none of the group's rounds is in flight. (A one-shot `tea.Tick` with no
+reschedule leaves the board still after the second round: the first round
+comes from `Init`, the tick starts the second, and nothing ever starts a
+third.) `r` refreshes at the operator's request and is due for every node,
+cloud or local, whatever the deadlines say. Two invariants fall out of that
+shape, each per group:
+
+- **No overlap.** A tick that arrives while a group's round is in flight
+  reschedules but does not start a second one for that group; a stale result
+  (generation older than the group's) is discarded, so a slow round can never
+  paint over a fast one. The groups' generations are separate, so a cloud
+  round taking its whole minute never withholds the local rounds.
 - **No hostage.** The deadline is the per-node budget: a node that has not
-  answered within one interval is shown with its outcome this round (the
-  classification `fanOutEach`/`classify` already gives timeouts) and retried
-  next tick, while the rest of the fleet keeps its cadence.
+  answered within its group's interval is shown with its outcome this round
+  (the classification `fanOutEach`/`classify` already gives timeouts) and
+  retried next round, while the rest of the fleet keeps its cadence. A slow
+  cloud round stretches only the cloud group's cycle.
+
+One bubbletea wrinkle the shape depends on: the program must hold the model
+by **pointer**. With a value model, `Init`'s mutations (the rounds it starts,
+their generations) happen on the receiver copy and the program never reads it
+back, so the first round's answers — for remote environments, real control-
+plane calls — would be discarded as stale, and the cloud deadline's first
+spend would not count. `Update` returns its mutated model, so it is the only
+safe door; `Init` is not.
 
 `StatusCall` is not also fetched: `metrics.Stats` already carries state, runner,
 model, uptime and last-active, so one read per node per round answers the panel.
@@ -122,30 +162,63 @@ is the guard, and the status line shows the control plane's own wording.
 
 ### Actions and the confirmation state
 
-The model has one action state machine, shared by start and stop:
+Each node has its own action state — the model keeps one `dashAction`
+(the verb and the call's latest status line) beside each entry — and the
+confirmation belongs to the node under the cursor:
 
-- idle → `s`: start command runs; `actionInFlight` suppresses further action
-  keys (navigation and refresh still work); the reply sets the status line.
-- idle → `x`: `confirmStop` enters; the footer swaps its key help for
-  `stop <name>? y/n`; every key but `y`/`n`/escape is ignored; `y` sends the
-  stop (same in-flight handling), `n`/escape return to idle with nothing sent.
+- node idle → `s` on it: the start command runs on its own goroutine. The
+  node's `dashAction` records the verb from that moment; a second `s` on the
+  same node is refused (the status line says it is still starting), but the
+  operator can move to another node and start it — actions are per node, so
+  two cloud wakes run side by side rather than the board waiting out the
+  slowest cloud.
+- node idle → `x` on it: `confirmStop` enters; the footer swaps its key help
+  for `stop <name>? y/n`; every key but `y`/`n`/escape is ignored; `y` sends
+  the stop (same in-flight handling), `n`/escape return with nothing sent.
+- in flight → the call's reply clears the node's `dashAction` (the tile
+  returns to the node's next report) and sets the status line.
+
+The in-flight start is the dashboard's one piece of cross-goroutine
+conversation. The call runs in a Bubble Tea command — its own goroutine,
+with no deadline of its own, because a cold cloud wake takes minutes and a
+deadline would report a failure to a slow success — and a `kind: remote`
+start reports a line on every retry ("instance starting; retrying in Ns").
+The lines would die with the call if the dashboard dropped them, as the one-
+shot `fleet start` does; so `remoteNode` implements an optional
+`fleet.ProgressStarter` alongside the plain `Node` verbs, and `beginAction`
+asserts for it — a daemon node's start is one POST and one reply and does not
+implement it, and the assertion is what keeps the `Node` contract and every
+existing driver untouched. The model feeds the lines back through a `send`
+field: the `tea.Program`'s `Send`, safe from any goroutine and a no-op once
+the program has left, so a start that outlives the view reports into nothing
+rather than panicking. The lines land as `dashActionProgressMsg`s, the
+handler stores the latest on the node's `dashAction`, and the tile renders
+it — the verb plus the latest line, in place of the node's last report, for
+the life of the call. A node that reports nothing shows the verb alone.
 
 The status line is a single string the model owns; a refresh does not clear it
-(the operator may have just read it), the next action replaces it, and it is
-rendered at most to the footer width.
+(the operator may have just read it), the next finished action replaces it,
+and it is rendered at most to the footer width. It carries outcomes, not
+progress: with two wakes in flight the footer is still one line, and the
+boots are watched on their own tiles.
 
-### Layout: fixed tile size, grid fills the frame, viewport scrolls the overflow
+### Layout: fixed tile size, grid fills the frame, the model scrolls the overflow
 
-The tile is a fixed content size (width chosen so the widest token line fits with
-margin, height so the full bar block — header, last-active, resource bars, token
-lines — fits without clipping), framed by a lipgloss rounded border; the selected
-tile's border is recolored. Columns = the most tiles that fit across the
-terminal width, rows = the most that fit between the header and footer lines;
-both minimum one. When the node count exceeds columns × rows, the whole grid is
-rendered and placed in the `bubbles/viewport`, which the model drives directly:
-`j`/`k` move the selection in file order (no wrapping) and, when they cross a
-row boundary, `SetY` scrolls the viewport to keep the selected tile visible;
-page-up/page-down scroll a viewport height. The terminal size comes from
+The tile is a fixed content size, framed by a lipgloss rounded border; the
+selected tile's border is recolored. The geometry is chosen off the shared
+bar block: content 42×12 — the bar line is 41 columns, which is the width
+constraint, and a running node with one GPU fills all 12 lines exactly
+(header, serving, last-active, four bars, separator, four token lines) — so
+the frame is 44×14 and rows sit one apart. Columns = the most tiles that fit
+across the terminal width, visible rows = the most that fit between the
+header and footer lines; both minimum one. When the node count exceeds the
+visible grid, the model holds the first visible row and renders that slice of
+the rows: `j`/`k` move the selection in file order (no wrapping) and, when the
+selection's row leaves the visible slice, the scroll row moves so the tile
+stays visible; page-up/page-down step a visible-row height; the scroll row is
+clamped to the grid's extent. Every line is hard-cut to the tile width with an
+ANSI-aware cut (`x/ansi`), so a long model id or error message degrades to
+truncation rather than reflow. The terminal size comes from
 `tea.WindowSizeMsg` (default 80×24 until the first one), and the frame is
 recomputed on every size message.
 
@@ -175,10 +248,10 @@ surface `--watch` already fills.
   clamping, the stop-confirm flow (declined, confirmed, escape), start/stop
   dispatch to an injected node set (a fake `fleet.Node` over in-memory state, as
   `fleet`'s own tests do), status-line outcomes, and stale-generation discard.
-- **Program level**: `tea.TestProgram` end-to-end with the fake nodes — cold
-  fleet opens, `s` brings a node to running across refresh ticks (the interval
-  var, like `fleetLogsInterval`, is a test variable), stop-confirm down to
-  stopped, quit exits 0.
+- **Program level**: `teatest.NewTestModel` end-to-end with the fake nodes —
+  cold fleet opens, `s` brings a node to running across refresh ticks (the
+  interval var, like `fleetLogsInterval`, is a test variable), stop-confirm
+  down to stopped, quit exits 0.
 - **CLI level**: the non-TTY guard through the existing command seam (stdout to a
   buffer → error naming watch mode), and a fleet-file failure before any
   terminal interaction.

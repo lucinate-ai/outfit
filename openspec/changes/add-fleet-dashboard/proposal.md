@@ -20,9 +20,12 @@ them (lucinate-ai/outfit#59).
   Ctrl+C with the terminal restored on every exit path.
 - The dashboard is usable from cold: it opens on a fleet where nothing is reachable,
   shows each node's outcome, and starts nodes from within.
-- New runtime dependencies: `charmbracelet/bubbletea`, `lipgloss`, and `bubbles`
-  (viewport) — outfit's first UI framework. Measured cost on the shipped binary:
-  about 227 KB gzipped (≈3.7% of the ~6 MB download).
+- New runtime dependencies: `charmbracelet/bubbletea` and `lipgloss` —
+  outfit's first UI framework — plus `charmbracelet/x/ansi` (ANSI-aware line
+  clipping) and `golang.org/x/term` (the TTY check). `charmbracelet/bubbles` is
+  not needed: overflow scrolling is row math the model owns. Cost on the
+  shipped binary, measured on the final dependency set: +383 KB stripped /
+  +107 KB gzipped (≈1.8% of the ~6 MB download).
 - `fleet metrics --watch` and every other fleet surface stay unchanged — the watch
   mode remains the simple non-interactive redraw for piped and background use.
 
@@ -48,9 +51,9 @@ them (lucinate-ai/outfit#59).
   shared `Config.NewNode` constructor, then drives the existing explicit
   `FanOutNodes` per refresh with the existing metrics call, and drives
   `Node.Start`/`Node.Stop` for actions. No new endpoints, no contract change.
-- `go.mod`: bubbletea, lipgloss, bubbles and their transitive dependencies
-  (termenv, uniseg, cancelreader, terminfo; `x/term`/`x/sys` via them). No AWS, no
-  cgo.
+- `go.mod`: bubbletea, lipgloss, x/ansi and their transitive dependencies
+  (termenv, uniseg, cancelreader, terminfo; `x/term` and `x/sys` for the TTY
+  check). No AWS, no cgo.
 - The daemon, the remote control plane, the `Node` contract, and every existing
   command's output are untouched.
 - Out of scope, deferred: pause (#119), per-node log tailing, deploy-config push

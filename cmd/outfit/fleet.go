@@ -26,10 +26,11 @@ import (
 // commands in the tree, so only the unknown and the bare cases reach here.
 func fleetParentFallback(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit fleet <status|metrics|logs|route|start|stop> [node] [--fleet <path>]")
+		return fmt.Errorf("usage: outfit fleet <status|metrics|logs|dashboard|route|start|stop> [node] [--fleet <path>]")
 	}
 	return fmt.Errorf(
-		"unknown fleet subcommand %q (expected status, metrics, logs, route, start or stop)", args[0])
+		"unknown fleet subcommand %q (expected status, metrics, logs, dashboard, route, start or stop)",
+		args[0])
 }
 
 // cmdFleet runs the fleet subcommands through the tree — the seam the suite
