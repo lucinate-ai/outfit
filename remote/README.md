@@ -27,8 +27,13 @@ The instance is **stateless**, and responsibilities are split cleanly:
   prebuilt CUDA `llama-server` for llama.cpp. No Docker. Both are
   model-agnostic and rarely change.
 - The **model weights** live in an **S3 bucket**, put there by a disposable
-  seed job that downloads from Hugging Face entirely within AWS. You do not run
-  it by hand: deploying a model whose weights are missing starts it for you.
+  seed job that streams them from Hugging Face entirely within AWS. You do not
+  run it by hand: deploying a model whose weights are missing starts it for you,
+  and `outfit remote seed` starts, follows, lists and stops one directly. The
+  seed runs on a **stock Amazon Linux image** — it needs no bake — reports its
+  progress and outcome to CloudWatch, and terminates itself on success and on
+  failure alike. A prefix is complete when it holds a `_seed.json` manifest,
+  which also records the exact revision the weights came from.
 - At boot the instance **syncs the weights from S3** onto its disk (~2–4 min)
   and starts the engine pointed at them.
 
@@ -140,8 +145,9 @@ pnpm run deploy        # deploys the control-plane stack (Lambdas, VPC, S3 bucke
   names (its EIP, API key, ingress scoped to your `--allowed-cidr`, defaulting
   to your public IP), registers it under `~/.config/outfit/remotes/<env>/`, and
   tells it what to serve. If those weights are not in S3 it starts the seed job
-  itself (~15–20 min, all within AWS) and says so; wait for it before the first
-  `start`.
+  itself, all within AWS, and prints the command that follows it — wait for the
+  seed to reach `succeeded` before the first `start`, since a wake before then
+  would sync an incomplete prefix.
 
 > Use `pnpm run deploy`, not `pnpm deploy` — the latter is pnpm's own built-in
 > `deploy` command. And don't pass `-c` flags through it: pnpm appends extra
@@ -161,7 +167,14 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `availabilityZones` | `us-east-1b,c,d,e` | g6e zones the start Lambda tries, in order |
 | `hfToken` | *(empty)* | Only for gated repos; used only when seeding |
 | `instanceType` | `g6e.xlarge` | Runtime GPU type, 1× L40S 48 GB, ~$1.86/hr |
-| `builderInstanceType` | `m5.xlarge` | Cheap non-GPU type used to bake the AMI and to seed |
+| `builderInstanceType` | `m5.xlarge` | Cheap non-GPU type used to bake the AMI |
+| `seedInstanceType` | `c7g.large` | Seed job type. Avoid the t-family: a sustained pull exhausts its CPU and network burst credits |
+| `maxSeedMinutes` | `60` | Hard cap on a seed's life — the boot script's `shutdown -h +N` and the sweep read this one value |
+| `seedStallMinutes` | `10` | Silence after which a seed is treated as stalled and reaped early |
+| `maxConcurrentSeeds` | `3` | Bound on seeds in flight, so a caller in a loop cannot launch unbounded compute |
+| `seedLogRetentionDays` | `3` | Seed records — longer than engine logs, since they record what is in the bucket and why |
+| `logRetentionDays` | `1` | Per-engine and boot logs — short, since they exist to catch a short-lived instance's crash, not for audit |
+| `lambdaLogRetentionDays` | `3` | The control Lambdas' own execution logs — without this, Lambda auto-creates a log group with no retention and keeps every invocation forever |
 | `imageVolumeGb` | `80` | AMI root — fits the OS + engine + the model synced at boot |
 | `llamacppRelease` | `b10435` | Pinned ai-dock/llama.cpp-cuda build baked into the llama.cpp AMI |
 | `vllmVersion` | `0.26.0` | vLLM version installed into that AMI's venv (`uv pip install`) |
@@ -359,10 +372,40 @@ coding a day lands around $90/month. Full breakdown in
   first deploy.
 - **Force a fresh AMI** (same config): just `pnpm bake <runner>` — the runtime
   launches the newest tagged AMI.
-- **Force a re-seed** of weights already in S3:
-  `outfit remote deploy --reseed` (the deploy Lambda otherwise seeds only what
-  is missing). It re-fetches the weights the Outfit names and costs a
-  ~20-minute seed instance, so it is never the default.
+- **Seeding weights**: `outfit remote seed start` fetches the model an Outfit
+  names into S3, and `outfit remote seed status <seed-id>` follows it. Deploying
+  starts a seed automatically when the weights are missing and prints the id to
+  follow. Other subcommands: `outfit remote seed ls` (what is in flight, with
+  progress) and `outfit remote seed stop <seed-id>`.
+- **Force a re-seed** of weights already in S3: either `outfit remote seed
+  start --force`, or `outfit remote deploy --reseed` to re-fetch and redeploy
+  in one step. An ordinary start/deploy does nothing when the weights are
+  already there.
+- **Pin the revision** a seed fetches: `outfit remote seed start --revision
+  <commit>`. Without one, the repository's default branch is used and the commit
+  it resolved to is recorded in the prefix's `_seed.json`.
+
+### Migrating weights seeded before the manifest
+
+A prefix is now judged complete by the `_seed.json` manifest the seeder writes
+last, replacing a per-runner sentinel file. Weights seeded by the old script
+carry no manifest, so **they read as absent and are seeded once more** the next
+time they are deployed. That is a real one-off cost in time and transfer for a
+populated bucket, and it is the intended behaviour: nothing recorded that those
+files are complete, which revision they came from, or what they should hash to.
+
+There is deliberately **no backfill helper**. Writing a manifest over files that
+nobody verified would assert exactly the guarantee the manifest exists to make
+real. If you would rather not re-seed, the honest options are to leave the old
+prefix in place unused, or to re-seed it deliberately with
+`outfit remote seed start --force`.
+
+> **Rotate your Hugging Face token** if you ran the old seed with one. It fetched
+> the token into a shell variable under `set -x`, and bash's xtrace expands
+> assignments from command substitution — so the token's value was written into
+> `/var/log/cloud-init-output.log` and the EC2 console output of every seed
+> instance. The current seeder reads the secret in-process and never puts it in a
+> shell.
 
 ### Diagnostics
 
@@ -442,8 +485,16 @@ deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
   changed a baked-in setting without bumping the `version` on the recipe (or
   component) in `lib/image-stack.ts`. Bump and redeploy.
 - **`start` reaches `running` but never `ready`, or the model is empty**: the
-  weights aren't in S3 yet, or a seed is still running. Check
-  `aws s3 ls s3://<bucket>/models/<runner>/<model>/`.
+  weights aren't in S3 yet, or a seed is still running. Ask the seed:
+  `outfit remote seed ls`, then `outfit remote seed status <seed-id>`. A seed
+  reports `failed` with a reason even after its instance is gone, so this works
+  for a seed that died as well as one still going.
+- **A seed failed**: `outfit remote seed status <seed-id>` names the reason. The
+  underlying records are in the `/cloud-vm-llm/seed` log group under stream
+  `<seed-id>/<instance-id>` and outlive the instance. Common causes are a gated
+  repository with no `hfToken` configured, a quant whose selection matches more
+  than one file (split quants are refused rather than half-seeded), and a
+  checksum mismatch.
 - **Quota errors on launch**: see the GPU quota warning above.
 - **`start` times out repeatedly**: `pnpm console` onto the instance and read
   `tail -50 /var/lib/outfit/daemon/engine.log` (or `/cloud-vm-llm/llamacpp` in

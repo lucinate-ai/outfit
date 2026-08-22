@@ -1,7 +1,7 @@
 /**
  * vLLM's runner spec: whole-checkpoint weights served from the model
- * directory, the API key delivered by env file (wired into the daemon unit
- * via EnvironmentFile), and the venv that makes its AMI the seed's host.
+ * directory, and the API key delivered by env file (wired into the daemon unit
+ * via EnvironmentFile).
  */
 
 import { daemonBoot, daemonDeployConfig } from './daemon-boot';
@@ -13,15 +13,9 @@ export const vllm: RunnerSpec = {
   // vLLM serves the whole synced checkpoint directory.
   syncedModelPath,
 
-  // config.json is part of every checkpoint and synced last-ish; its presence
-  // under the prefix marks a complete seed. vLLM uses no companions, so the
-  // sentinel is the whole expected set.
-  weightsKeys: (_cfg, weightsPrefix) => [`${weightsPrefix}config.json`],
-
-  // The whole safetensors checkpoint, straight into the model dir.
-  seedDownload: () =>
-    `/opt/llm/venv/bin/python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['MODEL_ID'], local_dir='/opt/llm/model', token=(os.environ.get('HF_TOKEN') or None))"
-`,
+  // The whole checkpoint. vLLM loads config, tokeniser and weights from the
+  // directory, so there is nothing to filter out.
+  seedSelection: () => ({ include: ['*'] }),
 
   // vLLM serves a whole checkpoint and has no companion-file flags of its own,
   // so a companion named for a vLLM deployment is seeded but unused rather
@@ -44,7 +38,4 @@ VLLM_USE_FLASHINFER_SAMPLER=0
 ENVFILE
 
 ${daemonBoot(daemonDeployConfig(cfg, syncedModelPath(modelDir), port, ['--gpu-memory-utilization', '0.92']), 'EnvironmentFile=/etc/vllm.env\n')}`,
-
-  // The vLLM AMI carries the Python venv with huggingface_hub.
-  seedTooling: true,
 };

@@ -8,6 +8,7 @@
  */
 
 import type { DeployConfig } from '../shared/deploy-config';
+import type { SeedSelection } from '../shared/seed/contract';
 
 export interface RunnerSpec {
   /**
@@ -17,25 +18,15 @@ export interface RunnerSpec {
    */
   syncedModelPath(modelDir: string): string;
   /**
-   * Every S3 key (under the weights prefix) that must exist for this config's
-   * weights to count as complete: the runner's sentinel plus one per named
-   * companion. A bare list-under-the-prefix would also match the debris of a
-   * failed or in-flight seed, so specific keys are checked instead — they are
-   * written last, by the seed's S3 sync.
+   * Which of the model repository's files this runner needs, as a declarative
+   * selection the seeder applies. Deliberately not a boot-script fragment:
+   * the seeder is runner-agnostic, so adding a runner never means writing
+   * shell, and the selection is unit-testable without rendering a script.
    *
-   * Companions must be included, not just the sentinel. The weights prefix is
-   * derived from (runner, modelId, quant), so adding a companion does not
-   * change it: checking the sentinel alone would find the earlier seed's
-   * main weights, skip the re-seed, and start an instance whose companion
-   * flag points at a file that was never synced.
+   * Completeness of a seed is NOT a per-runner question — it is the manifest
+   * (`_seed.json`), written last by the seeder — so there is no sentinel here.
    */
-  weightsKeys(cfg: DeployConfig, weightsPrefix: string): string[];
-  /**
-   * Seed boot-script fragment that downloads this runner's weights from
-   * Hugging Face into /opt/llm/model, using the $MODEL_ID/$HF_TOKEN
-   * environment the seed header exports.
-   */
-  seedDownload(cfg: DeployConfig): string;
+  seedSelection(cfg: DeployConfig): SeedSelection;
   /**
    * The flags naming this runner's companion weights on disk, given where the
    * weights were synced. Role -> flag is runner knowledge, so it lives here
@@ -53,10 +44,4 @@ export interface RunnerSpec {
    * `outfit daemon`.
    */
   daemonBoot(cfg: DeployConfig, modelDir: string, port: number): string;
-  /**
-   * Whether this runner's AMI carries the Python venv (huggingface_hub) the
-   * seed job runs on. The seed launches the first runner that does,
-   * whatever runner the weights are for.
-   */
-  seedTooling: boolean;
 }

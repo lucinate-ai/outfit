@@ -1,28 +1,35 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DeployConfig } from '../lambda/shared/deploy-config';
+import type { SeedManifest } from '../lambda/shared/seed/contract';
 
-// The set of keys the fake bucket contains. Each test sets it.
-let present = new Set<string>();
-const headed: string[] = [];
+/**
+ * Presence is judged by the manifest the seeder writes last, so the fake bucket
+ * holds manifests rather than a set of keys. The behaviours asserted here are
+ * the same ones the key-probe implementation guaranteed — in particular that a
+ * companion named after an earlier seed makes the weights count as absent.
+ */
+let manifests = new Map<string, SeedManifest>();
+const fetched: string[] = [];
 
 vi.mock('@aws-sdk/client-s3', () => {
-  class NotFound extends Error {
+  class NoSuchKey extends Error {
     constructor() {
       super('not found');
-      this.name = 'NotFound';
+      this.name = 'NoSuchKey';
     }
   }
   return {
     S3Client: class {
       async send(cmd: { Key: string }) {
-        headed.push(cmd.Key);
-        if (!present.has(cmd.Key)) {
-          throw new NotFound();
+        fetched.push(cmd.Key);
+        const manifest = manifests.get(cmd.Key);
+        if (!manifest) {
+          throw new NoSuchKey();
         }
-        return {};
+        return { Body: { transformToString: async () => JSON.stringify(manifest) } };
       }
     },
-    HeadObjectCommand: class {
+    GetObjectCommand: class {
       Key: string;
       constructor(input: { Bucket: string; Key: string }) {
         this.Key = input.Key;
@@ -51,43 +58,89 @@ const BASE: DeployConfig = {
   companions: {},
 };
 
+/** A manifest listing the given stored names. */
+function manifest(prefix: string, ...paths: string[]): [string, SeedManifest] {
+  return [
+    `${prefix}_seed.json`,
+    {
+      modelId: BASE.modelId,
+      revision: 'abc123',
+      runner: BASE.runner,
+      quant: BASE.quant,
+      seededAt: '2026-08-17T00:00:00.000Z',
+      seedId: 'llamacpp--m',
+      seederVersion: '1.0.0',
+      seederNodeVersion: 'v24.11.0',
+      files: paths.map((path) => ({ path, size: 1, sha256: 'aa' })),
+      totalBytes: paths.length,
+    },
+  ];
+}
+
 beforeEach(() => {
-  headed.length = 0;
+  fetched.length = 0;
+  manifests = new Map();
 });
 
 describe('weightsPresent', () => {
-  it('is true when the main weights are there and no companion is named', async () => {
-    present = new Set([`${PREFIX}model.gguf`]);
+  it('is true when the weights are seeded and no companion is named', async () => {
+    manifests = new Map([manifest(PREFIX, 'model.gguf')]);
     expect(await weightsPresent('bucket', BASE)).toBe(true);
   });
 
-  it('is false when the main weights are absent', async () => {
-    present = new Set();
+  it('is false when nothing has been seeded', async () => {
     expect(await weightsPresent('bucket', BASE)).toBe(false);
   });
 
   it('is false when a named companion is missing, even though the model is there', async () => {
     // The regression this guards. The weights prefix is derived from
-    // (runner, modelId, quant), so adding a drafter does not change it. If
-    // only the sentinel were checked, this would report "present", skip the
-    // re-seed, and start an instance whose --spec-draft-model points at a
-    // file that was never synced — failing minutes later, with nothing in the
-    // deploy output to explain it.
-    present = new Set([`${PREFIX}model.gguf`]);
+    // (runner, modelId, quant), so adding a drafter does not change it. Judging
+    // presence by the main weights alone would report "present", skip the
+    // re-seed, and start an instance whose --spec-draft-model points at a file
+    // that was never synced — failing minutes later, with nothing in the deploy
+    // output to explain it.
+    manifests = new Map([manifest(PREFIX, 'model.gguf')]);
     const withDrafter = { ...BASE, companions: { draft: 'dflash-kquant.gguf' } };
     expect(await weightsPresent('bucket', withDrafter)).toBe(false);
-    expect(headed).toContain(`${PREFIX}draft.gguf`);
   });
 
   it('is true once the companion has been seeded too', async () => {
-    present = new Set([`${PREFIX}model.gguf`, `${PREFIX}draft.gguf`]);
+    manifests = new Map([manifest(PREFIX, 'model.gguf', 'draft.gguf')]);
     const withDrafter = { ...BASE, companions: { draft: 'dflash-kquant.gguf' } };
     expect(await weightsPresent('bucket', withDrafter)).toBe(true);
   });
 
-  it('checks the checkpoint sentinel for vllm', async () => {
+  it('checks every named companion, not just the first', async () => {
+    manifests = new Map([manifest(PREFIX, 'model.gguf', 'draft.gguf')]);
+    const both = { ...BASE, companions: { draft: 'd.gguf', mmproj: 'p.gguf' } };
+    expect(await weightsPresent('bucket', both)).toBe(false);
+
+    manifests = new Map([manifest(PREFIX, 'model.gguf', 'draft.gguf', 'mmproj.gguf')]);
+    expect(await weightsPresent('bucket', both)).toBe(true);
+  });
+
+  it('reads one object rather than probing a key per expected file', async () => {
+    manifests = new Map([manifest(PREFIX, 'model.gguf', 'draft.gguf')]);
+    await weightsPresent('bucket', { ...BASE, companions: { draft: 'd.gguf' } });
+    expect(fetched).toEqual([`${PREFIX}_seed.json`]);
+  });
+
+  it('treats weights with no manifest as absent', async () => {
+    // Files may well be there — seeded by the pre-manifest script — but nothing
+    // recorded that they are complete or which revision they came from.
+    expect(await weightsPresent('bucket', BASE)).toBe(false);
+  });
+
+  it('treats an unparseable manifest as absent rather than wedging the deploy', async () => {
+    manifests = new Map([
+      [`${PREFIX}_seed.json`, { files: [] } as unknown as SeedManifest],
+    ]);
+    expect(await weightsPresent('bucket', BASE)).toBe(false);
+  });
+
+  it('works for a vllm checkpoint, which names no companions', async () => {
     const vllmPrefix = 'models/vllm/org/model/';
-    present = new Set([`${vllmPrefix}config.json`]);
+    manifests = new Map([manifest(vllmPrefix, 'config.json', 'model.safetensors')]);
     expect(
       await weightsPresent('bucket', {
         ...BASE,

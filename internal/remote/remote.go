@@ -44,6 +44,11 @@ type Config struct {
 	// endpoint without starting it. Optional — configs predating the env Lambda
 	// still work for start/stop/deploy.
 	EnvURL string `json:"env_url"`
+	// SeedURL is the Lambda that starts, reports on, lists and stops model
+	// weight seeds. Optional in the same way as EnvURL: a config written before
+	// the seed Lambda existed keeps working for every other subcommand, and
+	// only the seed subcommand names the value to add.
+	SeedURL string `json:"seed_url"`
 	// UpdateURL is the Lambda for arbitrary post-provision instance commands
 	// (currently: set-keep). Optional — configs predating the update Lambda
 	// still work for start/stop/deploy; Keep will fail with a clear message.
@@ -144,6 +149,9 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	if v := getenv("OUTFIT_REMOTE_ENV_URL"); v != "" {
 		cfg.EnvURL = v
 	}
+	if v := getenv("OUTFIT_REMOTE_SEED_URL"); v != "" {
+		cfg.SeedURL = v
+	}
 	if v := getenv("OUTFIT_REMOTE_UPDATE_URL"); v != "" {
 		cfg.UpdateURL = v
 	}
@@ -204,13 +212,16 @@ type Response struct {
 	LastActiveAt string `json:"lastActiveAt"`
 	IdleSeconds  int    `json:"idleSeconds"`
 	// Deploy-specific fields.
-	Deployed       bool   `json:"deployed"`
-	Seeding        bool   `json:"seeding"`
-	SeedInstanceID string `json:"seedInstanceId"`
-	Runner         string `json:"runner"`
-	ModelID        string `json:"modelId"`
-	ContextSize    int    `json:"contextSize"`
-	WeightsPrefix  string `json:"weightsPrefix"`
+	Deployed bool `json:"deployed"`
+	Seeding  bool `json:"seeding"`
+	// SeedID identifies the seed a deploy started, so it can be followed with
+	// `outfit remote seed status`. The instance id it replaces was an
+	// implementation detail that changes if the seed is relaunched.
+	SeedID        string `json:"seedId"`
+	Runner        string `json:"runner"`
+	ModelID       string `json:"modelId"`
+	ContextSize   int    `json:"contextSize"`
+	WeightsPrefix string `json:"weightsPrefix"`
 	// RetainUntil is the instance's retention deadline, returned when the
 	// Retain-Until tag is present (set-keep or start --keep). camelCase to
 	// match the Lambda's JSON.
@@ -519,13 +530,36 @@ func call(ctx context.Context, cfg Config, method, rawURL string, body []byte) (
 		u.RawQuery = q.Encode()
 		rawURL = u.String()
 	}
+	status, respBody, err := send(ctx, cfg, method, rawURL, body)
+	if err != nil {
+		return nil, err
+	}
+	out := &Response{StatusCode: status}
+	if err := json.Unmarshal(respBody, out); err != nil {
+		hint := ""
+		if status == http.StatusForbidden {
+			hint = forbiddenHint(string(respBody))
+		}
+		return nil, fmt.Errorf("%s returned HTTP %d%s: %s",
+			method, status, hint, truncate(string(respBody), 200))
+	}
+	return out, nil
+}
+
+// send signs and performs one request, returning the status and raw body. It
+// is the transport half of call, split out because the seed Lambda's replies
+// have their own shapes: seeds are account-wide, so they share the signing but
+// not the Response struct or the environment query parameter.
+func send(
+	ctx context.Context, cfg Config, method, rawURL string, body []byte,
+) (int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -535,27 +569,18 @@ func call(ctx context.Context, cfg Config, method, rawURL string, body []byte) (
 		req.ContentLength = int64(len(body))
 	}
 	if err := sign(ctx, req, cfg.Region, body); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
-	out := &Response{StatusCode: resp.StatusCode}
-	if err := json.Unmarshal(respBody, out); err != nil {
-		hint := ""
-		if resp.StatusCode == http.StatusForbidden {
-			hint = forbiddenHint(string(respBody))
-		}
-		return nil, fmt.Errorf("%s returned HTTP %d%s: %s",
-			method, resp.StatusCode, hint, truncate(string(respBody), 200))
-	}
-	return out, nil
+	return resp.StatusCode, respBody, nil
 }
 
 // sign SigV4-signs the request with the default AWS credential chain

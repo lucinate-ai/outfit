@@ -44,64 +44,21 @@ export const llamacpp: RunnerSpec = {
   // llama-server is pointed at the single synced GGUF.
   syncedModelPath,
 
-  weightsKeys: (cfg, weightsPrefix) => [
-    `${weightsPrefix}model.gguf`,
-    ...(Object.keys(cfg.companions ?? {}).sort() as CompanionRole[]).map(
-      (role) => `${weightsPrefix}${companionFileName(role)}`,
-    ),
-  ],
-
-  // The main GGUF (MTP is embedded in it), normalised to model.gguf so the
-  // runtime need not guess the filename, plus any named companions under their
-  // own fixed names.
+  // One GGUF (MTP is embedded in it), stored as model.gguf so the runtime need
+  // not guess the filename; mmproj/projector companions are excluded.
   //
-  // Companions are fetched by exact filename because the quant glob cannot
-  // reach them: for Muse Glimmer the quant is `kquant-dynamic` and the drafter
-  // is `dflash-kquant.gguf`, which `*kquant-dynamic*` does not match.
-  seedDownload: (cfg) => {
-    const companions = Object.entries(cfg.companions ?? {}) as [CompanionRole, string][];
-    companions.sort(([a], [b]) => a.localeCompare(b));
-
-    // Exact companion names join the quant glob in allow_patterns. Plain
-    // single quotes are safe: COMPANION_FILENAME has already excluded
-    // everything that could close them.
-    const patterns = [
-      "'*'+os.environ['QUANT']+'*'",
-      ...companions.map(([, file]) => `'${file}'`),
-    ].join(', ');
-
-    // The main GGUF is whatever is left once the companions are excluded by
-    // name. The blanket `*mmproj*` exclusion stays as well: a projector is
-    // never the main model, and where the quant glob happens to match one
-    // (`Q4_K_M` matching `mmproj-Q4_K_M.gguf`) it sorts *before* the real
-    // weights and would be served in its place. Naming it as a companion is
-    // now the way to keep it; not naming it must still not select it.
-    const exclusions = [
-      " ! -iname '*mmproj*'",
-      ...companions.map(([, file]) => ` ! -name '${file}'`),
-    ].join('');
-
-    // Each companion is located, checked, then copied to its role name. The
-    // explicit test is what turns "the repo does not have that file" into a
-    // failed seed with a named cause, rather than an instance that starts
-    // minutes later pointing at a file that is not there.
-    const copies = companions
-      .map(
-        ([role, file]) => `COMPANION=$(find /tmp/dl -type f -name '${file}' | head -1)
-test -n "$COMPANION" || { echo "ERROR: companion ${role} '${file}' not found in $MODEL_ID" >&2; exit 1; }
-cp "$COMPANION" /opt/llm/model/${companionFileName(role)}`,
-      )
-      .join('\n');
-
-    return `export QUANT='${cfg.quant}'
-mkdir -p /tmp/dl
-/opt/llm/venv/bin/python -c "import os; from huggingface_hub import snapshot_download; snapshot_download(os.environ['MODEL_ID'], allow_patterns=[${patterns}], local_dir='/tmp/dl', token=(os.environ.get('HF_TOKEN') or None))"
-mapfile -t GGUFS < <(find /tmp/dl -type f -name '*.gguf'${exclusions} | sort)
-test "\${#GGUFS[@]}" -ge 1
-cp "\${GGUFS[0]}" /opt/llm/model/model.gguf
-[ "\${#GGUFS[@]}" -gt 1 ] && echo "WARNING: \${#GGUFS[@]} gguf files for $QUANT; used the first (split quant not handled)" >&2 || true
-${copies}${copies ? '\n' : ''}`;
-  },
+  // expectSingle makes an ambiguous match FAIL the seed. The old boot script
+  // warned and took the first of N, which silently shipped one shard of a split
+  // quant as though it were the whole model.
+  seedSelection: (cfg) => ({
+    include: [`*${cfg.quant}*.gguf`],
+    exclude: ['*mmproj*', '*projector*'],
+    expectSingle: 'model.gguf',
+    companions: (Object.keys(cfg.companions ?? {}).sort() as CompanionRole[]).map((role) => ({
+      storeAs: companionFileName(role),
+      file: (cfg.companions as Record<CompanionRole, string>)[role],
+    })),
+  }),
 
   companionArgs: (cfg, modelDir) => companionArgs(cfg.companions, modelDir),
 
@@ -117,7 +74,4 @@ ${daemonBoot(
   ]),
   '',
 )}`,
-
-  // The llama.cpp AMI has no Python venv; the seed runs elsewhere.
-  seedTooling: false,
 };

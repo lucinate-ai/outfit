@@ -12,6 +12,8 @@ const LAMBDA_ENV = {
   GRACE_PERIOD_MINUTES: '10',
   MAX_RUNTIME_MINUTES: '240',
   STOP_RETENTION_MINUTES: '60',
+  MAX_SEED_MINUTES: '60',
+  SEED_STALL_MINUTES: '10',
 };
 
 const findManagedInstance = vi.fn();
@@ -230,14 +232,23 @@ describe('idle sweep (stop running instance)', () => {
   });
 
   it('stops the engine then stops the instance when idle', async () => {
-    findManagedInstances.mockResolvedValue([
-      {
-        instanceId: 'i-idle',
-        state: 'running',
-        environment: 'dev',
-        launchTime: new Date(Date.now() - 30 * 60 * 1000),
-      },
-    ]);
+    // The scheduled handler also runs the seed sweep, which calls this same
+    // mock with the seed tag value — discriminate, or that pass "reaps" this
+    // endpoint instance too, since it has no seed record and looks stalled.
+    findManagedInstances.mockImplementation((_tagKey: string, tagValue: string) =>
+      Promise.resolve(
+        tagValue === LAMBDA_ENV.TAG_VALUE
+          ? [
+              {
+                instanceId: 'i-idle',
+                state: 'running',
+                environment: 'dev',
+                launchTime: new Date(Date.now() - 30 * 60 * 1000),
+              },
+            ]
+          : [],
+      ),
+    );
     isSsmAgentOnline.mockResolvedValue(true);
     runShellCommand.mockResolvedValue({
       status: 'Success',
@@ -254,14 +265,21 @@ describe('idle sweep (stop running instance)', () => {
   });
 
   it('proceeds to stop instance even when daemon is unreachable during idle sweep', async () => {
-    findManagedInstances.mockResolvedValue([
-      {
-        instanceId: 'i-idle',
-        state: 'running',
-        environment: 'dev',
-        launchTime: new Date(Date.now() - 30 * 60 * 1000),
-      },
-    ]);
+    // Same discrimination as above: the seed sweep shares this mock.
+    findManagedInstances.mockImplementation((_tagKey: string, tagValue: string) =>
+      Promise.resolve(
+        tagValue === LAMBDA_ENV.TAG_VALUE
+          ? [
+              {
+                instanceId: 'i-idle',
+                state: 'running',
+                environment: 'dev',
+                launchTime: new Date(Date.now() - 30 * 60 * 1000),
+              },
+            ]
+          : [],
+      ),
+    );
     isSsmAgentOnline.mockResolvedValue(true);
     runShellCommand.mockResolvedValue({
       status: 'Success',

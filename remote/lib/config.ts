@@ -62,6 +62,29 @@ export interface LlmConfig {
    * even if requests are still flowing.
    */
   maxRuntimeMinutes: number;
+  /**
+   * Instance type for the seed job. Not a GPU type and not the bake type: the
+   * seed streams bytes, so it wants network and a little CPU for TLS and
+   * checksums. Avoid the t-family — a sustained multi-gigabit pull exhausts both
+   * its CPU and its network burst credits, which turns a six-minute job into a
+   * throttled forty-minute one.
+   */
+  seedInstanceType: string;
+  /**
+   * Hard cap on a seed's life. Rendered into the boot script's `shutdown -h +N`
+   * AND read by the sweep, from this one value, so the two cannot drift.
+   */
+  maxSeedMinutes: number;
+  /** Silence after which a seed is treated as stalled and reaped early. */
+  seedStallMinutes: number;
+  /** Bound on concurrent seeds, so a caller in a loop cannot launch unbounded compute. */
+  maxConcurrentSeeds: number;
+  /**
+   * How long seed records are kept. Longer than the engine logs': these are the
+   * account's record of what is in its weights bucket and why, they are
+   * kilobytes per seed, and a seed failure is often noticed the day after.
+   */
+  seedLogRetentionDays: number;
   /** The port every runner's engine serves on — one port so the EIP, security group, and health check stay runner-neutral. */
   enginePort: number;
   /**
@@ -84,6 +107,13 @@ export interface LlmConfig {
    * so the window is small to bound cost.
    */
   logRetentionDays: number;
+  /**
+   * How long the control Lambdas' own execution logs are kept. Without an
+   * explicit log group, Lambda auto-creates one with no retention policy —
+   * every invocation kept forever. Matches seedLogRetentionDays: these are
+   * account-wide and worth a bit more than the per-instance engine logs.
+   */
+  lambdaLogRetentionDays: number;
 }
 
 const DEFAULTS = {
@@ -120,6 +150,14 @@ const DEFAULTS = {
   // while the server is still loading, which reads as "idle").
   gracePeriodMinutes: 30,
   maxRuntimeMinutes: 240,
+  // Graviton, 2 vCPU / 4 GiB: enough for 8 concurrent 64 MiB parts with room,
+  // and roughly a third the hourly cost of the m5.xlarge the seed used to
+  // borrow. Duration dominates the bill either way — a seed is pennies.
+  seedInstanceType: 'c7g.large',
+  maxSeedMinutes: 60,
+  seedStallMinutes: 10,
+  maxConcurrentSeeds: 3,
+  seedLogRetentionDays: 3,
   enginePort: 8000,
   availabilityZones: ['us-east-1b', 'us-east-1c', 'us-east-1d', 'us-east-1e'],
   builderInstanceType: 'm5.xlarge',
@@ -128,6 +166,7 @@ const DEFAULTS = {
   // not slow the bake.
   imageVolumeGb: 80,
   logRetentionDays: 1,
+  lambdaLogRetentionDays: 3,
 } as const;
 
 // latestReleaseVersion returns the newest git release tag with any leading
@@ -223,10 +262,20 @@ export function loadConfig(
     stopRetentionMinutes: contextNumber(app, 'stopRetentionMinutes', DEFAULTS.stopRetentionMinutes),
     gracePeriodMinutes: contextNumber(app, 'gracePeriodMinutes', DEFAULTS.gracePeriodMinutes),
     maxRuntimeMinutes: contextNumber(app, 'maxRuntimeMinutes', DEFAULTS.maxRuntimeMinutes),
+    seedInstanceType: contextString(app, 'seedInstanceType', DEFAULTS.seedInstanceType),
+    maxSeedMinutes: contextNumber(app, 'maxSeedMinutes', DEFAULTS.maxSeedMinutes),
+    seedStallMinutes: contextNumber(app, 'seedStallMinutes', DEFAULTS.seedStallMinutes),
+    maxConcurrentSeeds: contextNumber(app, 'maxConcurrentSeeds', DEFAULTS.maxConcurrentSeeds),
+    seedLogRetentionDays: contextNumber(app, 'seedLogRetentionDays', DEFAULTS.seedLogRetentionDays),
     enginePort: DEFAULTS.enginePort,
     availabilityZones: contextList(app, 'availabilityZones', DEFAULTS.availabilityZones),
     builderInstanceType: contextString(app, 'builderInstanceType', DEFAULTS.builderInstanceType),
     imageVolumeGb: contextNumber(app, 'imageVolumeGb', DEFAULTS.imageVolumeGb),
     logRetentionDays: contextNumber(app, 'logRetentionDays', DEFAULTS.logRetentionDays),
+    lambdaLogRetentionDays: contextNumber(
+      app,
+      'lambdaLogRetentionDays',
+      DEFAULTS.lambdaLogRetentionDays,
+    ),
   };
 }

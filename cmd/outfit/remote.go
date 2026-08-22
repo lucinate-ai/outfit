@@ -46,10 +46,10 @@ import (
 // commands in the tree, so only the unknown and the bare cases reach here.
 func remoteParentFallback(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|restart|stop|status|metrics|logs|deploy|env|ls|keep> [path]")
+		return fmt.Errorf("usage: outfit remote <bootstrap|start|pause|restart|stop|status|metrics|logs|deploy|seed|env|ls|keep> [path]")
 	}
 	return fmt.Errorf(
-		"unknown remote subcommand %q (expected bootstrap, start, pause, restart, stop, status, metrics, logs, deploy, env, ls or keep)", args[0])
+		"unknown remote subcommand %q (expected bootstrap, start, pause, restart, stop, status, metrics, logs, deploy, seed, env, ls or keep)", args[0])
 }
 
 // cmdRemote runs the remote subcommands through the tree — the seam the suite
@@ -1508,7 +1508,7 @@ func runRemoteDeploy(args []string, dryRun, overwrite, reseed bool, allowedCidr,
 	fmt.Printf("deployed: environment %s at %s\n", env, resp.BaseURL)
 	fmt.Printf("registered: %s\n", envConfigPath)
 	if resp.Seeding {
-		fmt.Printf("seeding the weights on %s — this takes ~15-20 min.\n", resp.SeedInstanceID)
+		fmt.Printf("seeding the weights — follow it with `outfit remote seed status %s`.\n", resp.SeedID)
 		fmt.Println("Wait for it to finish before `outfit remote start`, or the instance will")
 		fmt.Println("start against an incomplete download.")
 	} else {

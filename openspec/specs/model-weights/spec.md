@@ -50,20 +50,23 @@ anyone staging them by hand. The fetch SHALL run within the deployment rather
 than from the caller's machine, and SHALL dispose of whatever ran it once the
 weights are stored.
 
-Presence SHALL be judged over the whole set the deployment expects — its main
-weights and every companion it names — so a deployment is treated as ready only
-when everything it needs is stored. Adding a companion to a deployment whose
-main weights are already stored SHALL therefore be judged absent and fetched,
-rather than mistaken for a deployment that is ready.
+Presence SHALL be judged by a manifest object that the fetch writes as its
+final step, once every file it set out to transfer is stored. Presence SHALL
+NOT be judged by the presence of a weights file, whose write order is a
+property of the transfer rather than a guarantee, so a fetch that failed or is
+still running is not mistaken for weights that are ready.
 
-Presence SHALL be judged by markers written only once a fetch has completed, so
-a fetch that failed or is still running is not mistaken for weights that are
-ready.
+The manifest SHALL record what was fetched — the model, the exact revision, the
+file list with each file's size and checksum — and what fetched it, so the
+contents of a location are identifiable rather than inferred. A request MAY pin
+the revision to fetch; absent a pin, the revision the source currently resolves
+to SHALL be used, and either way the resolved revision SHALL be recorded.
 
 A deployment SHALL NOT be stored if its weights are absent and a fetch cannot
 be started, so a configuration that could never serve does not replace one that
-can. The reply SHALL say whether a fetch was started, because an instance
-started before it finishes would copy an incomplete model.
+can. The reply SHALL identify the fetch it started, by a handle the operator can
+use to follow that fetch's progress and outcome, because an instance started
+before it finishes would copy an incomplete model.
 
 #### Scenario: Weights already present
 
@@ -73,7 +76,8 @@ started before it finishes would copy an incomplete model.
 #### Scenario: Weights absent
 
 - **WHEN** a deployment names a model whose weights are absent
-- **THEN** a fetch is started, and the reply says so
+- **THEN** a fetch is started, and the reply identifies it well enough to follow
+  its progress
 
 #### Scenario: A companion added to stored weights is fetched
 
@@ -87,11 +91,26 @@ started before it finishes would copy an incomplete model.
 - **WHEN** an earlier fetch failed part way, leaving some files behind
 - **THEN** the weights are treated as absent and fetched again
 
+#### Scenario: Weights files present without a manifest are not complete
+
+- **WHEN** every weights file happens to be stored but no manifest was written
+- **THEN** the weights are treated as absent
+
+#### Scenario: What is stored is identifiable
+
+- **WHEN** weights have been fetched into a location
+- **THEN** the exact revision they came from can be read back from that location
+
+#### Scenario: A revision may be pinned
+
+- **WHEN** a fetch names the revision to take
+- **THEN** that revision is fetched and recorded, rather than whatever the source
+  currently resolves to
+
 #### Scenario: A deployment that could never serve is refused
 
-- **WHEN** a deployment's weights are absent and no fetch can be started
-- **THEN** the deployment is refused and the stored configuration is left
-  unchanged
+- **WHEN** the weights are absent and a fetch cannot be started
+- **THEN** the deployment is rejected and the stored configuration is unchanged
 
 ### Requirement: Companion weights beside the main weights
 

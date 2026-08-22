@@ -89,12 +89,12 @@ flowchart LR
   outfit["outfit remote deploy"]
   deploy["DeployFn<br/>(validate)"]
   param[("deploy-config<br/>SSM param")]
-  seed["seed instance<br/>(if model changed)"]
+  seed["seed instance<br/>(if weights missing)"]
   start["StartFn (next wake)"]
 
   outfitfile --> outfit -->|SigV4 POST| deploy
   deploy -->|PutParameter| param
-  deploy -.->|RunInstances| seed --> s3[("S3 weights")]
+  deploy -.->|RunInstances, returns seedId| seed --> s3[("S3 weights")]
   start -->|read| param
   start -->|render daemon deploy-config| unit["outfit daemon"]
 ```
@@ -110,9 +110,58 @@ The DeployConfig contract (`lambda/shared/deploy-config.ts`):
 `weightsPrefix` is **not** part of the wire contract — the Lambda derives it as
 `models/<runner>/<modelId>[/<quant>]/` and stores it in the parameter, so callers
 never encode the S3 layout (and a prefix sent in the body is ignored). If those
-weights are not in the bucket, the Lambda launches the seed instance itself and
-replies `{seeding: true, seedInstanceId}`; a wake before it finishes would sync
-an incomplete prefix, so wait for it.
+weights are not in the bucket, the Lambda launches a seed itself and replies
+`{seeding: true, seedId}`; a wake before it finishes would sync an incomplete
+prefix, so wait for it. The id is stable (derived from the weights), unlike the
+instance it replaced, so it is what `outfit remote seed status` takes.
+
+## Seeding
+
+A seed is a supervised job, not a fire-and-forget script.
+
+```mermaid
+flowchart TB
+  cli["outfit remote seed<br/>start | status | ls | stop"]
+  seedfn["SeedFn (Function URL)"]
+  deployfn["DeployFn<br/>(auto-seed on missing weights)"]
+  inst["c7g.large, stock AL2023<br/>no bake"]
+  hf[("Hugging Face")]
+  s3[("S3 weights + _seed.json")]
+  cw[("CloudWatch<br/>/cloud-vm-llm/seed")]
+  sweep["StopFn seed pass<br/>rate(5 min)"]
+
+  cli -->|SigV4| seedfn
+  deployfn -->|shared module| inst
+  seedfn -->|RunInstances, deterministic ClientToken| inst
+  inst -->|ranged parts ──▶ S3 multipart| s3
+  hf --> inst
+  inst -->|EMF records| cw
+  seedfn -->|status: records ⋈ EC2| cw
+  sweep -->|reap stalled / over-age| inst
+```
+
+The pieces that matter:
+
+- **Identity is derived, not supplied.** `seedIdFor(runner, modelId, quant)` is a
+  slug of the same inputs that determine the weights prefix
+  (`vllm--Qwen-Qwen3-32B`), so the same model always converges on the same seed
+  and different models get their own.
+- **Convergence is EC2's.** `RunInstances` deduplicates a repeated `ClientToken`
+  within 24 hours, so two simultaneous starts collapse to one instance with no
+  lock. The same window would also swallow a legitimate later retry, so the
+  launch path checks the state of whatever instance comes back and escapes a
+  dead one with a fresh generation.
+- **Transfer is streaming with a floor.** 64 MiB ranged `GET`s feed an S3
+  multipart upload, eight in flight; a failed part is retried alone. A part that
+  exhausts its retries drops that one file to disk staging, so no model needs
+  disk proportional to its size and streaming can never wedge.
+- **Status is a join.** Records say what the seed managed to report; EC2 says
+  whether it still exists. A gone instance whose last record was mid-transfer is
+  `failed`, never "41% for ever".
+- **Three termination layers**: the seeder's exit handling, `shutdown -h +60`
+  armed as the boot script's first command, and the sweep's seed pass — which
+  judges liveness from `DescribeLogStreams`'s `lastEventTimestamp`, *not* the
+  daemon scrape used for inference instances (a seed runs no daemon).
 
 At boot, `buildInferenceUserData()` renders it into the on-instance outfit
 daemon's own deploy config — the model as the synced local path, the bind
@@ -232,11 +281,18 @@ AMI matching the tags**. A slim AMI carries only the driver + the runner
 | Runtime stack (lambdas, EIP, S3, params) | `lib/llm-stack.ts` |
 | Image Builder pipeline | `lib/image-stack.ts` |
 | Deploy-config contract | `lambda/shared/deploy-config.ts` |
-| Runner registry (one spec per runner: boot, weights, seed) | `lambda/runners/` |
+| Runner registry (one spec per runner: boot, file selection) | `lambda/runners/` |
 | The on-instance daemon's API (SSM curl targets, status + metrics types) | `lambda/shared/daemon.ts` |
 | Wake / launch / user-data (`buildInferenceUserData`) | `lambda/start/index.ts` |
 | Idle / manual stop | `lambda/stop/index.ts`, `lambda/shared/idle.ts` |
 | Set the deploy-config | `lambda/deploy/index.ts` |
 | Shared AWS + SSM helpers | `lambda/shared/aws.ts` |
-| Seed weights to S3 (on absence, or `--reseed`) | `lambda/deploy/index.ts`, `lambda/shared/seed.ts` |
+| Seed control surface (start/status/list/stop) | `lambda/seed/index.ts` |
+| Seed contract shared with the seeder (job, records, manifest) | `lambda/shared/seed/contract.ts` |
+| Seed identity + idempotency token | `lambda/shared/seed/identity.ts` |
+| Seed launch + boot script | `lambda/shared/seed/launch.ts` |
+| Seed state (records ⋈ instance) | `lambda/shared/seed/status.ts` |
+| Seed reaping decision (layer three) | `lambda/shared/seed/reap.ts` |
+| The seeder itself (runs on the instance) | `seeder/src/` |
+| Whether weights are already seeded (deploy's pre-check) | `lambda/shared/seed.ts` |
 | Seed the initial deploy-config (once, over the placeholder) | `scripts/seed-deploy-config.mjs` |

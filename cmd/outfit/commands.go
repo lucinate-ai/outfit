@@ -351,6 +351,7 @@ names a file — falling back to the default environment. Each subcommand's
 		remoteMetricsCmd(),
 		remoteLogsCmd(),
 		remoteDeployCmd(),
+		remoteSeedCmd(),
 		remoteEnvCmd(),
 		remoteListCmd(),
 		remoteKeepCmd(),

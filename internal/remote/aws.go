@@ -94,11 +94,15 @@ func controlPlaneFromOutputs(stackName string, outputs map[string]string) (Contr
 			DeployURL: outputs["DeployUrl"],
 			StatsURL:  outputs["StatsUrl"],
 			EnvURL:    outputs["EnvUrl"],
+			SeedURL:   outputs["SeedUrl"],
 			UpdateURL: outputs["UpdateUrl"],
 			Region:    outputs["Region"],
 		},
 		WeightsBucket: outputs["WeightsBucket"],
 	}
+	// Only the three the other subcommands cannot work without are required.
+	// SeedUrl and EnvUrl are absent from a control plane deployed before they
+	// existed; the subcommands that need them say so themselves.
 	if layer.Config.StartURL == "" || layer.Config.StopURL == "" || layer.Config.DeployURL == "" {
 		return ControlPlane{}, fmt.Errorf(
 			"stack %q is missing its control-URL outputs — re-run `outfit remote bootstrap` to update it",

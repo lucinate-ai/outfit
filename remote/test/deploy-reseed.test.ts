@@ -27,9 +27,16 @@ vi.mock('../lambda/shared/environments', () => ({
 
 vi.mock('../lambda/shared/seed', () => ({
   weightsPresent: async () => weightsAreThere,
-  launchSeedInstance: async (cfg: unknown) => {
-    launched.push(cfg);
-    return 'i-seed';
+}));
+
+// Launching moved to its own module with the seed rework; the deploy path now
+// builds a job and asks for a seed id back rather than an instance id.
+vi.mock('../lambda/shared/seed/launch', () => ({
+  seedInfraFromEnv: () => ({ bucket: 'weights' }),
+  buildSeedJob: (cfg: unknown) => ({ seedId: 'llamacpp--m', cfg }),
+  launchSeedInstance: async (job: { seedId: string }, _infra: unknown, opts?: { force?: boolean }) => {
+    launched.push({ job, force: opts?.force ?? false });
+    return { seedId: job.seedId, instanceId: 'i-seed', started: true };
   },
 }));
 
@@ -69,7 +76,24 @@ describe('deploy --reseed', () => {
     const res = await handler(post({ ...CONFIG, reseed: true }));
     expect(res.statusCode).toBe(200);
     expect(launched).toHaveLength(1);
-    expect(JSON.parse(res.body).seeding).toBe(true);
+    const reply = JSON.parse(res.body);
+    expect(reply.seeding).toBe(true);
+    // The stable seed id, so the operator can follow it.
+    expect(reply.seedId).toBe('llamacpp--m');
+  });
+
+  it('takes the same force path as `outfit remote seed start --force`', async () => {
+    // One behaviour, one implementation: --reseed must escape the launch
+    // idempotency token exactly as a forced seed does, or it would be handed
+    // back the attempt it is replacing.
+    await handler(post({ ...CONFIG, reseed: true }));
+    expect(launched[0]).toMatchObject({ force: true });
+  });
+
+  it('does not force a seed that is merely filling in absent weights', async () => {
+    weightsAreThere = false;
+    await handler(post(CONFIG));
+    expect(launched[0]).toMatchObject({ force: false });
   });
 
   it('leaves stored weights alone without the request', async () => {
