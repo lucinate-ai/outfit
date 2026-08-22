@@ -181,13 +181,21 @@ export async function findManagedInstance(
   return instances[0] ?? null;
 }
 
+/** A baked AMI and the root volume size its own block device mapping declares. */
+export interface AmiInfo {
+  imageId: string;
+  rootVolumeSizeGb: number;
+}
+
 /**
  * Find the newest available AMI matching the given filters (owned by this
  * account). This is how the runtime discovers the baked image — the image
  * pipeline tags each AMI, and we pick the most recently created. Returns null
- * if none match (e.g. no bake has succeeded yet).
+ * if none match (e.g. no bake has succeeded yet). The root size rides along
+ * because a launch that overrides the root volume must repeat it (a BDM on
+ * RunInstances replaces the AMI's own rather than extending it).
  */
-export async function findLatestAmi(filters: Filter[]): Promise<string | null> {
+export async function findLatestAmi(filters: Filter[]): Promise<AmiInfo | null> {
   const result = await ec2.send(new DescribeImagesCommand({ Owners: ['self'], Filters: filters }));
   const images = (result.Images ?? []).filter((i) => i.State === 'available' && i.ImageId);
   if (images.length === 0) {
@@ -195,7 +203,12 @@ export async function findLatestAmi(filters: Filter[]): Promise<string | null> {
   }
   // CreationDate is ISO 8601, so a lexicographic sort is chronological.
   images.sort((a, b) => (b.CreationDate ?? '').localeCompare(a.CreationDate ?? ''));
-  return images[0].ImageId ?? null;
+  const latest = images[0];
+  const root = (latest.BlockDeviceMappings ?? []).find((m) => m.Ebs !== undefined);
+  return {
+    imageId: latest.ImageId!,
+    rootVolumeSizeGb: root?.Ebs?.VolumeSize ?? 0,
+  };
 }
 
 export interface LaunchSpec {
@@ -218,7 +231,19 @@ export interface LaunchSpec {
    * only guards against a retried call launching twice.
    */
   clientToken?: string;
+  /**
+   * Override the root volume the AMI would otherwise provide. A block device
+   * mapping on RunInstances *replaces* the AMI's root mapping, so volumeSize
+   * must repeat the AMI's own root size (findLatestAmi reads it) — omitting
+   * it would launch an undersized default volume. Absent launches the AMI's
+   * root as-is (the seed instance's case).
+   */
+  rootVolume?: { volumeSize: number; iops?: number; throughput?: number };
 }
+
+// Root device of the baked Ubuntu AMIs — the same constant image-stack.ts bakes
+// its block device mapping under. A BDM override must name it, not a guess.
+const AMI_ROOT_DEVICE = '/dev/sda1';
 
 /**
  * Launch one instance in the given subnet. Throws on failure — the caller
@@ -243,6 +268,26 @@ export async function runInstance(spec: LaunchSpec): Promise<string> {
     UserData: Buffer.from(spec.userData).toString('base64'),
     MetadataOptions: { HttpTokens: 'required' },
     ...(spec.terminateOnShutdown ? { InstanceInitiatedShutdownBehavior: 'terminate' as const } : {}),
+    ...(spec.rootVolume
+      ? {
+          BlockDeviceMappings: [
+            {
+              DeviceName: AMI_ROOT_DEVICE,
+              // Encrypted is the AMI's own setting, restated because the
+              // override replaces the whole mapping.
+              Ebs: {
+                VolumeSize: spec.rootVolume.volumeSize,
+                VolumeType: 'gp3' as const,
+                Encrypted: true,
+                ...(spec.rootVolume.iops ? { Iops: spec.rootVolume.iops } : {}),
+                ...(spec.rootVolume.throughput
+                  ? { Throughput: spec.rootVolume.throughput }
+                  : {}),
+              },
+            },
+          ],
+        }
+      : {}),
     TagSpecifications: [
       {
         ResourceType: 'instance',

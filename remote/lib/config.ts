@@ -145,9 +145,11 @@ const DEFAULTS = {
   // re-wake speed (weights and boot disk kept warm) against storage cost: a
   // few hours of pause, then the instance is gone.
   stopRetentionMinutes: 60,
-  // Must exceed the whole cold start (S3 sync ~4 min + weight/CUDA load), or
-  // the idle check stops the instance mid-load (the metrics scrape fails
-  // while the server is still loading, which reads as "idle").
+  // Must exceed the whole cold start (launch, S3 sync and the weight/CUDA
+  // load — a few minutes between the provisioned root volume and the
+  // daemon's page-cache pre-warm), or the idle check stops the instance
+  // mid-load (the metrics scrape fails while the server is still loading,
+  // which reads as "idle").
   gracePeriodMinutes: 30,
   maxRuntimeMinutes: 240,
   // Graviton, 2 vCPU / 4 GiB: enough for 8 concurrent 64 MiB parts with room,
