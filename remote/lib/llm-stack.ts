@@ -518,6 +518,18 @@ export class LlmStack extends cdk.Stack {
         resources: ['*'],
       }),
     );
+    // AllocateAddress and CreateSecurityGroup both tag inline via
+    // TagSpecifications, which needs ec2:CreateTags as its own grant — the
+    // resource-creation action alone does not cover it.
+    deployFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:CreateTags'],
+        resources: [`arn:${cdk.Aws.PARTITION}:ec2:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:*/*`],
+        conditions: {
+          StringEquals: { 'ec2:CreateAction': ['AllocateAddress', 'CreateSecurityGroup'] },
+        },
+      }),
+    );
     seedLaunchStatements().forEach((s) => deployFn.addToRolePolicy(s));
     deployFn.addToRolePolicy(
       new iam.PolicyStatement({
