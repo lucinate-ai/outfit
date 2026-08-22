@@ -362,16 +362,10 @@ func argvFromDeployConfig(engine serveEngine, dc remote.DeployConfig) ([]string,
 	if err != nil {
 		return nil, err
 	}
-	argv := append([]string{engine.binary()}, engine.subcommand...)
-	if engine.positional != nil {
-		argv = append(argv, engine.positional(sel)...)
-	}
-	argv = append(argv, engine.dialect.Flags(params)...)
-	argv = append(argv, dc.ServeArgs...)
 	// No printf here: this runs inside a start request, and the daemon records
 	// the same fact — source, runner and model — as a log record with a
 	// timestamp and a level, rather than a bare line on the daemon's stdout.
-	return argv, nil
+	return assembleEngineArgv(engine, subcommandFor(engine, sel), params, dc.ServeArgs), nil
 }
 
 // validateDeployConfig rejects a pushed deploy config this host cannot serve:

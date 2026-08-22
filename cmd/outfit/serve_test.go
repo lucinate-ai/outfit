@@ -146,6 +146,37 @@ func TestCmdServe_PresetSelectsByAlias(t *testing.T) {
 	}
 }
 
+// TestCmdServe_VllmPresetThreadsPositionalModel checks that a vLLM Outfit that names
+// a PRESET still places the Outfit's MODEL positionally after `serve` (before any
+// flags), which the preset branch draws from the same subcommandFor the preset-less
+// path does. vLLM is the only engine with a positional hook, so this is the only
+// preset case that exercises the positional half of that shared helper.
+func TestCmdServe_VllmPresetThreadsPositionalModel(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "preset.ini"), "[friendly]\nmax-model-len = 4096\ngpu-memory-utilization = 0.9\n")
+	outfitPath := filepath.Join(dir, "Outfit")
+	mustWrite(t, outfitPath, "PROVIDER vllm\nMODEL org/model\nALIAS friendly\nPRESET preset.ini\n")
+
+	out := captureStdout(t, func() {
+		if err := cmdServe([]string{"--dry-run", outfitPath}); err != nil {
+			t.Fatalf("cmdServe: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Using preset") {
+		t.Fatalf("not the preset branch:\n%s", out)
+	}
+	// The Outfit's MODEL rides positionally right after `serve`, before any flags.
+	if !strings.Contains(out, "vllm serve org/model ") {
+		t.Errorf("MODEL is not vllm serve's positional argument:\n%s", out)
+	}
+	for _, want := range []string{"--served-model-name friendly", "--max-model-len 4096",
+		"--gpu-memory-utilization 0.9"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("command missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestCmdServe_OutfitOverridesPreset checks that values stated in the Outfit win
 // over the preset's: CONTEXT replaces the section's ctx-size, BASEURL replaces
 // host/port, and ALIAS adds --alias.

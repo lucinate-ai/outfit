@@ -254,15 +254,6 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 		return nil, err
 	}
 
-	binary := engine.binary()
-	// A positional-model engine takes the model right after its subcommand,
-	// before any flags — riding along with the subcommand puts it there in
-	// both the preset and preset-less builds.
-	subcommand := engine.subcommand
-	if engine.positional != nil {
-		subcommand = append(append([]string{}, subcommand...), engine.positional(sel)...)
-	}
-	var argv []string
 	if sel.Preset != "" {
 		presetPath, err := resolvePresetPath(sel.Preset, outfitPath)
 		if err != nil {
@@ -282,23 +273,46 @@ func buildServeArgv(engine serveEngine, sel outfit.Selection, outfitPath string)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", presetPath, err)
 		}
-		argv = pre.CommandIn(engine.dialect, binary, subcommand, sec, params)
+		argv := pre.CommandIn(engine.dialect, engine.binary(), subcommandFor(engine, sel), sec, params)
 		fmt.Printf("Using preset %s (model %s)\n\n", presetPath, sec.Name)
+		return argv, nil
+	}
+
+	if engine.needsModel && sel.Model == "" {
+		return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
+	}
+	argv := assembleEngineArgv(engine, subcommandFor(engine, sel), params, nil)
+	if sel.Model != "" {
+		fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
 	} else {
-		if engine.needsModel && sel.Model == "" {
-			return nil, fmt.Errorf("serve needs a PRESET or a MODEL (an HF repo like org/model:quant, or a path to a .gguf)")
-		}
-		argv = append([]string{binary}, subcommand...)
-		argv = append(argv, engine.dialect.Flags(params)...)
-		if sel.Model != "" {
-			fmt.Printf("Serving %s from %s\n\n", sel.Model, outfitPath)
-		} else {
-			// An engine that needs no model to start (oMLX serves a whole
-			// directory) has nothing to name but itself.
-			fmt.Printf("Starting %s from %s\n\n", sel.Provider, outfitPath)
-		}
+		// An engine that needs no model to start (oMLX serves a whole
+		// directory) has nothing to name but itself.
+		fmt.Printf("Starting %s from %s\n\n", sel.Provider, outfitPath)
 	}
 	return argv, nil
+}
+
+// subcommandFor returns the engine's subcommand with the positional model riding
+// along right after it (before any flags). It copies the engine's own subcommand
+// before appending, so a positional never aliases that slice.
+func subcommandFor(engine serveEngine, sel outfit.Selection) []string {
+	sub := append([]string{}, engine.subcommand...)
+	if engine.positional != nil {
+		sub = append(sub, engine.positional(sel)...)
+	}
+	return sub
+}
+
+// assembleEngineArgv is the one place that turns an engine and its params into a
+// command: the binary, its subcommand, the params rendered in the engine's
+// dialect, then any trailing args the caller appends (a deploy config's serveArgs).
+// The preset-less `serve` path and the daemon's deploy-config path both draw from
+// here, and the preset path uses subcommandFor for its subcommand.
+func assembleEngineArgv(engine serveEngine, subcommand []string, params []preset.Param, trailing []string) []string {
+	argv := append([]string{engine.binary()}, subcommand...)
+	argv = append(argv, engine.dialect.Flags(params)...)
+	argv = append(argv, trailing...)
+	return argv
 }
 
 // resolvePresetPath resolves an Outfit's PRESET value against the Outfit's

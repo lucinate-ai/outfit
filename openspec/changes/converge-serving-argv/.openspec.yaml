@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-08-15
+# A pure refactor: one argv-assembly site replaces two, and the emitted command
+# for serve, daemon-start and serve --api is byte-identical. No externally
+# visible behaviour changes, so there is no spec delta to add.
+skip_specs: true
