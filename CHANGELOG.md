@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.25.0] - 2026-08-22
+### Added
+- feat(fleet): drive a remote environment as a fleet node
+- feat(remote): add outfit remote restart with a forced stop option
+- feat(remote): rework model weight seeding into a supervised job
+
+### Changed
+- chore(openspec): archive converge-serving-argv
+- chore(openspec): archive unify-remote-fleet-node
+- refactor(serve): converge engine argv assembly on one builder
+
 ## [1.24.2] - 2026-08-21
 ### Fixed
 - fix(remote): pass outfitVersion when bootstrapping a release build
