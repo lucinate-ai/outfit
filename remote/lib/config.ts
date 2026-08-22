@@ -107,6 +107,13 @@ export interface LlmConfig {
    * so the window is small to bound cost.
    */
   logRetentionDays: number;
+  /**
+   * How long the control Lambdas' own execution logs are kept. Without an
+   * explicit log group, Lambda auto-creates one with no retention policy —
+   * every invocation kept forever. Matches seedLogRetentionDays: these are
+   * account-wide and worth a bit more than the per-instance engine logs.
+   */
+  lambdaLogRetentionDays: number;
 }
 
 const DEFAULTS = {
@@ -159,6 +166,7 @@ const DEFAULTS = {
   // not slow the bake.
   imageVolumeGb: 80,
   logRetentionDays: 1,
+  lambdaLogRetentionDays: 3,
 } as const;
 
 // latestReleaseVersion returns the newest git release tag with any leading
@@ -264,5 +272,10 @@ export function loadConfig(
     builderInstanceType: contextString(app, 'builderInstanceType', DEFAULTS.builderInstanceType),
     imageVolumeGb: contextNumber(app, 'imageVolumeGb', DEFAULTS.imageVolumeGb),
     logRetentionDays: contextNumber(app, 'logRetentionDays', DEFAULTS.logRetentionDays),
+    lambdaLogRetentionDays: contextNumber(
+      app,
+      'lambdaLogRetentionDays',
+      DEFAULTS.lambdaLogRetentionDays,
+    ),
   };
 }

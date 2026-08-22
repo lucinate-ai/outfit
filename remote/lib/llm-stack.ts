@@ -167,6 +167,17 @@ export class LlmStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // Each control Lambda's own execution log, pre-created for the same reason
+    // as the instance log groups above: left to Lambda, the auto-created group
+    // gets no retention policy and keeps every invocation forever.
+    const lambdaLogRetention = cfg.lambdaLogRetentionDays as logs.RetentionDays;
+    const lambdaLogGroup = (id: string, name: string): logs.LogGroup =>
+      new logs.LogGroup(this, id, {
+        logGroupName: `/cloud-vm-llm/lambda/${name}`,
+        retention: lambdaLogRetention,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+      });
+
     // The seeder program, bundled at synth and published for the instance to
     // fetch. Replaces the boot-script-as-TypeScript-string the seed used to be.
     const seederAsset = new s3assets.Asset(this, 'SeederBundle', { path: bundleSeeder() });
@@ -339,6 +350,7 @@ export class LlmStack extends cdk.Stack {
       // "ready" in one call rather than making outfit poll through a 503.
       timeout: cdk.Duration.seconds(900),
       memorySize: 256,
+      logGroup: lambdaLogGroup('StartFnLogGroup', 'start'),
       environment: {
         ...commonEnv,
         AMI_ROLE_TAG_KEY,
@@ -428,6 +440,7 @@ export class LlmStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(120),
       memorySize: 256,
+      logGroup: lambdaLogGroup('StopFnLogGroup', 'stop'),
       environment: {
         ...commonEnv,
         IDLE_THRESHOLD_MINUTES: String(cfg.idleThresholdMinutes),
@@ -474,6 +487,7 @@ export class LlmStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(60),
       memorySize: 256,
+      logGroup: lambdaLogGroup('DeployFnLogGroup', 'deploy'),
       environment: {
         ENGINE_PORT: String(cfg.enginePort),
         VPC_ID: vpc.vpcId,
@@ -524,6 +538,7 @@ export class LlmStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(60),
       memorySize: 256,
+      logGroup: lambdaLogGroup('SeedFnLogGroup', 'seed'),
       environment: {
         TAG_KEY,
         ...seedEnv,
@@ -547,6 +562,7 @@ export class LlmStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(90),
       memorySize: 256,
+      logGroup: lambdaLogGroup('StatsFnLogGroup', 'stats'),
       environment: {
         ...commonEnv,
       },
@@ -578,6 +594,7 @@ export class LlmStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
+      logGroup: lambdaLogGroup('EnvFnLogGroup', 'env'),
       environment: {
         TAG_KEY,
         TAG_VALUE,
@@ -610,6 +627,7 @@ export class LlmStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       timeout: cdk.Duration.seconds(30),
       memorySize: 128,
+      logGroup: lambdaLogGroup('UpdateFnLogGroup', 'update'),
       environment: {
         TAG_KEY,
         TAG_VALUE,
