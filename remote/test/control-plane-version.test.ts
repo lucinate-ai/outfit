@@ -79,7 +79,7 @@ describe('control plane version config', () => {
       new LlmStack(app, 'test-runtime', { config, env: { region: config.region } }),
     );
     const fns = Object.values(template.findResources('AWS::Lambda::Function')) as any[];
-    expect(fns).toHaveLength(7);
+    expect(fns).toHaveLength(8);
     for (const fn of fns) {
       expect(fn.Properties.Environment.Variables.CONTROL_PLANE_VERSION).toBe('1.30.0');
     }
