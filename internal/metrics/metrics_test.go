@@ -203,22 +203,116 @@ func TestCollectorLinux(t *testing.T) {
 	}
 }
 
+const ioregAGXFixture = `+-o AGXAcceleratorG16G  <class AGXAcceleratorG16G, id 0x1000003c4, registered, matched, active, busy 0 (503 ms), retain 71>
+    {
+      "IOClass" = "AGXAcceleratorG16G"
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Tiler Utilization %"=32,"Renderer Utilization %"=32,"Device Utilization %"=56,"In use system memory"=991494144}
+      "model" = "Apple M5 Max"
+      "gpu-core-count" = 40
+    }
+
+`
+
+const ioregAMDFixture = `+-o AMDRadeonX6000_AMDRadeonAccelerator  <class AMDRadeonX6000_AMDRadeonAccelerator, id 0x100000500>
+    {
+      "model" = "AMD Radeon Pro 5500M"
+      "PerformanceStatistics" = {"Device Utilization (%)"=7,"vramFreeBytes"=123}
+    }
+`
+
+const ioregNoUtilFixture = `+-o IntelAccelerator  <class IntelAccelerator, id 0x100000600>
+    {
+      "model" = "Intel UHD Graphics"
+      "PerformanceStatistics" = {"Alloc system memory"=1}
+    }
+`
+
+func TestParseIOAcceleratorGPU(t *testing.T) {
+	t.Run("apple", func(t *testing.T) {
+		gpus := ParseIOAcceleratorGPU(ioregAGXFixture)
+		want := []GpuStat{{Index: 0, Name: "Apple M5 Max", Utilization: 56}}
+		if len(gpus) != 1 || gpus[0] != want[0] {
+			t.Errorf("gpus = %+v, want %+v", gpus, want)
+		}
+	})
+	t.Run("amd spelling", func(t *testing.T) {
+		gpus := ParseIOAcceleratorGPU(ioregAMDFixture)
+		if len(gpus) != 1 || gpus[0].Name != "AMD Radeon Pro 5500M" || gpus[0].Utilization != 7 {
+			t.Errorf("gpus = %+v", gpus)
+		}
+	})
+	t.Run("two accelerators", func(t *testing.T) {
+		gpus := ParseIOAcceleratorGPU(ioregAMDFixture + ioregAGXFixture)
+		if len(gpus) != 2 || gpus[0].Index != 0 || gpus[1].Index != 1 ||
+			gpus[0].Utilization != 7 || gpus[1].Utilization != 56 {
+			t.Errorf("gpus = %+v", gpus)
+		}
+	})
+	t.Run("block without utilisation is skipped", func(t *testing.T) {
+		gpus := ParseIOAcceleratorGPU(ioregNoUtilFixture + ioregAGXFixture)
+		if len(gpus) != 1 || gpus[0].Index != 0 || gpus[0].Name != "Apple M5 Max" {
+			t.Errorf("gpus = %+v", gpus)
+		}
+	})
+	t.Run("service name stands in for a missing model", func(t *testing.T) {
+		out := "+-o SomeAccel  <class SomeAccel>\n  \"PerformanceStatistics\" = {\"Device Utilization %\"=3}\n"
+		gpus := ParseIOAcceleratorGPU(out)
+		if len(gpus) != 1 || gpus[0].Name != "SomeAccel" {
+			t.Errorf("gpus = %+v", gpus)
+		}
+	})
+	t.Run("empty output", func(t *testing.T) {
+		if gpus := ParseIOAcceleratorGPU(""); gpus != nil {
+			t.Errorf("gpus = %+v, want none", gpus)
+		}
+	})
+}
+
 func TestCollectorDarwin(t *testing.T) {
 	c := &Collector{GOOS: "darwin", Run: fixtureRunner(map[string]string{
 		"top":     topFixture,
 		"sysctl":  "34359738368\n",
 		"vm_stat": vmStatFixture,
+		"ioreg":   ioregAGXFixture,
 	}, nil)}
 	var stats Stats
 	c.System(context.Background(), &stats)
-	if stats.GPUs != nil {
-		t.Errorf("darwin reported GPUs: %+v", stats.GPUs)
+	if len(stats.GPUs) != 1 || stats.GPUs[0].Utilization != 56 || stats.GPUs[0].MemoryTotal != 0 {
+		t.Errorf("darwin GPUs = %+v", stats.GPUs)
 	}
 	if stats.CPU == nil || stats.Memory == nil {
 		t.Errorf("stats = %+v", stats)
 	}
 	if len(stats.Errors) != 0 {
 		t.Errorf("errors = %v", stats.Errors)
+	}
+}
+
+func TestCollectorDarwinNoAcceleratorIsSilent(t *testing.T) {
+	c := &Collector{GOOS: "darwin", Run: fixtureRunner(map[string]string{
+		"top":     topFixture,
+		"sysctl":  "34359738368\n",
+		"vm_stat": vmStatFixture,
+		"ioreg":   "",
+	}, nil)}
+	var stats Stats
+	c.System(context.Background(), &stats)
+	if stats.GPUs != nil || len(stats.Errors) != 0 {
+		t.Errorf("GPUs = %+v, errors = %v; want neither", stats.GPUs, stats.Errors)
+	}
+}
+
+func TestCollectorDarwinIoregFailureIsReported(t *testing.T) {
+	c := &Collector{GOOS: "darwin", Run: func(_ context.Context, name string, _ ...string) (string, error) {
+		if name == "ioreg" {
+			return "", errors.New("exit status 1")
+		}
+		return "", exec.ErrNotFound
+	}}
+	var stats Stats
+	c.System(context.Background(), &stats)
+	if len(stats.Errors) != 1 || !strings.HasPrefix(stats.Errors[0], "gpu: ") {
+		t.Errorf("errors = %v, want one gpu error", stats.Errors)
 	}
 }
 

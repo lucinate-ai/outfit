@@ -381,7 +381,9 @@ Because the client sets the key, it knows the key — which is what it gives the
 agent it launches. `/v1/status` reports only *that* a key is required, never
 what it is, and no endpoint returns it. A supervised engine gets its own `/metrics` endpoint switched on
 (llama.cpp `--metrics`), which is where the token counters come from; GPU
-readings need `nvidia-smi` (no Apple GPU source yet).
+readings come from `nvidia-smi` on Linux and from the I/O Kit accelerator
+(`ioreg`) on macOS, where only utilisation and the GPU name are reported — no
+GPU memory or temperature.
 
 Those counters are also read every 15 seconds in the background, so
 `/v1/status` and `/v1/metrics` can both report `lastActiveAt` and

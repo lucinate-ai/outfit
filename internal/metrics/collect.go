@@ -14,8 +14,13 @@ var nvidiaSMIArgs = []string{
 	"--format=csv,noheader,nounits",
 }
 
+// ioregAcceleratorArgs dumps the I/O Kit accelerator services. -w 0 turns line
+// wrapping off so each property stays on one line when stdout is a pipe.
+var ioregAcceleratorArgs = []string{"-rd1", "-c", "IOAccelerator", "-w", "0"}
+
 // Collector gathers system stats with host commands: nvidia-smi/vmstat/free
-// on Linux; sysctl, vm_stat and top on macOS (no GPU source there yet). Both
+// on Linux; sysctl, vm_stat, top and ioreg on macOS, where the GPU is the I/O
+// Kit accelerator service (utilisation and name, no memory or temperature). Both
 // the command runner and the platform are injectable so tests feed fixture
 // output for either platform without running anything.
 type Collector struct {
@@ -71,8 +76,17 @@ func reportable(err error) bool {
 }
 
 func (c *Collector) gpus(ctx context.Context) ([]GpuStat, error) {
-	if c.goos() != "linux" {
-		// No GPU source off Linux yet (Apple GPU stats are issue #47).
+	switch c.goos() {
+	case "darwin":
+		// A host with no accelerator service prints nothing, which parses to
+		// no GPUs.
+		out, err := c.run(ctx, "ioreg", ioregAcceleratorArgs...)
+		if err != nil {
+			return nil, err
+		}
+		return ParseIOAcceleratorGPU(out), nil
+	case "linux":
+	default:
 		return nil, nil
 	}
 	out, err := c.run(ctx, "nvidia-smi", nvidiaSMIArgs...)

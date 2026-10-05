@@ -57,7 +57,7 @@ Stops the engine.
 ### GET `/v1/metrics`
 Returns the current metrics:
 - Token usage counters (from the engine's Prometheus `/metrics` endpoint)
-- Host system metrics (GPU, CPU, RAM)
+- Host system metrics (GPU, CPU, RAM). On macOS a GPU carries utilisation and name only; its `memoryUsed`, `memoryTotal` and `temperature` are `0`, meaning the host reports none
 - `history`, the daemon's retained system readings — one per sampler tick while an engine ran, each a 0–100% figure per series (`t` time, `c` CPU, `m` memory, `g` per-GPU utilisation and memory), covering at most the last 10 minutes
 - `lastActiveAt` and `idleSeconds`, the same pair `/v1/status` reports
 
