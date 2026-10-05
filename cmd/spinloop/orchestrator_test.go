@@ -117,7 +117,7 @@ func TestCmdOrchestrator_AFleetFileNamesTheGateway(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, ".env"), "ORCH_FILE_TOKEN=the-token\n")
 	mustWrite(t, "work.yaml", "- id: a\n  instructions: do\n  dir: .\n  tags:\n    - gpu=a100\n")
 
-	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "")
+	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func TestCmdOrchestrator_WorksAgainstAGatewayOnLoopback(t *testing.T) {
 	t.Chdir(dir)
 	mustWrite(t, "work.yaml", "- id: a\n  instructions: do\n  dir: .\n  tags:\n    - gpu=a100\n")
 
-	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "")
+	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +399,7 @@ func TestCmdOrchestrator_LoopbackServesTheWorkListWithoutAToken(t *testing.T) {
 	// The item names a tag no node carries, so nothing is launched.
 	mustWrite(t, "work.yaml", "- id: a\n  instructions: do\n  dir: .\n  tags:\n    - gpu=a100\n")
 
-	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "")
+	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -495,7 +495,7 @@ func TestCmdOrchestrator_StartupShowsARestartsRecoveredState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "")
+	srv, ln, err := newGatewayServer("", "127.0.0.1:0", "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

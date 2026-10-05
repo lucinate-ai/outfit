@@ -86,6 +86,8 @@ type fakeNode struct {
 	pushedKey string
 	// engineGotAuth is the last authorisation the engine itself saw.
 	engineGotAuth string
+	// engineGotBody is the last request body the engine itself read.
+	engineGotBody string
 	// statusHits counts status calls, so a burst's fan-out is countable.
 	statusHits int
 
@@ -135,6 +137,9 @@ func (f *fakeNode) engineHandler() http.Handler {
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.engineGotBody = string(body)
+		f.mu.Unlock()
 		switch {
 		case strings.Contains(string(body), `"stream":true`):
 			w.Header().Set("Content-Type", "text/event-stream")
@@ -1474,5 +1479,61 @@ func TestStartingEngineThatNeverAnswersFailsNamingTheNode(t *testing.T) {
 	}
 	if strings.Contains(body, "connect: connection refused") {
 		t.Errorf("the caller should not be given a dial error: %s", body)
+	}
+}
+
+// paddedRequest is a valid completion request of exactly size bytes.
+func paddedRequest(size int) string {
+	const head = `{"model":"org/wanted","messages":[{"role":"user","content":"`
+	const tail = `"}]}`
+	return head + strings.Repeat("a", size-len(head)-len(tail)) + tail
+}
+
+func TestRequestAtTheLimitIsForwardedInFull(t *testing.T) {
+	node := newFakeNode(t, string(daemon.StateRunning), "org/wanted")
+	h := New(fleetOf(t, []string{"box"}, node), "", Options{MaxRequestBytes: 4096})
+	req := paddedRequest(4096)
+
+	resp, body := post(t, h, "", req)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP %d, body %s", resp.StatusCode, body)
+	}
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	if node.engineGotBody != req {
+		t.Errorf("the engine read %d bytes, want the full %d", len(node.engineGotBody), len(req))
+	}
+}
+
+func TestRequestOverTheLimitIsRefusedWith413(t *testing.T) {
+	node := newFakeNode(t, string(daemon.StateRunning), "org/wanted")
+	h := New(fleetOf(t, []string{"box"}, node), "", Options{MaxRequestBytes: 4096})
+
+	resp, body := post(t, h, "", paddedRequest(4097))
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("HTTP %d, want 413; body %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{"4096", "--max-request-bytes"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the refusal should name %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "not a JSON body") {
+		t.Errorf("an over-limit body must not read as malformed JSON: %s", body)
+	}
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	if node.statusHits != 0 || node.engineGotBody != "" {
+		t.Error("an over-limit request reached a node")
+	}
+}
+
+func TestDefaultRequestLimitAdmitsWhatOneMiBRefused(t *testing.T) {
+	node := newFakeNode(t, string(daemon.StateRunning), "org/wanted")
+	h := New(fleetOf(t, []string{"box"}, node), "", Options{})
+
+	resp, body := post(t, h, "", paddedRequest(2<<20))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("HTTP %d, body %s", resp.StatusCode, body)
 	}
 }

@@ -36,6 +36,11 @@ import (
 // one address without knowing the machine it lands on.
 const DefaultListen = ":4000"
 
+// DefaultMaxRequestBytes is the largest completion request body the gateway
+// reads when --max-request-bytes is not given. A request carries a whole
+// conversation, so the figure sits well above a long agent turn.
+const DefaultMaxRequestBytes int64 = 64 << 20
+
 // LoopbackListen is where `--loopback` binds the gateway: the default port on
 // loopback, the safe bind a local-only gateway wants — one that Listen's token
 // check accepts without a token.
@@ -68,6 +73,10 @@ type Options struct {
 	Log *slog.Logger
 	// Now is the clock the reading cache ages against; nil uses time.Now.
 	Now func() time.Time
+	// MaxRequestBytes is the largest completion request body the gateway
+	// accepts; a larger one is answered 413. Zero or less uses
+	// DefaultMaxRequestBytes.
+	MaxRequestBytes int64
 }
 
 // Handler is the gateway: the fleet it serves, the token its callers present,
@@ -79,6 +88,8 @@ type Handler struct {
 	cfgFor fleet.ConfigFor
 	log    *slog.Logger
 	now    func() time.Time
+
+	maxRequestBytes int64
 
 	mu         sync.Mutex
 	results    []fleet.NodeResult
@@ -99,7 +110,11 @@ func New(cfg *fleet.Config, token string, opts Options) *Handler {
 	if now == nil {
 		now = time.Now
 	}
-	return &Handler{cfg: cfg, token: token, cfgFor: opts.ConfigFor, log: log, now: now}
+	maxBytes := opts.MaxRequestBytes
+	if maxBytes <= 0 {
+		maxBytes = DefaultMaxRequestBytes
+	}
+	return &Handler{cfg: cfg, token: token, cfgFor: opts.ConfigFor, log: log, now: now, maxRequestBytes: maxBytes}
 }
 
 // Listen opens the gateway's listener, applying the daemon's exposure rule:
@@ -430,8 +445,15 @@ func (h *Handler) reading(ctx context.Context) []fleet.NodeResult {
 // handleCompletion routes a completion request to the node serving its model,
 // waking one when nothing is and the fleet file allows it.
 func (h *Handler) handleCompletion(w http.ResponseWriter, r *http.Request) {
-	model, body, err := requestModel(r)
+	model, body, err := requestModel(w, r, h.maxRequestBytes)
 	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeError(w, http.StatusRequestEntityTooLarge, fmt.Errorf(
+				"the request body is larger than the gateway's limit of %d bytes: raise it with --max-request-bytes",
+				tooLarge.Limit))
+			return
+		}
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -471,10 +493,13 @@ func (h *Handler) handleCompletion(w http.ResponseWriter, r *http.Request) {
 }
 
 // requestModel pulls the model field out of a completion request and returns
-// it with the full body, which the proxy must forward unmodified. A body that
-// is not a JSON object fails saying so, rather than being routed at a guess.
-func requestModel(r *http.Request) (string, []byte, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+// it with the full body, which the proxy must forward unmodified. A body
+// larger than limit returns an error wrapping *http.MaxBytesError, and any
+// other failed read returns an error, so a body that was not read in full is
+// never returned. A body that is not a JSON object fails saying so, rather
+// than being routed at a guess.
+func requestModel(w http.ResponseWriter, r *http.Request, limit int64) (string, []byte, error) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		return "", nil, fmt.Errorf("reading the request: %w", err)
 	}

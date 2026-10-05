@@ -196,6 +196,7 @@ on a shared machine wants, and the reason the token is not optional there.
 | `--api-token-file` | Read the gateway's bearer token from this file |
 | `--api-token` | The gateway's bearer token |
 | `--wake-timeout` | How long to wait for a woken engine to answer (default 5m) |
+| `--max-request-bytes` | The largest completion request body to accept, in bytes (default 67108864, 64 MiB); a larger one is answered `413` |
 
 ## See also
 
