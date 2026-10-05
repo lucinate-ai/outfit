@@ -33,6 +33,11 @@ const (
 // DefaultGrace is how long Stop waits after the polite signal before killing.
 const DefaultGrace = 10 * time.Second
 
+// ptyDrainTimeout is how long, after the engine exits, the capture waits for
+// the pseudo-terminal to report end of stream before closing it. It is a
+// variable so a test can shorten it.
+var ptyDrainTimeout = 2 * time.Second
+
 // Supervisor runs at most one engine process: started detached into its own
 // process group, its output captured, its exit recorded rather than acted on.
 type Supervisor struct {
@@ -160,12 +165,21 @@ func (s *Supervisor) Start(argv []string) error {
 
 	go func() {
 		err := cmd.Wait()
-		// The engine is gone: end the pseudo-terminal's read, wait for
-		// the pump's final record, and only then close the log the pump
-		// wrote to.
+		// The engine is gone. The pump is left to read the master until it
+		// reports end of stream, so output the engine wrote just before
+		// exiting is not discarded by closing the master early. If the
+		// stream has not ended within ptyDrainTimeout — a child of the
+		// engine can hold the slave open — the master is closed to end the
+		// read. The log the pump wrote to is closed only after its final
+		// record.
 		if ptyMaster != nil {
+			select {
+			case <-ptyDone:
+			case <-time.After(ptyDrainTimeout):
+				ptyMaster.Close()
+				<-ptyDone
+			}
 			ptyMaster.Close()
-			<-ptyDone
 		}
 		if logFile != nil {
 			logFile.Close()

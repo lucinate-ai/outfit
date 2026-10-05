@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestSupervisorPTYCapture is the end of the chain the unit tests cover in
@@ -65,6 +66,35 @@ echo 'a stderr line' 1>&2`)
 	}
 	if strings.Contains(got, "\r") {
 		t.Errorf("a carriage return reached the log:\n%q", got)
+	}
+}
+
+// TestSupervisorPTYCaptureEndsWithALingeringChild covers the bound on the
+// drain after the engine exits: a child that outlives the engine keeps the
+// slave open, so the master never reports end of stream, and the capture
+// closes it once ptyDrainTimeout has passed. The output written before the
+// exit is still in the log.
+func TestSupervisorPTYCaptureEndsWithALingeringChild(t *testing.T) {
+	previous := ptyDrainTimeout
+	ptyDrainTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { ptyDrainTimeout = previous })
+
+	logPath := filepath.Join(t.TempDir(), "engine.log")
+	s := NewSupervisor(logPath)
+	engine := stubEngine(t, `echo 'before the exit'
+sleep 3 &
+exit 0`)
+	if err := s.Start([]string{engine}); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, s, StateStopped)
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "before the exit\n") {
+		t.Errorf("the log is missing the output written before the exit:\n%s", data)
 	}
 }
 
