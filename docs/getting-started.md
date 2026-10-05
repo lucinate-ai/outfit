@@ -113,7 +113,7 @@ no Spinloop uses it — see [`spinloop alias`](commands/alias.md#naming-one-for-
 - [From a Hugging Face model](guides/hugging-face.md) — a model page's
   reference, into a `Spinloop`
 - [Run a daemon node](guides/daemon.md) — the engine under the control API
-- [Deploy to a cloud GPU](guides/remote.md) — the same `Spinloop`, on a
+- [Deploy to a cloud GPU](guides/cloud.md) — the same `Spinloop`, on a
   machine that stops when you do
 - [Run a fleet](guides/fleet.md) — every machine you run, from one place
 - [The `Spinloop` file](spinloop-file.md) — full syntax

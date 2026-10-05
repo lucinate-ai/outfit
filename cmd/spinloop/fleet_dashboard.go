@@ -65,7 +65,7 @@ func dashModelFor(target fleetTarget) (dashModel, error) {
 // the terminal on the way out, whatever key got here. The program holds the
 // model by pointer: a value model would drop the mutations Init makes (the
 // program does not read Init's receiver back), and the first round's answers
-// — expensive cloud calls, for remote environments — must not be discarded.
+// — expensive cloud calls, for cloud environments — must not be discarded.
 func runDashProgram(m dashModel) error {
 	prog := tea.NewProgram(&m, tea.WithAltScreen())
 	// The calls behind in-flight actions report their status lines from

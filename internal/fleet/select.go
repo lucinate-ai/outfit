@@ -406,7 +406,7 @@ func (c *Config) EngineBaseURL(n NodeConfig, status daemon.StatusResponse) (stri
 	host, port, path := n.Host, 0, ""
 	if ep := status.Engine; ep != nil {
 		port, path = ep.Port, ep.Path
-		// A node that reports its engine's host — a remote environment, whose
+		// A node that reports its engine's host — a cloud environment, whose
 		// control plane knows the instance's published address — is reached
 		// there, in place of the host the fleet file supplies.
 		if ep.Host != "" {
@@ -484,8 +484,8 @@ func hostIsLoopback(host string) bool {
 // the control plane reports the instance, never the gate, so its key is looked
 // up whatever the status says — from the node's own reference or the fleet's.
 func (c *Config) engineKeyFor(n NodeConfig, status daemon.StatusResponse) (string, error) {
-	if n.Kind == KindRemote {
-		return c.RemoteEngineToken(n)
+	if n.Kind == KindCloud {
+		return c.CloudEngineToken(n)
 	}
 	if status.Engine == nil || !status.Engine.RequiresKey {
 		return "", nil

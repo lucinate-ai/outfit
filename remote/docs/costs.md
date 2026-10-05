@@ -58,7 +58,7 @@ Worked examples (GPU hours + the ~$6 fixed floor):
 
 The bake and the weight seed are one-offs: each runs a cheap `m5.xlarge` for
 ~20–40 minutes, so a few pennies. Bakes are only needed when the engine version
-or driver changes — swapping model is just `spinloop remote deploy`, and the seed
+or driver changes — swapping model is just `spinloop cloud deploy`, and the seed
 it starts is the only cost.
 
 Need more headroom? The 27B checkpoint sits close to the 32 GB of RAM

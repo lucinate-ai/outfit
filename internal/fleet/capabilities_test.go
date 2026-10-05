@@ -25,20 +25,20 @@ func countingStatsServer(t *testing.T, body string, calls *int) string {
 }
 
 // registerStatsEnv registers an environment whose stats call is the given URL,
-// which registerRemoteEnv does not set — the capabilities answer from a stats
+// which registerCloudEnv does not set — the capabilities answer from a stats
 // reading, so a test of them needs one.
 func registerStatsEnv(t *testing.T, name, url string) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("SPINLOOP_CONFIG_DIR", home)
-	dir := filepath.Join(home, "remotes", name)
+	dir := filepath.Join(home, "clouds", name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	body := fmt.Sprintf(
 		`{"start_url":%q,"stop_url":%q,"stats_url":%q,"region":"us-east-1","environment":%q}`,
 		url, url, url, name)
-	if err := os.WriteFile(filepath.Join(dir, "remote.json"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "cloud.json"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -64,10 +64,10 @@ func TestDaemonNodeImplementsNoCloudCapability(t *testing.T) {
 
 // A cloud node implements all three, so a caller reaches them by assertion
 // rather than by asking what kind it is.
-func TestRemoteNodeImplementsTheCloudCapabilities(t *testing.T) {
+func TestCloudNodeImplementsTheCloudCapabilities(t *testing.T) {
 	stubAWSCreds(t)
-	up := remoteControlServer(t, `{"state":"running"}`, http.StatusOK)
-	registerRemoteEnv(t, "prod", up.URL, up.URL)
+	up := cloudControlServer(t, `{"state":"running"}`, http.StatusOK)
+	registerCloudEnv(t, "prod", up.URL, up.URL)
 	cfg, err := ForEnvironment("prod")
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestRemoteNodeImplementsTheCloudCapabilities(t *testing.T) {
 }
 
 // The instance facts come from the reading already taken, not a second call.
-func TestRemoteNodeInstanceComesFromTheMetricsReading(t *testing.T) {
+func TestCloudNodeInstanceComesFromTheMetricsReading(t *testing.T) {
 	stubAWSCreds(t)
 	calls := 0
 	srv := countingStatsServer(t, `{"state":"running","version":"1.40.0","instanceId":"i-0abc","instanceType":"g6e.xlarge","uptimeSeconds":7200}`, &calls)
@@ -121,10 +121,10 @@ func TestRemoteNodeInstanceComesFromTheMetricsReading(t *testing.T) {
 
 // A node with nothing to price reports no cost rather than a zero one: "$0.00"
 // claims it cost nothing, which is a different statement.
-func TestRemoteNodeCostIsUnreportedWithoutAReading(t *testing.T) {
+func TestCloudNodeCostIsUnreportedWithoutAReading(t *testing.T) {
 	stubAWSCreds(t)
-	up := remoteControlServer(t, `{"state":"stopped"}`, http.StatusOK)
-	registerRemoteEnv(t, "prod", up.URL, up.URL)
+	up := cloudControlServer(t, `{"state":"stopped"}`, http.StatusOK)
+	registerCloudEnv(t, "prod", up.URL, up.URL)
 	cfg, err := ForEnvironment("prod")
 	if err != nil {
 		t.Fatal(err)

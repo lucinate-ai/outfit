@@ -324,7 +324,7 @@ async function seedingGate(
     return null;
   }
   const seedId = seedIdFor(config.runner, config.modelId, config.quant);
-  const follow = `follow it with \`spinloop remote seed status ${seedId}\``;
+  const follow = `follow it with \`spinloop cloud seed status ${seedId}\``;
 
   const inFlight = (await findSeedInstances(TAG_KEY, seedId)).filter((i) => seedAlive(i.state));
   if (inFlight.length > 0) {
@@ -473,7 +473,7 @@ async function wake(
       {
         state: 'unconfigured',
         environment: env,
-        message: `${(err as Error).message} — run \`spinloop remote deploy\``,
+        message: `${(err as Error).message} — run \`spinloop cloud deploy\``,
         retry_after_seconds: 300,
       },
       { 'retry-after': '300' },
@@ -488,7 +488,7 @@ async function wake(
     return jsonResponse(503, {
       state: 'undeployed',
       environment: env,
-      message: `environment ${JSON.stringify(env)} has no deployed infrastructure — run \`spinloop remote deploy\``,
+      message: `environment ${JSON.stringify(env)} has no deployed infrastructure — run \`spinloop cloud deploy\``,
       retry_after_seconds: 300,
     });
   }

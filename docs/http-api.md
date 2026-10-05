@@ -115,7 +115,7 @@ Returns `400 Bad Request` if `offset` or `limit` is not a whole number, or if
 
 ### PUT `/v1/deploy-config`
 Updates the configuration for the *next* engine start.
-- Request body: `remote.DeployConfig` JSON
+- Request body: `inference.DeployConfig` JSON
 - Returns `200 OK` with a message indicating if the change is active now or will take effect on the next start.
 - Returns `400 Bad Request` if the configuration is invalid or fails to push.
 

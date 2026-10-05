@@ -72,13 +72,13 @@ function bundleSeeder(): string {
 }
 
 /**
- * The account-level control plane — deployed once by `spinloop remote bootstrap`,
+ * The account-level control plane — deployed once by `spinloop cloud bootstrap`,
  * analogous to `cdk bootstrap`. It holds what every environment reuses: the
  * weights bucket, the VPC, the shared IAM roles, and the environment-aware
  * lifecycle Lambdas (start/stop/deploy). It creates NO Elastic IP and NO
  * instance: an environment — its EIP, security group (per-env allowed CIDR),
  * API-key secret and SSM state — is created on demand by the deploy Lambda
- * when `spinloop remote deploy` names it, and the same shared Lambdas then
+ * when `spinloop cloud deploy` names it, and the same shared Lambdas then
  * start, stop and idle-monitor every environment's instance in the account.
  */
 export class LlmStack extends cdk.Stack {
@@ -497,7 +497,7 @@ export class LlmStack extends cdk.Stack {
     stopFn.addToRolePolicy(seedTerminateStatement());
     seedLogStatements().forEach((s) => stopFn.addToRolePolicy(s));
 
-    // The control plane `spinloop remote deploy` calls: it creates the named
+    // The control plane `spinloop cloud deploy` calls: it creates the named
     // environment's resources (EIP, security group, API key, SSM state) if
     // absent, seeds the weights if missing, and writes the environment's
     // deploy-config. spinloop needs only Lambda invoke (SigV4), no SSM/EC2 perms
@@ -758,7 +758,7 @@ export class LlmStack extends cdk.Stack {
     const scheduleUrl = scheduleFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
     // The human-facing principal behind the CLI's long-lived credential:
-    // `spinloop remote auth --store` creates an access key for this user and
+    // `spinloop cloud auth --store` creates an access key for this user and
     // keeps it in the operator's OS keystore, so day-to-day control calls
     // work between SSO log-ins. The policy is day-to-day control only —
     // invoke the control URLs, read the instance logs, discover the stack,
@@ -831,7 +831,7 @@ export class LlmStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(stopFn)],
     });
 
-    // Discovery: `spinloop remote deploy` reads these stack outputs (by the
+    // Discovery: `spinloop cloud deploy` reads these stack outputs (by the
     // well-known stack name) to find the control plane from any machine with
     // account access — no local file carries them.
     new cdk.CfnOutput(this, 'StartUrl', { value: startUrl.url });
@@ -853,7 +853,7 @@ export class LlmStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'SeedSecurityGroupId', { value: seedSg.securityGroupId });
     new cdk.CfnOutput(this, 'HfTokenSecretArn', { value: hfSecret?.secretArn ?? '' });
     // The control URLs shared by every environment. No base_url here: an
-    // environment's address is its own EIP, allocated at `spinloop remote
+    // environment's address is its own EIP, allocated at `spinloop cloud
     // deploy` and returned by it.
     new cdk.CfnOutput(this, 'SpinloopRemoteConfig', {
       value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","env_url":"${envUrl.url}","seed_url":"${seedUrl.url}","update_url":"${updateUrl.url}","schedule_url":"${scheduleUrl.url}","region":"${this.region}"}`,

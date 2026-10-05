@@ -1,6 +1,6 @@
 /**
  * Environments: the per-instance layer on top of the control-plane stack. The shared
- * stack (deployed once by `spinloop remote bootstrap`) holds the Lambdas, the
+ * stack (deployed once by `spinloop cloud bootstrap`) holds the Lambdas, the
  * weights bucket, roles and the VPC; an environment is created by the deploy
  * Lambda on demand and owns everything specific to one endpoint — its Elastic
  * IP (stable address), its security group (per-env allowed CIDR), its API-key

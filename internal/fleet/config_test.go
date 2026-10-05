@@ -97,10 +97,10 @@ func TestLoadRejectsIncompleteNodes(t *testing.T) {
 		"no nodes":                 "nodes: []\n",
 		"no name":                  "nodes:\n  - host: a.local\n",
 		"no host":                  "nodes:\n  - name: studio\n",
-		"remote name is a path":    "nodes:\n  - name: a/b\n    kind: remote\n",
-		"remote name has .json":    "nodes:\n  - name: prod.json\n    kind: remote\n",
+		"cloud name is a path":     "nodes:\n  - name: a/b\n    kind: cloud\n",
+		"cloud name has .json":     "nodes:\n  - name: prod.json\n    kind: cloud\n",
 		"daemon instance-type":     "nodes:\n  - name: studio\n    host: a.local\n    instance-type: g6e.xlarge\n",
-		"remote bad instance-type": "nodes:\n  - name: prod\n    kind: remote\n    instance-type: g6exlarge\n",
+		"remote bad instance-type": "nodes:\n  - name: prod\n    kind: cloud\n    instance-type: g6exlarge\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(writeFleet(t, body, "")); err == nil {
@@ -118,34 +118,34 @@ func TestLoadUnknownKindNamesIt(t *testing.T) {
 	}
 }
 
-// A kind-remote node's name is the registered environment it drives; it needs
+// A kind-cloud node's name is the registered environment it drives; it needs
 // no host, and nothing else to name it with.
-func TestLoadRemoteKindNamedByEnvironment(t *testing.T) {
+func TestLoadCloudKindNamedByEnvironment(t *testing.T) {
 	path := writeFleet(t, `
 nodes:
   - name: prod
-    kind: remote
+    kind: cloud
 `, "")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	n := cfg.Nodes[0]
-	if n.Kind != KindRemote || n.Name != "prod" {
-		t.Errorf("remote node = %+v, want kind remote named prod", n)
+	if n.Kind != KindCloud || n.Name != "prod" {
+		t.Errorf("cloud node = %+v, want kind remote named prod", n)
 	}
 	if n.Host != "" {
-		t.Errorf("remote node needs no host, got %q", n.Host)
+		t.Errorf("cloud node needs no host, got %q", n.Host)
 	}
 }
 
-// A kind-remote node may name the instance type its environment launches as;
+// A kind-cloud node may name the instance type its environment launches as;
 // the field parses onto the node so `fleet deploy` can read it.
-func TestLoadRemoteKindInstanceType(t *testing.T) {
+func TestLoadCloudKindInstanceType(t *testing.T) {
 	path := writeFleet(t, `
 nodes:
   - name: prod
-    kind: remote
+    kind: cloud
     instance-type: g6e.2xlarge
 `, "")
 	cfg, err := Load(path)
@@ -157,17 +157,17 @@ nodes:
 	}
 }
 
-// A remote node naming a malformed instance type is a configuration error that
+// A cloud node naming a malformed instance type is a configuration error that
 // names both the node and the value, not a silent deploy of junk.
-func TestLoadRemoteKindBadInstanceTypeNamesIt(t *testing.T) {
+func TestLoadCloudKindBadInstanceTypeNamesIt(t *testing.T) {
 	_, err := Load(writeFleet(t, `
 nodes:
   - name: prod
-    kind: remote
+    kind: cloud
     instance-type: g6exlarge
 `, ""))
 	if err == nil {
-		t.Fatal("accepted a remote node with a malformed instance-type")
+		t.Fatal("accepted a cloud node with a malformed instance-type")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "prod") || !strings.Contains(msg, "g6exlarge") {
@@ -404,14 +404,14 @@ nodes:
 // The fleet-wide key is a remote-only default: resolved like every other
 // secret in the file, a node's own reference overrides it, and a remote that
 // names no resolvable key is named for it.
-func TestRemoteEngineTokenResolution(t *testing.T) {
+func TestCloudEngineTokenResolution(t *testing.T) {
 	path := writeFleet(t, `
 apiKeyEnv: FLEET_KEY
 nodes:
   - name: shared
-    kind: remote
+    kind: cloud
   - name: own
-    kind: remote
+    kind: cloud
     engineTokenEnv: OWN_KEY
   - name: box
     host: box.local
@@ -423,18 +423,18 @@ nodes:
 
 	shared, _ := cfg.Node("shared")
 	// The fleet's variable, from the .env beside the file.
-	if got, err := cfg.RemoteEngineToken(shared); err != nil || got != "from-dotenv" {
+	if got, err := cfg.CloudEngineToken(shared); err != nil || got != "from-dotenv" {
 		t.Errorf("key = %q, %v; want the fleet .env value", got, err)
 	}
 	// An exported value wins, as everywhere else in spinloop.
 	t.Setenv("FLEET_KEY", "exported")
-	if got, err := cfg.RemoteEngineToken(shared); err != nil || got != "exported" {
+	if got, err := cfg.CloudEngineToken(shared); err != nil || got != "exported" {
 		t.Errorf("key = %q, %v; want the exported value", got, err)
 	}
 
 	// A node's own reference overrides the fleet-wide one.
 	own, _ := cfg.Node("own")
-	if got, err := cfg.RemoteEngineToken(own); err != nil || got != "own-dotenv" {
+	if got, err := cfg.CloudEngineToken(own); err != nil || got != "own-dotenv" {
 		t.Errorf("key = %q, %v; want the node's own value", got, err)
 	}
 
@@ -446,19 +446,19 @@ nodes:
 	}
 }
 
-func TestRemoteEngineTokenUnsetNamesTheVariable(t *testing.T) {
+func TestCloudEngineTokenUnsetNamesTheVariable(t *testing.T) {
 	path := writeFleet(t, `
 apiKeyEnv: NOWHERE_FLEET_KEY
 nodes:
   - name: shared
-    kind: remote
+    kind: cloud
 `, "")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	node, _ := cfg.Node("shared")
-	_, err = cfg.RemoteEngineToken(node)
+	_, err = cfg.CloudEngineToken(node)
 	if err == nil {
 		t.Fatal("an unset fleet key variable should be a config error")
 	}
@@ -469,18 +469,18 @@ nodes:
 	}
 }
 
-func TestRemoteEngineTokenMissingNamesBothPlaces(t *testing.T) {
+func TestCloudEngineTokenMissingNamesBothPlaces(t *testing.T) {
 	path := writeFleet(t, `
 nodes:
   - name: shared
-    kind: remote
+    kind: cloud
 `, "")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	node, _ := cfg.Node("shared")
-	_, err = cfg.RemoteEngineToken(node)
+	_, err = cfg.CloudEngineToken(node)
 	if err == nil {
 		t.Fatal("a remote naming no key anywhere should be a config error")
 	}
@@ -499,7 +499,7 @@ func TestLoadIgnoresUnknownFleetFields(t *testing.T) {
 apiKeyEnv: SHARED_KEY
 nodes:
   - name: shared
-    kind: remote
+    kind: cloud
 `, "")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -549,7 +549,7 @@ func TestFileField(t *testing.T) {
 	path := writeFleet(t, `
 nodes:
   - name: gpu-env
-    kind: remote
+    kind: cloud
     file: ./envs/gpu.Spinloop
   - name: dev-1
     host: dev1.local
@@ -561,9 +561,9 @@ nodes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	remote, _ := cfg.Node("gpu-env")
-	if remote.File != "./envs/gpu.Spinloop" {
-		t.Errorf("remote node File = %q", remote.File)
+	cloud, _ := cfg.Node("gpu-env")
+	if cloud.File != "./envs/gpu.Spinloop" {
+		t.Errorf("cloud node File = %q", cloud.File)
 	}
 	daemonNode, _ := cfg.Node("dev-1")
 	if daemonNode.File != "../shared/dev.Spinloop" {

@@ -1,9 +1,9 @@
-// Shared status rendering. Both `spinloop remote status` (one cloud endpoint) and
+// Shared status rendering. Both `spinloop cloud status` (one cloud endpoint) and
 // `spinloop fleet status` (a node per machine) report the same facts about an
 // spinloop-driven inference endpoint: its state, what it is serving, how long since
 // it last did work, and its spinloop version. Those facts live here, computed once,
 // so the two commands cannot word or compute them differently. Each command layers
-// its own layout and any facts the other does not carry on top: the remote keeps
+// its own layout and any facts the other does not carry on top: the cloud keeps
 // its key-value block and its endpoint's address and health, the fleet keeps its
 // one-node-per-row table.
 
@@ -43,7 +43,7 @@ type statusFact struct {
 
 // servingText is the "what it serves" text: runner and model, then the uptime and
 // the since-last-work and version, in the order and wording both commands use.
-// The fleet renders it as its table cell; the remote reads the same pieces for
+// The fleet renders it as its table cell; the cloud reads the same pieces for
 // its lines.
 func (f statusFact) servingText() string {
 	var serving string

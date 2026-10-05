@@ -80,7 +80,7 @@ func TestRoot_MovedSpellingsNameTheirNewHome(t *testing.T) {
 
 // TestRoot_MovedSubcommandSpellingsNameTheirNewHome pins the same signpost one
 // level down, for a subcommand a group used to have: "fleet metrics" and
-// "remote status" and their siblings must each name the top-level verb that
+// "cloud status" and their siblings must each name the top-level verb that
 // replaced them, rather than cobra's ordinary unknown-command error.
 func TestRoot_MovedSubcommandSpellingsNameTheirNewHome(t *testing.T) {
 	isolateConfig(t)

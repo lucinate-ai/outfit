@@ -13,7 +13,7 @@ spinloop fleet route my-spinloop # which node a harness launch would pick
 spinloop fleet start gpu-box     # start one or more nodes' engines
 spinloop fleet start --all       # start every node in the fleet
 spinloop fleet stop gpu-box      # stop one or more nodes' engines
-spinloop fleet deploy --all      # create every kind: remote node's AWS environment
+spinloop fleet deploy --all      # create every kind: cloud node's AWS environment
 ```
 
 [`spinloop status`](status.md) and [`spinloop dashboard`](dashboard.md) are
@@ -93,7 +93,7 @@ nodes:
 The file is found the way a `Spinloop` is: `./fleet.yaml` in the working
 directory, or `--fleet <path>`. The full format reference — every field, a
 node's [Spinloop source](../fleet-file.md#a-nodes-spinloop-source),
-[remote environments](../fleet-file.md#remote-environments),
+[cloud environments](../fleet-file.md#cloud-environments),
 [`prefer`](../fleet-file.md#spreading-or-consolidating) and
 [`wake`](../fleet-file.md#waking), [tags](../fleet-file.md#tags) and
 [concurrency](../fleet-file.md#concurrency), the [gateway section](../fleet-file.md#gateway),
@@ -130,7 +130,7 @@ has been started at all.
 
 `spinloop metrics` renders each node's engine and system metrics in the
 same `gauge` (default), `bar`, `table`, and `json` formats as
-[`spinloop metrics --env <name>`](remote.md) — they share the renderers, so a node in
+[`spinloop metrics --env <name>`](cloud.md) — they share the renderers, so a node in
 your fleet and a cloud endpoint look the same. `gauge` draws the current
 reading per series as a filled progress gauge; `--format=bar` draws each
 series as a sparkline of the node's daemon's retained history instead, and a
@@ -145,7 +145,7 @@ node's engine has done some work. A node whose engine has *stopped* still
 shows it — the daemon keeps the record across a stop, and "how long since this
 did anything?" is worth more about a stopped engine than about a busy one.
 
-A `kind: remote` environment carries a relative keep after that figure, on the
+A `kind: cloud` environment carries a relative keep after that figure, on the
 same line — `active  2m 5s ago  keep for 2h` — on the same omitted-when-absent
 terms: it shows how long the idle sweep will hold the box while the deadline is
 in the future, and is gone once it has passed or was never set. It is the same
@@ -193,13 +193,13 @@ spinloop dashboard --fleet f.yaml # another fleet file
 | `r` | Force a refresh of every node, now |
 | `g` | Toggle every tile's resource series between bar (sparklines of the retained history) and gauge (the current reading) |
 | `s` | Start the selected node — without confirmation — shown only for a node that is not running, and only while it has no action in flight |
-| `k` | Keep a remote environment for a duration you type — shown only for a node that can be kept, and only while it has no action in flight |
+| `k` | Keep a cloud environment for a duration you type — shown only for a node that can be kept, and only while it has no action in flight |
 | `a` | Abandon a start in flight on the selected node — the wait ends, the node is free again (a stop in flight is not abortable) |
 | `x` | Stop the selected node — it asks first (`y` sends, `n` or `esc` cancel) — shown only for a node that is running, and only while it has no action in flight |
 | `q` or `Ctrl+C` | Leave |
 
 The board keeps its own cadence: local machines are read every two seconds,
-and a [`kind: remote`](../fleet-file.md#remote-environments) environment every 60 — one
+and a [`kind: cloud`](../fleet-file.md#cloud-environments) environment every 60 — one
 status call a minute, because its status is a signed control-plane call, not a
 local socket, and a cold instance changes state on the scale of minutes. `r`
 is due for every node whatever those deadlines say.
@@ -222,7 +222,7 @@ refresh. A stop in flight is not abortable: it targets an engine already
 running rather than a cold wake with no deadline of its own, and `a` drives
 nothing while one is in progress.
 
-`keep` is a remote-environment action: a local daemon has no idle sweep, so
+`keep` is a cloud-environment action: a local daemon has no idle sweep, so
 there is no deadline to set, and the key does not show for one. Pressing it
 opens a prompt at the foot of the view, pre-filled with `4h`, asking how long
 the environment should be retained. The prompt is the confirmation — there is
@@ -435,30 +435,30 @@ already tells a node what to run when it wakes one. When it does not resolve,
 daemon already happens to have configured. This is a breaking change: every
 fleet file with a `kind: daemon` node needs a `file` field, a matching alias,
 or a matching subdirectory added, or `fleet start` fails for that node. A
-`kind: remote` node's `start` is unaffected either way.
+`kind: cloud` node's `start` is unaffected either way.
 
-## Deploying remote nodes
+## Deploying cloud nodes
 
-`fleet deploy` creates the AWS environment for one or more `kind: remote`
+`fleet deploy` creates the AWS environment for one or more `kind: cloud`
 nodes — the step that otherwise has to happen outside the fleet file
-entirely, one `spinloop remote deploy --env <name>` at a time, run from the
+entirely, one `spinloop cloud deploy --env <name>` at a time, run from the
 directory holding each node's Spinloop:
 
 ```sh
 spinloop fleet deploy qwen           # one node
 spinloop fleet deploy qwen llama     # several
-spinloop fleet deploy --all          # every kind: remote node in the file
+spinloop fleet deploy --all          # every kind: cloud node in the file
 ```
 
 Each node deploys from its own resolved [Spinloop
 source](../fleet-file.md#a-nodes-spinloop-source), reusing the exact derivation, consent, and
-registration `spinloop remote deploy` uses for the same file — the two can
+registration `spinloop cloud deploy` uses for the same file — the two can
 never disagree about what a given Spinloop deploys — and the environment each
 node creates is named after the node itself. A `kind: daemon` node
 named explicitly fails the command, explaining that `deploy` provisions cloud
 environments and that node is not one; `--all` only ever selects `kind:
-remote` nodes, so a daemon node is never swept in by it. As with
-`start`/`stop`, no node and no `--all` lists the fleet's `kind: remote` nodes
+cloud` nodes, so a daemon node is never swept in by it. As with
+`start`/`stop`, no node and no `--all` lists the fleet's `kind: cloud` nodes
 and deploys nothing, `--all` plus node names is refused as ambiguous, and
 several targeted nodes deploy independently — one node's guard or failure is
 reported against it alone.
@@ -469,15 +469,15 @@ spinloop fleet deploy qwen --overwrite    # redeploy over a registered environme
 ```
 
 `--dry-run`, `--overwrite`, `--reseed`, `--allowed-cidr`, `--region`, and
-`--spinloop-version` mean exactly what they mean on [`spinloop remote
-deploy`](remote.md), applied per node.
+`--spinloop-version` mean exactly what they mean on [`spinloop cloud
+deploy`](cloud.md), applied per node.
 
 ## Flags
 
 | Flag | Meaning |
 | ---- | ------- |
 | `-f`, `--fleet <path>` | The fleet file (default `./fleet.yaml`) — `logs` takes it long-form only, since `-f` is its follow flag |
-| `--all` | `start`/`stop`/`deploy`: act on every node (or every `kind: remote` node, for `deploy`) instead of named ones |
+| `--all` | `start`/`stop`/`deploy`: act on every node (or every `kind: cloud` node, for `deploy`) instead of named ones |
 | `--node <name>` | `route` only: report this node rather than choosing one |
 | `--prefer` | `route` only: rank by `idle` or `active`, overriding the file |
 | `--format` | `metrics`: `gauge` (default), `bar`, `table`, or `json`; `logs`: `text` (default) or `json` |

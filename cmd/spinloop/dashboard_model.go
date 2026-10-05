@@ -25,12 +25,12 @@ import (
 // variable so a test never waits for a slow node.
 var dashboardRefreshInterval = 5 * time.Second
 
-// dashboardRemoteRefreshInterval is the cadence for kind: remote
+// dashboardCloudRefreshInterval is the cadence for kind: cloud
 // environments instead. Each of their statuses is a signed call through the
 // cloud control plane — a Lambda invocation, not a socket on the
 // sideboard — so the board refreshes the local machines on the tick and the
 // cloud environments on this slower deadline. Variable, for the same reason.
-var dashboardRemoteRefreshInterval = 60 * time.Second
+var dashboardCloudRefreshInterval = 60 * time.Second
 
 // dashEntry is one fleet-file entry and what it resolved to. Node is nil
 // when the entry could not become a node at all — its token reference names
@@ -122,7 +122,7 @@ type dashTickMsg time.Time
 // them are drawn is decided by each reading's own time, not by the round's:
 // see the message's handling in Update.
 type dashRefreshMsg struct {
-	remote  bool // the cloud group's round
+	cloud   bool // the cloud group's round
 	idx     []int
 	results []fleet.NodeResult
 }
@@ -233,7 +233,7 @@ func (m *dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// than overlapping the next.
 		return m, tea.Batch(append([]tea.Cmd{dashTickCmd()}, m.startRounds()...)...)
 	case dashRefreshMsg:
-		if msg.remote {
+		if msg.cloud {
 			m.slowBusy = false
 		} else {
 			m.fastBusy = false
@@ -418,8 +418,8 @@ func (m *dashModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // group with nothing due starts nothing.
 func (m *dashModel) startRounds() []tea.Cmd {
 	var cmds []tea.Cmd
-	for _, remote := range []bool{false, true} {
-		if cmd := m.refreshRemoteGroup(remote); cmd != nil {
+	for _, cloud := range []bool{false, true} {
+		if cmd := m.refreshCloudGroup(cloud); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	}
@@ -433,8 +433,8 @@ func (m *dashModel) startRounds() []tea.Cmd {
 // scale of minutes — hold for an environment nobody is touching and hold for
 // neither one the operator has just started.
 func dashNodeInterval(kind string, a dashAction) time.Duration {
-	if a.verb == "" && kind == fleet.KindRemote {
-		return dashboardRemoteRefreshInterval
+	if a.verb == "" && kind == fleet.KindCloud {
+		return dashboardCloudRefreshInterval
 	}
 	return dashboardRefreshInterval
 }
@@ -472,9 +472,9 @@ func (m *dashModel) scheduleRead(i int, at time.Time) {
 	m.nextReadAt[i] = at
 }
 
-// refreshRemoteGroup starts one round over the due nodes of one group of live
-// nodes — the local daemon machines (remote false) or the cloud environments
-// (remote true) — and returns the round's command, or nil when nothing in the
+// refreshCloudGroup starts one round over the due nodes of one group of live
+// nodes — the local daemon machines (cloud false) or the cloud environments
+// (cloud true) — and returns the round's command, or nil when nothing in the
 // group is due or a round is already in flight there. Starting the round
 // spends each read node's deadline: each moves to one of its own intervals
 // away, so a node the operator is acting on comes round again on the short
@@ -486,12 +486,12 @@ func (m *dashModel) scheduleRead(i int, at time.Time) {
 // an action must not shorten what the call is given to answer in. Each node
 // answers independently — the fan-out calls them concurrently — so one slow
 // node delays no other, and a slow cloud round stretches only its own group.
-func (m *dashModel) refreshRemoteGroup(remote bool) tea.Cmd {
+func (m *dashModel) refreshCloudGroup(cloud bool) tea.Cmd {
 	now := time.Now()
 	idx := make([]int, 0, len(m.entries))
 	nodes := make([]fleet.Node, 0, len(m.entries))
 	for i, e := range m.entries {
-		if e.node == nil || (e.kind == fleet.KindRemote) != remote {
+		if e.node == nil || (e.kind == fleet.KindCloud) != cloud {
 			continue
 		}
 		if !m.isDue(i, now) {
@@ -503,7 +503,7 @@ func (m *dashModel) refreshRemoteGroup(remote bool) tea.Cmd {
 	if len(nodes) == 0 {
 		return nil
 	}
-	if remote {
+	if cloud {
 		if m.slowBusy {
 			return nil
 		}
@@ -517,17 +517,17 @@ func (m *dashModel) refreshRemoteGroup(remote bool) tea.Cmd {
 	for _, i := range idx {
 		m.scheduleRead(i, now.Add(dashNodeInterval(m.entries[i].kind, m.actions[i])))
 	}
-	interval := m.intervalFor(remote)
+	interval := m.intervalFor(cloud)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), interval)
 		defer cancel()
-		return dashRefreshMsg{remote: remote, idx: idx, results: fleet.FanOutNodes(ctx, fleet.MetricsCall, nodes)}
+		return dashRefreshMsg{cloud: cloud, idx: idx, results: fleet.FanOutNodes(ctx, fleet.MetricsCall, nodes)}
 	}
 }
 
-func (m *dashModel) intervalFor(remote bool) time.Duration {
-	if remote {
-		return dashboardRemoteRefreshInterval
+func (m *dashModel) intervalFor(cloud bool) time.Duration {
+	if cloud {
+		return dashboardCloudRefreshInterval
 	}
 	return dashboardRefreshInterval
 }
@@ -623,7 +623,7 @@ func (m *dashModel) beginAction(verb string) tea.Cmd {
 // beginKeep sets off a keep of the selected node for the confirmed duration.
 // It reuses beginAction's scaffolding — one action per node, the tile's
 // spinner, the short read interval for the duration of the call — but the call
-// itself is a keep, not a start or stop: the node must be a Keeper (a remote
+// itself is a keep, not a start or stop: the node must be a Keeper (a cloud
 // environment), and the call returns the deadline it set rather than an engine
 // state. A node that is not a Keeper, or that already has an action in flight,
 // is driven by nothing, and its reason lands on the status line.
@@ -642,7 +642,7 @@ func (m *dashModel) beginKeep(d time.Duration) tea.Cmd {
 	}
 	keeper, ok := e.node.(fleet.Keeper)
 	if !ok {
-		m.statusLine = e.name + ": keep needs a remote environment"
+		m.statusLine = e.name + ": keep needs a cloud environment"
 		return nil
 	}
 	spin := !m.actionInFlight()
@@ -783,7 +783,7 @@ func (m dashModel) nodeRunning() bool {
 }
 
 // keepOffered reports whether the keep key would do anything for the node under
-// the cursor: the node must support a keep (a remote environment) and have
+// the cursor: the node must support a keep (a cloud environment) and have
 // nothing in flight. A local daemon node has no retention tag to set, and a
 // node already acting takes no second action. The footer uses this to include
 // the keep hint only where it would drive something, the same way canAbort

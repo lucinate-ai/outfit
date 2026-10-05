@@ -53,7 +53,7 @@ describe('finding the latest stream', () => {
   it('never combines orderBy with logStreamNamePrefix', async () => {
     // The regression this guards: CloudWatch Logs rejects that combination
     // with "Cannot order by LastEventTime with a logStreamNamePrefix," which
-    // surfaced as a 502 on every `spinloop remote seed status` call — never
+    // surfaced as a 502 on every `spinloop cloud seed status` call — never
     // caught by a test that mocks the SDK call's return value alone.
     await latestStream('vllm--m');
     expect(describeCalls).toHaveLength(1);

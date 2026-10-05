@@ -256,7 +256,7 @@ func TestComplete_SpinloopCommandsOfferAliasesAndPaths(t *testing.T) {
 
 	slots := [][]string{
 		{"harness", "apply", ""}, {"harness", "unapply", ""}, {"serve", ""}, {"alias", ""},
-		{"harness", "open", ""}, {"fleet", "route", ""}, {"remote", "deploy", ""}, {"remote", "start", ""},
+		{"harness", "open", ""}, {"fleet", "route", ""}, {"cloud", "deploy", ""}, {"cloud", "start", ""},
 	}
 	for _, words := range slots {
 		got, directive := complete(t, words...)

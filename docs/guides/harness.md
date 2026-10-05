@@ -88,7 +88,7 @@ spinloop code -- agent-args   # -- stops the parsing: everything after is the ag
 ```
 
 Where the model is served is a launch concern, learned one of three ways: a
-Spinloop you apply, `--env` for a [registered remote environment](remote.md),
+Spinloop you apply, `--env` for a [registered cloud environment](cloud.md),
 or a [fleet file](fleet.md) that routes the launch to a node that serves — or
 is woken to serve — the wanted model.
 

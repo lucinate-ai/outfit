@@ -57,7 +57,7 @@ works from any directory, on this machine.
 ## 4. Only `serve` fetches the preset
 
 `spinloop harness apply` never reads `PRESET` — a local one or a URL, it's `spinloop
-serve`'s business alone. Only running `spinloop serve` (or `spinloop remote
+serve`'s business alone. Only running `spinloop serve` (or `spinloop cloud
 deploy`) fetches `http://localhost:8000/preset.ini`:
 
 ```sh

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/fleet"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 // registerTargetEnv points the registry at a temp config directory and
@@ -16,7 +16,7 @@ import (
 func registerTargetEnv(t *testing.T, name string) {
 	t.Helper()
 	t.Setenv("SPINLOOP_CONFIG_DIR", t.TempDir())
-	registerEnv(t, name, remote.Config{
+	registerEnv(t, name, cloud.Config{
 		StartURL:    "https://s.example/start",
 		StopURL:     "https://s.example/stop",
 		Region:      "us-east-1",
@@ -39,8 +39,8 @@ func TestResolveFleetTarget(t *testing.T) {
 		if len(cfg.Nodes) != 1 || cfg.Nodes[0].Name != "prod" {
 			t.Fatalf("nodes = %+v, want just prod", cfg.Nodes)
 		}
-		if cfg.Nodes[0].Kind != fleet.KindRemote {
-			t.Errorf("kind = %q, want %q", cfg.Nodes[0].Kind, fleet.KindRemote)
+		if cfg.Nodes[0].Kind != fleet.KindCloud {
+			t.Errorf("kind = %q, want %q", cfg.Nodes[0].Kind, fleet.KindCloud)
 		}
 	})
 
@@ -127,7 +127,7 @@ func TestResolveFleetTargetUnregisteredEnv(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	if !strings.Contains(err.Error(), "remotes/nope/remote.json") {
+	if !strings.Contains(err.Error(), "clouds/nope/cloud.json") {
 		t.Errorf("error %q does not name the environment's registry path", err)
 	}
 }
@@ -186,10 +186,10 @@ func TestDescribeTarget(t *testing.T) {
 }
 
 // Every fleet command that takes a target completes --env from the registered
-// environments, the same source `remote --env` completes from.
+// environments, the same source `cloud --env` completes from.
 func TestFleetCommandsCompleteEnv(t *testing.T) {
 	registerTargetEnv(t, "prod")
-	registerEnv(t, "staging", remote.Config{
+	registerEnv(t, "staging", cloud.Config{
 		StartURL:    "https://s.example/start",
 		StopURL:     "https://s.example/stop",
 		Region:      "us-east-1",
@@ -222,7 +222,7 @@ func TestFleetStatusEnvMatchesAOneNodeFile(t *testing.T) {
 	stubAWSEnv(t)
 	up := stateServer(t)
 	t.Setenv("SPINLOOP_CONFIG_DIR", t.TempDir())
-	registerEnv(t, "prod", remote.Config{
+	registerEnv(t, "prod", cloud.Config{
 		StartURL:    up.URL,
 		StopURL:     up.URL,
 		StatsURL:    up.URL,
@@ -231,7 +231,7 @@ func TestFleetStatusEnvMatchesAOneNodeFile(t *testing.T) {
 	})
 
 	// Named by a fleet file holding exactly that node.
-	writeFleetFile(t, "nodes:\n  - name: prod\n    kind: remote\n")
+	writeFleetFile(t, "nodes:\n  - name: prod\n    kind: cloud\n")
 	fromFile := captureStdout(t, func() {
 		if err := cmdStatus(nil); err != nil {
 			t.Errorf("fleet status returned %v", err)
@@ -260,7 +260,7 @@ func TestFleetStatusEnvNeedsNoFleetFile(t *testing.T) {
 	stubAWSEnv(t)
 	up := stateServer(t)
 	t.Setenv("SPINLOOP_CONFIG_DIR", t.TempDir())
-	registerEnv(t, "prod", remote.Config{
+	registerEnv(t, "prod", cloud.Config{
 		StartURL:    up.URL,
 		StopURL:     up.URL,
 		StatsURL:    up.URL,
@@ -283,7 +283,7 @@ func TestFleetStatusEnvNeedsNoFleetFile(t *testing.T) {
 // resolver directly.
 func TestFleetStatusRefusesEnvAndFleet(t *testing.T) {
 	t.Setenv("SPINLOOP_CONFIG_DIR", t.TempDir())
-	registerEnv(t, "prod", remote.Config{
+	registerEnv(t, "prod", cloud.Config{
 		StartURL:    "https://s.example/start",
 		StopURL:     "https://s.example/stop",
 		Region:      "us-east-1",

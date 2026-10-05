@@ -1,20 +1,20 @@
 # Remote Qwen endpoint, run as an environment on the shared layer.
 #
 # This file is hand-maintained — nothing generates or rewrites it. The shared
-# infrastructure is deployed once per account with `spinloop remote bootstrap`;
+# infrastructure is deployed once per account with `spinloop cloud bootstrap`;
 # then, from this directory:
-#   spinloop remote deploy  # create the environment REMOTE names + set what it
+#   spinloop cloud deploy  # create the environment REMOTE names + set what it
 #                         # serves (this file + preset); registers its
-#                         # remote.json under ~/.config/spinloop/remotes/
-#   spinloop remote start   # boot (or re-wake a stopped) the instance; prints
+#                         # cloud.json under ~/.config/spinloop/clouds/
+#   spinloop cloud start   # boot (or re-wake a stopped) the instance; prints
 #                         # the OPENAI_API_KEY export
 #   spinloop apply          # point your coding agent at the endpoint
-#   spinloop remote pause   # stop now (kept for a re-wake) instead of waiting
+#   spinloop cloud pause   # stop now (kept for a re-wake) instead of waiting
 #                         # for the idle timer
-#   spinloop remote stop    # terminate now instead of waiting for the idle timer
+#   spinloop cloud stop    # terminate now instead of waiting for the idle timer
 #
 # PROVIDER names the inference engine, so this file is what chooses llama.cpp
-# over vLLM: `spinloop remote deploy` asks the cloud for that engine, and the same
+# over vLLM: `spinloop cloud deploy` asks the cloud for that engine, and the same
 # file runs it locally under `spinloop serve`. To cut back to vLLM, set PROVIDER
 # to vllm, drop PRESET, and set MODEL to the FP8 repo (Qwen/Qwen3.6-27B-FP8).
 # Either way the deploy Lambda seeds the weights into S3 if they are not there.
@@ -26,7 +26,7 @@
 # several Spinloops can run several instances side by side in one account.
 #
 # There is deliberately no BASEURL: the environment's address belongs to the
-# deployment, so `spinloop apply` takes it from the environment's remote.json.
+# deployment, so `spinloop apply` takes it from the environment's cloud.json.
 # Add a BASEURL here only to override that.
 PROVIDER llamacpp
 ALIAS    qwen3.6-27b

@@ -2,7 +2,7 @@
 // host's GPU/CPU/RAM figures, in process. It is the Go home of the collection
 // that first shipped in the remote stats Lambda (remote/lambda/shared/stats.ts):
 // the parsers here are ports of that Lambda's, kept value-for-value compatible
-// so the remote path can later delegate to a daemon running this code and the
+// so the cloud path can later delegate to a daemon running this code and the
 // TypeScript collectors can be deleted. Every stat is optional — a host
 // without a source for one (no nvidia-smi, say) simply omits it. A macOS node
 // reports GPU utilisation and name from the I/O Kit accelerator service, and
@@ -12,7 +12,7 @@ package metrics
 // Stats is the collected state of one serving host: what is running, its
 // engine counters, and its system figures. It mirrors the stats Lambda's
 // response field-for-field (minus the Lambda's transport fields), so the
-// existing `spinloop remote metrics` formats render it unchanged.
+// existing `spinloop cloud metrics` formats render it unchanged.
 type Stats struct {
 	State   string `json:"state"`
 	Runner  string `json:"runner,omitempty"`
@@ -61,7 +61,7 @@ type Stats struct {
 	// RetainUntil is the environment's retention deadline, RFC 3339: the idle
 	// sweep will not terminate the instance before it. It is a property of the
 	// cloud instance, not the engine, so it is empty for local daemon nodes and
-	// for remote environments without an update URL. Empty once the deadline
+	// for cloud environments without an update URL. Empty once the deadline
 	// has passed, because the stats reply drops it there — a past tag keeps
 	// nothing. Formatters omit the line when it is empty.
 	RetainUntil string `json:"retainUntil,omitempty"`

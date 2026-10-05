@@ -3,7 +3,7 @@
  * in the on-instance spinloop daemon (spinloop's internal/metrics — the Go port
  * of the parsers that used to live here); the stats Lambda merges the
  * daemon's reply with what only the control plane knows. These shapes are
- * value-compatible with the Go side, so `spinloop remote metrics` renders them
+ * value-compatible with the Go side, so `spinloop cloud metrics` renders them
  * unchanged.
  */
 

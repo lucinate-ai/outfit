@@ -70,17 +70,17 @@ scaled; see [`spinloop serve`](commands/serve.md#parallelism).
   directory](env-vars.md#config-directory-resolution), then start the engine
   again through the API.
 
-## A remote endpoint won't come up
+## A cloud endpoint won't come up
 
-- **The control plane is not deployed.** Every `remote` command that acts on
-  an endpoint needs `spinloop remote bootstrap` to have run once per account;
+- **The control plane is not deployed.** Every `cloud` command that acts on
+  an endpoint needs `spinloop cloud bootstrap` to have run once per account;
   a missing control plane says so. An older control plane that lacks a feature
   says to re-run `bootstrap` to add it.
 - **A warning says the control plane is at a different version.** The
   `spinloop` you are running differs from the one that deployed the control
-  plane. Commands still run, but re-run `spinloop remote bootstrap` to update
+  plane. Commands still run, but re-run `spinloop cloud bootstrap` to update
   it, or install the matching `spinloop`.
-- **The AMI is not baked.** `spinloop remote bake` once per engine, and it
+- **The AMI is not baked.** `spinloop cloud bake` once per engine, and it
   waits until the AMI is available.
 - **A cold start takes about ten minutes.** `start` prints its progress on
   stderr; `--timeout` (default 15m) bounds the wait. `status` and `logs`
@@ -97,9 +97,9 @@ scaled; see [`spinloop serve`](commands/serve.md#parallelism).
 
 ## A fleet row is wrong, or a node won't answer
 
-- **`config-error` on a `kind: remote` row** means the environment is not
-  registered on this machine — `spinloop remote deploy --env <name>` (or
-  `spinloop fleet deploy`) writes its `remote.json`.
+- **`config-error` on a `kind: cloud` row** means the environment is not
+  registered on this machine — `spinloop cloud deploy --env <name>` (or
+  `spinloop fleet deploy`) writes its `cloud.json`.
 - **A node's token is not in *your* shell.** The fleet file names the
   *variable* (`tokenEnv`), never the value. Set the variable the row names,
   from the `.env` beside the fleet file or your environment.
@@ -118,8 +118,8 @@ scaled; see [`spinloop serve`](commands/serve.md#parallelism).
   be woken (its own `wake`, or the file's, is off). The failure names the node
   that would have woken and the `spinloop fleet start <node>` command that
   would start it.
-- **An undeployed remote environment is never a candidate** — it has nothing
-  to serve yet; choosing what to deploy is `spinloop remote deploy`'s call.
+- **An undeployed cloud environment is never a candidate** — it has nothing
+  to serve yet; choosing what to deploy is `spinloop cloud deploy`'s call.
 - **404 naming other paths** — the gateway serves `/health`, `/v1/models`,
   `/v1/chat/completions`, `/v1/completions`, and `/v1/fleet`, and says so.
 

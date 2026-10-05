@@ -2,24 +2,24 @@
 
 ## Purpose
 
-Define how `spinloop remote deploy` creates a named environment on the
+Define how `spinloop cloud deploy` creates a named environment on the
 account-level control plane: discovering it, provisioning per-environment resources, registering the environment, and guarding against accidental overwrites.
 
 ## Requirements
 
 ### Requirement: Deploy creates an environment on the control plane
 
-`spinloop remote deploy` SHALL create a named environment on top of the control
+`spinloop cloud deploy` SHALL create a named environment on top of the control
 plane: it SHALL discover it, then provision the
 environment's own Elastic IP, EC2 instance configuration, per-environment API
 key, per-environment allowed-ingress rule, and per-environment SSM state
 (the deploy-config), all tagged by the environment name. It SHALL set
 what the environment serves from the Spinloop and its preset, and SHALL register
-the environment so the other `remote` commands can drive it. Deploying SHALL NOT
+the environment so the other `cloud` commands can drive it. Deploying SHALL NOT
 start the instance.
 
 The environment name SHALL come from the command, never from the Spinloop:
-`spinloop remote deploy` SHALL take it from its required `--env <name>` flag,
+`spinloop cloud deploy` SHALL take it from its required `--env <name>` flag,
 and `spinloop fleet deploy` SHALL take it from the name of the node being
 deployed, which is the registered environment that node drives. A deploy given
 no name by either route SHALL fail saying the environment must be named. The
@@ -33,7 +33,7 @@ plane to seed, read or write.
 
 #### Scenario: Deploying stands up and registers an environment
 
-- **WHEN** `spinloop remote deploy --env prod` runs against a bootstrapped
+- **WHEN** `spinloop cloud deploy --env prod` runs against a bootstrapped
   account
 - **THEN** the environment's Elastic IP, instance configuration, API key,
   ingress rule, and SSM state are provisioned, and the environment is
@@ -41,7 +41,7 @@ plane to seed, read or write.
 
 #### Scenario: A deploy without a name fails
 
-- **WHEN** `spinloop remote deploy` runs with no `--env` flag
+- **WHEN** `spinloop cloud deploy` runs with no `--env` flag
 - **THEN** it fails saying the environment must be named with `--env <name>`
 
 #### Scenario: One Spinloop deploys to two environments
@@ -53,7 +53,7 @@ plane to seed, read or write.
 
 #### Scenario: A fleet node deploys under its own name
 
-- **WHEN** `spinloop fleet deploy` targets a `kind: remote` node named `qwen`
+- **WHEN** `spinloop fleet deploy` targets a `kind: cloud` node named `qwen`
 - **THEN** the environment created and registered is named `qwen`, from the
   node's name in the fleet file, and the node's Spinloop is read only for what
   it serves
@@ -68,14 +68,14 @@ plane to seed, read or write.
 
 - **WHEN** a deploy succeeds
 - **THEN** the environment is configured and registered but no instance is
-  running until `spinloop remote start`
+  running until `spinloop cloud start`
 ### Requirement: Discovering the control plane
 
 Deploy SHALL discover the control plane from the bootstrap stack's
 CloudFormation outputs (a well-known stack name) — the lifecycle Lambda URLs, the
 weights bucket, the shared roles, and the region — rather than from any local
 file. When the control-plane stack is absent, deploy SHALL fail telling the user to run
-`spinloop remote bootstrap` first, rather than attempting to create an environment.
+`spinloop cloud bootstrap` first, rather than attempting to create an environment.
 
 #### Scenario: The control plane is discovered
 
@@ -86,7 +86,7 @@ file. When the control-plane stack is absent, deploy SHALL fail telling the user
 #### Scenario: Not bootstrapped
 
 - **WHEN** deploy runs against an account with no control-plane stack
-- **THEN** it fails saying to run `spinloop remote bootstrap` first, and creates
+- **THEN** it fails saying to run `spinloop cloud bootstrap` first, and creates
   nothing
 
 ### Requirement: Per-environment allowed ingress
@@ -109,16 +109,16 @@ rule. It SHALL NOT be an account-wide setting.
 ### Requirement: Registering the environment
 
 Deploy SHALL register the environment in the per-user registry defined by the
-Remote Environments specification — `~/.config/spinloop/remotes/<env>/remote.json`,
+Cloud Environments specification — `~/.config/spinloop/clouds/<env>/cloud.json`,
 written owner-only — carrying the shared lifecycle Lambda URLs, the region, the
 environment's base URL (its Elastic IP), and the environment identifier the
 shared Lambdas use to select this environment's instance.
 
 #### Scenario: The environment is registered and resolvable
 
-- **WHEN** `spinloop remote deploy --env prod` succeeds
-- **THEN** `~/.config/spinloop/remotes/prod/remote.json` exists (owner-only)
-  and `spinloop remote status --env prod` resolves the environment from it
+- **WHEN** `spinloop cloud deploy --env prod` succeeds
+- **THEN** `~/.config/spinloop/clouds/prod/cloud.json` exists (owner-only)
+  and `spinloop cloud status --env prod` resolves the environment from it
 
 ### Requirement: Refuse to overwrite a live environment
 
@@ -147,7 +147,7 @@ warning and without requiring `--overwrite`.
 
 ### Requirement: Deploy accepts an optional spinloop version pin
 
-`spinloop remote deploy` SHALL accept an optional flag pinning the exact spinloop
+`spinloop cloud deploy` SHALL accept an optional flag pinning the exact spinloop
 release the environment's instances install at boot. When the flag is given,
 deploy SHALL record that version in the environment's stored deploy config so
 the next fresh boot installs it; when it is absent, deploy SHALL record no pin
@@ -157,44 +157,44 @@ whitespace-only value SHALL be treated as if the flag were not given.
 
 #### Scenario: A pin is recorded in the deploy config
 
-- **WHEN** `spinloop remote deploy` runs with an spinloop version pin
+- **WHEN** `spinloop cloud deploy` runs with an spinloop version pin
 - **THEN** the environment's stored deploy config carries that version, and
   the environment's next fresh boot installs exactly that release
 
 #### Scenario: No pin leaves the boot on its default
 
-- **WHEN** `spinloop remote deploy` runs without an spinloop version pin
+- **WHEN** `spinloop cloud deploy` runs without an spinloop version pin
 - **THEN** the stored deploy config carries no spinloop version, and the
   environment's boots install the latest published release
 
 #### Scenario: An empty pin value is ignored
 
-- **WHEN** `spinloop remote deploy` is given an spinloop version pin whose value is
+- **WHEN** `spinloop cloud deploy` is given an spinloop version pin whose value is
   empty or whitespace only
 - **THEN** it is treated as if no pin were given
 
 ### Requirement: The deploy plan shows the resolved spinloop version
 
-The plan `spinloop remote deploy` prints — including under `--dry-run`, before
+The plan `spinloop cloud deploy` prints — including under `--dry-run`, before
 any AWS work or send — SHALL state the spinloop version the environment's boots
 will install: the pinned version when a pin is given, otherwise `latest`. It
 SHALL appear alongside the runner and model the plan already prints.
 
 #### Scenario: A pinned deploy prints the pinned version
 
-- **WHEN** `spinloop remote deploy --dry-run` runs with an spinloop version pin
+- **WHEN** `spinloop cloud deploy --dry-run` runs with an spinloop version pin
 - **THEN** the printed plan names that pinned version as the spinloop the
   environment will run
 
 #### Scenario: An unpinned deploy prints latest
 
-- **WHEN** `spinloop remote deploy --dry-run` runs without an spinloop version pin
+- **WHEN** `spinloop cloud deploy --dry-run` runs without an spinloop version pin
 - **THEN** the printed plan names `latest` as the spinloop the environment will
   run
 
 ### Requirement: Deploy accepts an optional instance type
 
-`spinloop remote deploy` SHALL accept an optional `--instance-type` flag naming
+`spinloop cloud deploy` SHALL accept an optional `--instance-type` flag naming
 the EC2 instance type the environment's instances launch as. When the flag is
 given, deploy SHALL record that type in the environment's stored deploy config
 so the environment's next fresh launch uses it; when it is absent, deploy SHALL
@@ -209,32 +209,32 @@ of a single start, and never derived from the Spinloop.
 
 #### Scenario: A type is recorded in the deploy config
 
-- **WHEN** `spinloop remote deploy` runs with `--instance-type g6e.2xlarge`
+- **WHEN** `spinloop cloud deploy` runs with `--instance-type g6e.2xlarge`
 - **THEN** the environment's stored deploy config carries that type, and the
   environment's next fresh launch uses it
 
 #### Scenario: No type leaves the launch on its default
 
-- **WHEN** `spinloop remote deploy` runs without `--instance-type`
+- **WHEN** `spinloop cloud deploy` runs without `--instance-type`
 - **THEN** the stored deploy config carries no instance type, and the
   environment's launches use the control plane's default type
 
 #### Scenario: An empty type value is ignored
 
-- **WHEN** `spinloop remote deploy` is given an `--instance-type` whose value
+- **WHEN** `spinloop cloud deploy` is given an `--instance-type` whose value
   is empty or whitespace only
 - **THEN** it is treated as if no type were given
 
 #### Scenario: A malformed type is refused before sending
 
-- **WHEN** `spinloop remote deploy` is given an `--instance-type` that is not
+- **WHEN** `spinloop cloud deploy` is given an `--instance-type` that is not
   shaped like an EC2 instance type
 - **THEN** the command fails, naming the value, and nothing is sent to the
   control plane
 
 ### Requirement: The deploy plan shows the resolved instance type
 
-The plan `spinloop remote deploy` prints — including under `--dry-run`, before
+The plan `spinloop cloud deploy` prints — including under `--dry-run`, before
 any AWS work or send — SHALL state the instance type the environment will
 launch as: the type named by `--instance-type` when one is given, otherwise a
 statement that the environment launches as the control plane's default. It
@@ -242,20 +242,20 @@ SHALL appear alongside the runner and model the plan already prints.
 
 #### Scenario: A typed deploy prints the type
 
-- **WHEN** `spinloop remote deploy --dry-run` runs with `--instance-type
+- **WHEN** `spinloop cloud deploy --dry-run` runs with `--instance-type
   g6e.2xlarge`
 - **THEN** the printed plan names `g6e.2xlarge` as the instance type the
   environment will launch as
 
 #### Scenario: An untyped deploy prints the default
 
-- **WHEN** `spinloop remote deploy --dry-run` runs without `--instance-type`
+- **WHEN** `spinloop cloud deploy --dry-run` runs without `--instance-type`
 - **THEN** the printed plan says the environment launches as the control
   plane's default instance type
 
 ### Requirement: Externally provided API key
 
-`spinloop remote deploy` SHALL accept an externally provided API key as a
+`spinloop cloud deploy` SHALL accept an externally provided API key as a
 reference to an environment variable, and pass it to the control plane to store
 as the environment's API key. The value SHALL NOT be written on the command line
 or in any file the CLI owns: the flag names a variable, and the CLI resolves it
@@ -280,21 +280,21 @@ it as 401s.
 
 #### Scenario: A deploy stores a supplied key
 
-- **WHEN** `spinloop remote deploy` is given a key variable that is set, for an
+- **WHEN** `spinloop cloud deploy` is given a key variable that is set, for an
   environment whose API-key secret does not yet exist
 - **THEN** the environment's API-key secret is created holding that value, and
   the report says the key was applied
 
 #### Scenario: A deploy rotates an existing key
 
-- **WHEN** `spinloop remote deploy` is given a key for an environment that already
+- **WHEN** `spinloop cloud deploy` is given a key for an environment that already
   has an API-key secret
 - **THEN** the secret is set to the new value, the old key is no longer valid,
   and the report says the key was rotated
 
 #### Scenario: A deploy without a key keeps the existing one
 
-- **WHEN** `spinloop remote deploy` runs with no key for an environment that
+- **WHEN** `spinloop cloud deploy` runs with no key for an environment that
   already has an API-key secret
 - **THEN** the secret is left unchanged and no new key is generated
 
@@ -302,10 +302,10 @@ it as 401s.
 
 - **WHEN** a deploy supplies a key
 - **THEN** the value is not written to the environment's deploy-config, is not
-  in the registered remote configuration, and is not printed in any reply or in
+  in the registered cloud configuration, and is not printed in any reply or in
   the deploy report
 
 #### Scenario: A named variable that is unset fails early
 
-- **WHEN** `spinloop remote deploy` names a key variable that is set nowhere
+- **WHEN** `spinloop cloud deploy` names a key variable that is set nowhere
 - **THEN** the deploy fails naming the variable, before anything is sent

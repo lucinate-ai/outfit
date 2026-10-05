@@ -266,7 +266,7 @@ var canonical = map[string]string{
 	"mu": "model-url", "tb": "threads-batch", "to": "timeout",
 	"kvu": "kv-unified",
 	// Speculative decoding. The draft-model spellings matter beyond rendering:
-	// `spinloop remote deploy` drops the flags the cloud sets itself by canonical
+	// `spinloop cloud deploy` drops the flags the cloud sets itself by canonical
 	// name, and a drafter path written as `md` would otherwise slip past that
 	// check and reach the instance, where the local path does not exist.
 	"md": "spec-draft-model", "model-draft": "spec-draft-model",

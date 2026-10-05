@@ -17,9 +17,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/daemon"
 	"github.com/spinloop-ai/spinloop/internal/opencode"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 // SplitTag divides a tag named the way tags are named in a limit or an item —
@@ -43,9 +43,9 @@ const (
 	// KindDaemon is a machine running `spinloop daemon`, reached over its
 	// control API. Addressed by its `host`.
 	KindDaemon = "daemon"
-	// KindRemote is an `spinloop remote` environment, driven through its cloud
+	// KindCloud is an `spinloop cloud` environment, driven through its cloud
 	// control plane. Addressed by the registered environment it names.
-	KindRemote = "remote"
+	KindCloud = "cloud"
 )
 
 // Prefer is how routing ranks several nodes that could all serve a request.
@@ -216,8 +216,8 @@ type Config struct {
 	// the file's behaviour changes.
 	Concurrency *Concurrency `yaml:"concurrency"`
 	// APIKeyEnv names the environment variable holding the key this fleet's
-	// remote nodes require, shared by every one of them: a remote's engine is
-	// always gated by its key, so a fleet of remotes can name the variable
+	// cloud nodes require, shared by every one of them: a remote's engine is
+	// always gated by its key, so a fleet of clouds can name the variable
 	// once rather than on each node — a node's own EngineTokenEnv overrides
 	// it. It is a remote-only default: a daemon gates on its own
 	// EngineTokenEnv, and a fleet-wide key must not start gating an engine
@@ -235,10 +235,10 @@ type Config struct {
 // client talks to is a Node (see node.go); this is just the entry.
 type NodeConfig struct {
 	// Name identifies the node in output and to `fleet start|stop <node>`. For
-	// a kind-remote node it is also the key of the registered environment it
-	// drives, <config-dir>/remotes/<name>/remote.json — the environment is
-	// already user-named at `spinloop remote deploy`, so a remote node has no
-	// separate address to give. The control URLs live in that env's remote.json
+	// a kind-cloud node it is also the key of the registered environment it
+	// drives, <config-dir>/clouds/<name>/cloud.json — the environment is
+	// already user-named at `spinloop cloud deploy`, so a cloud node has no
+	// separate address to give. The control URLs live in that env's cloud.json
 	// anyway, so nothing identifying a deployment is written into the fleet file.
 	Name string `yaml:"name"`
 	// Host is where the daemon answers — a LAN name, a tailscale name, or an
@@ -263,7 +263,7 @@ type NodeConfig struct {
 	// reached through a tunnel.
 	Engine *EngineOverride `yaml:"engine"`
 	// File names the Spinloop file that describes what this node runs —
-	// what `spinloop fleet deploy` reads to create a kind: remote node's
+	// what `spinloop fleet deploy` reads to create a kind: cloud node's
 	// environment, and what `spinloop fleet start` reads to tell a kind:
 	// daemon node's engine what to run. Resolved relative to the fleet
 	// file's directory. Optional: a node's own Name is tried as a
@@ -271,9 +271,9 @@ type NodeConfig struct {
 	// beside the fleet file, before either command gives up on it. Not
 	// read by any other fleet command.
 	File string `yaml:"file"`
-	// InstanceType names the EC2 instance type a kind: remote node's
+	// InstanceType names the EC2 instance type a kind: cloud node's
 	// environment launches as, read by `spinloop fleet deploy` into the
-	// deploy config it derives. It is a property of the remote environment
+	// deploy config it derives. It is a property of the cloud environment
 	// only — a kind: daemon node's hardware is the operator's to choose, so
 	// naming one there is a configuration error. Empty means the node's
 	// environment launches as the control plane's default type.
@@ -287,7 +287,7 @@ type NodeConfig struct {
 	// WakePolicy overrides the fleet-wide wake policy for this node alone,
 	// in the same `on`/`off` shape. Empty means the fleet-wide setting
 	// decides for this node, as it always has. It exists because waking is
-	// not free the same way on every node — a remote environment's wake
+	// not free the same way on every node — a cloud environment's wake
 	// boots a cloud instance, unlike a local daemon's engine — so an
 	// operator may want to decide one node's waking on its own terms rather
 	// than through a single fleet-wide switch.
@@ -411,7 +411,7 @@ func Resolve(flagPath string) (*Config, error) {
 }
 
 // ForEnvironment builds the fleet a `--env <name>` target names: one cloud
-// node, named by the registered environment whose remote.json holds its
+// node, named by the registered environment whose cloud.json holds its
 // control config. A registered environment and a one-node fleet file naming it
 // describe the same thing — `fleet deploy` registers an environment under its
 // node's name, which is why every other fleet command can find one by name —
@@ -431,17 +431,17 @@ func Resolve(flagPath string) (*Config, error) {
 // them describe how several nodes are used, which a fleet of one has no
 // occasion for.
 func ForEnvironment(name string) (*Config, error) {
-	if !remote.IsEnvName(name) {
+	if !cloud.IsEnvName(name) {
 		return nil, fmt.Errorf(
 			"%q is not an environment name: an environment name is a plain identifier, with no path", name)
 	}
 	// Loading it is the check: every environment resolves the one way, by
 	// name, and a name that resolves to nothing fails here rather than at the
 	// first control call.
-	if _, err := remote.LoadEnvironment(name, os.Getenv); err != nil {
+	if _, err := cloud.LoadEnvironment(name, os.Getenv); err != nil {
 		return nil, err
 	}
-	cfg := &Config{Nodes: []NodeConfig{{Name: name, Kind: KindRemote}}}
+	cfg := &Config{Nodes: []NodeConfig{{Name: name, Kind: KindCloud}}}
 	// The same validation a parsed file gets, so a fleet of one cannot reach a
 	// command in a state a fleet file could not.
 	if err := cfg.validate(); err != nil {
@@ -549,16 +549,16 @@ func (c *Config) validate() error {
 					"node %q is kind %q: instance-type names the cloud environment's machine, and a daemon's hardware is the operator's to choose, not the fleet file's",
 					n.Name, KindDaemon)
 			}
-		case KindRemote:
+		case KindCloud:
 			// The node's name *is* the registered environment's key, so it must
 			// be env-shaped; a path-like name would be read as a registry
 			// subdirectory rather than named.
-			if !remote.IsEnvName(n.Name) {
+			if !cloud.IsEnvName(n.Name) {
 				return fmt.Errorf(
 					"node %q is kind %q: its name must be a registered environment name (no /, no .json)",
-					n.Name, KindRemote)
+					n.Name, KindCloud)
 			}
-			if n.InstanceType != "" && !remote.IsInstanceType(n.InstanceType) {
+			if n.InstanceType != "" && !cloud.IsInstanceType(n.InstanceType) {
 				return fmt.Errorf(
 					"node %q has instance-type %q, which is not shaped like an EC2 instance type (a family and size separated by a dot, e.g. g6e.xlarge)",
 					n.Name, n.InstanceType)
@@ -566,7 +566,7 @@ func (c *Config) validate() error {
 		default:
 			return fmt.Errorf(
 				"node %q has kind %q: supported kinds are %q and %q",
-				n.Name, n.Kind, KindDaemon, KindRemote)
+				n.Name, n.Kind, KindDaemon, KindCloud)
 		}
 	}
 	return nil
@@ -638,19 +638,19 @@ func (c *Config) EngineToken(n NodeConfig) (string, error) {
 	return c.resolveTokenEnv(fmt.Sprintf("node %q", n.Name), n.EngineTokenEnv)
 }
 
-// RemoteEngineToken resolves the key a remote node's engine requires: the
+// CloudEngineToken resolves the key a cloud node's engine requires: the
 // variable the node names when it names one, else the fleet-wide APIKeyEnv.
 // A remote's engine is always gated by its key, so a node that names no
 // resolvable key fails here, before a launch depends on it — the way every
 // other missing secret in this file is named, the node and the fix.
-func (c *Config) RemoteEngineToken(n NodeConfig) (string, error) {
+func (c *Config) CloudEngineToken(n NodeConfig) (string, error) {
 	name := n.EngineTokenEnv
 	if name == "" {
 		name = c.APIKeyEnv
 	}
 	if name == "" {
 		return "", fmt.Errorf(
-			"node %q is a remote environment, so its engine key must be set: name the variable holding it, in this node's `engineTokenEnv` or the file's fleet-wide `apiKeyEnv` (%s)",
+			"node %q is a cloud environment, so its engine key must be set: name the variable holding it, in this node's `engineTokenEnv` or the file's fleet-wide `apiKeyEnv` (%s)",
 			n.Name, c.Path)
 	}
 	return c.resolveTokenEnv(fmt.Sprintf("node %q", n.Name), name)

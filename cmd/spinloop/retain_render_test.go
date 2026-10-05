@@ -44,7 +44,7 @@ func aLineContaining(out string, phrases ...string) string {
 // A kept, active endpoint draws the keep after the active figure, on the same
 // line — the point of sharing the line is that "when did it last do anything"
 // and "how long is it kept" are read at a glance, not on two rows.
-func TestRemoteMetricsBarKeepsOnTheActiveLine(t *testing.T) {
+func TestCloudMetricsBarKeepsOnTheActiveLine(t *testing.T) {
 	deadline := keepNow(t, 2*time.Hour)
 	statsServer(t, `{
 		"environment": "dev",
@@ -75,7 +75,7 @@ func TestRemoteMetricsBarKeepsOnTheActiveLine(t *testing.T) {
 }
 
 // The table format draws the same combined line as a key-value row.
-func TestRemoteMetricsTableKeepsOnTheActiveRow(t *testing.T) {
+func TestCloudMetricsTableKeepsOnTheActiveRow(t *testing.T) {
 	deadline := keepNow(t, 2*time.Hour)
 	statsServer(t, `{
 		"environment": "dev",
@@ -137,7 +137,7 @@ func TestKeepDurationRendersRelatively(t *testing.T) {
 // A stopped environment can still be kept: the deadline is the control plane's,
 // not the engine's, so the keep survives the non-running short-circuit in both
 // formats.
-func TestRemoteMetricsStoppedKeptStillShowsKeep(t *testing.T) {
+func TestCloudMetricsStoppedKeptStillShowsKeep(t *testing.T) {
 	deadline := keepNow(t, 4*time.Hour)
 	for format := range map[string]bool{"bar": true, "table": true} {
 		t.Run(format, func(t *testing.T) {
@@ -162,7 +162,7 @@ func TestRemoteMetricsStoppedKeptStillShowsKeep(t *testing.T) {
 
 // No deadline on the read, no keep: the renderer does not invent one, and it
 // leaves the active figure (now just "active") in place.
-func TestRemoteMetricsOmitsKeepWhenAbsent(t *testing.T) {
+func TestCloudMetricsOmitsKeepWhenAbsent(t *testing.T) {
 	for _, format := range []string{"bar", "table"} {
 		t.Run(format, func(t *testing.T) {
 			statsServer(t, `{
@@ -189,7 +189,7 @@ func TestRemoteMetricsOmitsKeepWhenAbsent(t *testing.T) {
 
 // The deadline rides the node's stats, so `fleet metrics` draws the keep after
 // the active figure whatever the node's state. A faked daemon carrying the field
-// stands in for a kept remote environment on the same render path.
+// stands in for a kept cloud environment on the same render path.
 func TestFleetMetricsShowsKeep(t *testing.T) {
 	deadline := keepNow(t, 2*time.Hour)
 	fleetNodeWithMetrics(t, map[string]any{

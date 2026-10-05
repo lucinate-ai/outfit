@@ -462,15 +462,15 @@ func TestCmdApply_DirectoryWithoutSpinloop(t *testing.T) {
 	}
 }
 
-// TestCmdApply_BaseURLFromRemoteConfig checks that a Spinloop with no BASEURL,
+// TestCmdApply_BaseURLFromCloudConfig checks that a Spinloop with no BASEURL,
 // applied against a registered environment, takes the endpoint address from the
-// environment's remote.json base_url — the deployment writes that file, so the
+// environment's cloud.json base_url — the deployment writes that file, so the
 // Spinloop does not have to carry it.
-func TestCmdApply_BaseURLFromRemoteConfig(t *testing.T) {
+func TestCmdApply_BaseURLFromCloudConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	envConfig := filepath.Join(dir, "spinloop", "remotes", "dev-1", "remote.json")
+	envConfig := filepath.Join(dir, "spinloop", "clouds", "dev-1", "cloud.json")
 	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -486,23 +486,23 @@ func TestCmdApply_BaseURLFromRemoteConfig(t *testing.T) {
 		}
 	})
 	if !strings.Contains(out, "http://198.51.100.7:8000/v1") {
-		t.Errorf("expected the remote base URL to be reported:\n%s", out)
+		t.Errorf("expected the cloud base URL to be reported:\n%s", out)
 	}
 
 	m := readConfigMap(t, filepath.Join(dir, "opencode", "opencode.json"))
 	dev1 := m["provider"].(map[string]any)["dev-1"].(map[string]any)
 	if got := dev1["options"].(map[string]any)["baseURL"]; got != "http://198.51.100.7:8000/v1" {
-		t.Errorf("baseURL = %v, want the remote config's base_url", got)
+		t.Errorf("baseURL = %v, want the cloud config's base_url", got)
 	}
 }
 
-// TestCmdApply_SpinloopBaseURLBeatsRemoteConfig checks the precedence: a BASEURL
-// the user wrote in the Spinloop wins over the environment's remote.json.
-func TestCmdApply_SpinloopBaseURLBeatsRemoteConfig(t *testing.T) {
+// TestCmdApply_SpinloopBaseURLBeatsCloudConfig checks the precedence: a BASEURL
+// the user wrote in the Spinloop wins over the environment's cloud.json.
+func TestCmdApply_SpinloopBaseURLBeatsCloudConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	envConfig := filepath.Join(dir, "spinloop", "remotes", "dev-1", "remote.json")
+	envConfig := filepath.Join(dir, "spinloop", "clouds", "dev-1", "cloud.json")
 	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -541,19 +541,19 @@ func TestCmdApply_UnregisteredEnvironmentFails(t *testing.T) {
 		t.Fatal("expected an error for an unregistered environment")
 	}
 	if !strings.Contains(err.Error(), "not registered") ||
-		!strings.Contains(err.Error(), "`spinloop remote deploy --env \"dev-1\"`") {
+		!strings.Contains(err.Error(), "`spinloop cloud deploy --env \"dev-1\"`") {
 		t.Errorf("error = %v, want the not-registered error naming the deploy command", err)
 	}
 }
 
 // TestCmdApply_RemoteConfigMalformed checks that applying against a registered
-// environment whose remote.json is malformed fails loudly, rather than silently
+// environment whose cloud.json is malformed fails loudly, rather than silently
 // applying under the wrong base URL.
 func TestCmdApply_RemoteConfigMalformed(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	envConfig := filepath.Join(dir, "spinloop", "remotes", "dev-1", "remote.json")
+	envConfig := filepath.Join(dir, "spinloop", "clouds", "dev-1", "cloud.json")
 	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -564,22 +564,22 @@ func TestCmdApply_RemoteConfigMalformed(t *testing.T) {
 
 	err := cmdApply([]string{"--env", "dev-1", spinloopFile})
 	if err == nil {
-		t.Fatal("expected an error for a malformed remote config")
+		t.Fatal("expected an error for a malformed cloud config")
 	}
 	if !strings.Contains(err.Error(), "parsing") {
-		t.Errorf("error = %v, want it to mention parsing the remote config", err)
+		t.Errorf("error = %v, want it to mention parsing the cloud config", err)
 	}
 }
 
 // TestCmdApply_RemoteNameIsProviderName checks that --env keys the harness
 // provider on the environment name — configured from the PROVIDER's catalogue
 // entry — with the default model reading as <env>/<model> and the base URL taken
-// from that environment's remote.json.
+// from that environment's cloud.json.
 func TestCmdApply_RemoteNameIsProviderName(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	envConfig := filepath.Join(dir, "spinloop", "remotes", "dev-1", "remote.json")
+	envConfig := filepath.Join(dir, "spinloop", "clouds", "dev-1", "cloud.json")
 	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -616,14 +616,14 @@ func TestCmdApply_RemoteNameIsProviderName(t *testing.T) {
 	}
 }
 
-// TestCmdApply_RemoteProviderLabelledPerEnvironment checks that a remote provider
+// TestCmdApply_RemoteProviderLabelledPerEnvironment checks that a cloud provider
 // gets a display name qualified by its environment, so it reads distinctly from a
 // local engine of the same kind, which keeps the bare engine name.
 func TestCmdApply_RemoteProviderLabelledPerEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	envConfig := filepath.Join(dir, "spinloop", "remotes", "dev-2", "remote.json")
+	envConfig := filepath.Join(dir, "spinloop", "clouds", "dev-2", "cloud.json")
 	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -631,14 +631,14 @@ func TestCmdApply_RemoteProviderLabelledPerEnvironment(t *testing.T) {
 		`{"start_url":"https://start.example/","stop_url":"https://stop.example/","region":"us-east-1","base_url":"http://198.51.100.7:8000/v1","environment":"dev-2"}`)
 
 	spinloopDir := t.TempDir()
-	remoteSpinloop := filepath.Join(spinloopDir, "Spinloop")
-	mustWrite(t, remoteSpinloop, "PROVIDER llamacpp\nALIAS qwen\n")
+	cloudSpinloop := filepath.Join(spinloopDir, "Spinloop")
+	mustWrite(t, cloudSpinloop, "PROVIDER llamacpp\nALIAS qwen\n")
 	localSpinloop := filepath.Join(spinloopDir, "Local")
 	mustWrite(t, localSpinloop, "PROVIDER llamacpp\nALIAS qwen\nBASEURL http://127.0.0.1:8080/v1\n")
 
 	captureStdout(t, func() {
-		if err := cmdApply([]string{"--env", "dev-2", remoteSpinloop}); err != nil {
-			t.Fatalf("cmdApply remote: %v", err)
+		if err := cmdApply([]string{"--env", "dev-2", cloudSpinloop}); err != nil {
+			t.Fatalf("cmdApply cloud: %v", err)
 		}
 		if err := cmdApply([]string{localSpinloop}); err != nil {
 			t.Fatalf("cmdApply local: %v", err)
@@ -651,7 +651,7 @@ func TestCmdApply_RemoteProviderLabelledPerEnvironment(t *testing.T) {
 		t.Fatalf("expected a provider keyed %q, got %v", "dev-2", prov)
 	}
 	if got := dev2["name"]; got != "llama.cpp (dev-2)" {
-		t.Errorf("remote display name = %v, want %q", got, "llama.cpp (dev-2)")
+		t.Errorf("cloud display name = %v, want %q", got, "llama.cpp (dev-2)")
 	}
 	local, ok := prov["llamacpp"].(map[string]any)
 	if !ok {
@@ -661,7 +661,7 @@ func TestCmdApply_RemoteProviderLabelledPerEnvironment(t *testing.T) {
 		t.Errorf("local display name = %v, want the bare engine name %q", got, "llama.cpp")
 	}
 	if dev2["name"] == local["name"] {
-		t.Errorf("remote and local providers share a display name %v; they must be distinct", dev2["name"])
+		t.Errorf("cloud and local providers share a display name %v; they must be distinct", dev2["name"])
 	}
 }
 
@@ -674,7 +674,7 @@ func TestCmdApply_RemoteReapplyRefreshesLabel(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	envConfig := filepath.Join(dir, "spinloop", "remotes", "dev-2", "remote.json")
+	envConfig := filepath.Join(dir, "spinloop", "clouds", "dev-2", "cloud.json")
 	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -709,13 +709,13 @@ func TestCmdApply_RemoteReapplyRefreshesLabel(t *testing.T) {
 }
 
 // TestCmdUnapply_RemoveEnvironmentNamedProvider checks apply/unapply symmetry for
-// a remote Spinloop: unapply removes the environment-named provider that apply
+// a cloud Spinloop: unapply removes the environment-named provider that apply
 // wrote, not the PROVIDER-named one (which was never written).
 func TestCmdUnapply_RemoveEnvironmentNamedProvider(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 
-	envConfig := filepath.Join(dir, "spinloop", "remotes", "dev-1", "remote.json")
+	envConfig := filepath.Join(dir, "spinloop", "clouds", "dev-1", "cloud.json")
 	if err := os.MkdirAll(filepath.Dir(envConfig), 0o700); err != nil {
 		t.Fatal(err)
 	}

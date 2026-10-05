@@ -300,9 +300,9 @@ func (h *Handler) handleModels(w http.ResponseWriter, r *http.Request) {
 // waking is allowed (its own `wake` setting, or the fleet's when it names
 // none), the model it would be started with, under the served-name-first
 // naming a running node reports. A daemon node's model comes from its own
-// Spinloop source; a remote node's comes from its own stats reply. It is
+// Spinloop source; a cloud node's comes from its own stats reply. It is
 // resolved at most once per sourcesTTL, shared by every models request —
-// which bounds how often a remote node's resolution pays a live control-
+// which bounds how often a cloud node's resolution pays a live control-
 // plane call, the same way it bounds how often a daemon node's pays a
 // Spinloop file read.
 func (h *Handler) wakeableModels(ctx context.Context) map[string]string {
@@ -334,7 +334,7 @@ func (h *Handler) wakeableModels(ctx context.Context) map[string]string {
 	return m
 }
 
-// remoteConfigFor resolves what a kind: remote node would be started with:
+// cloudConfigFor resolves what a kind: cloud node would be started with:
 // the environment's stored deploy config, read from its stats reply. The
 // status reply a fan-out already holds is no good for this — the control
 // plane only relays deploy facts on the status reply while the environment
@@ -346,9 +346,9 @@ func (h *Handler) wakeableModels(ctx context.Context) map[string]string {
 // environment's stats read fails outright (no config to read), which is
 // what "nothing deployed" looks like here. It carries the served name
 // alongside the model id too, the same field the deploy config's ALIAS
-// sets, so a stopped remote node's wakeable name matches what it reported
+// sets, so a stopped cloud node's wakeable name matches what it reported
 // while running rather than falling back to the bare model id.
-func (h *Handler) remoteConfigFor(ctx context.Context) fleet.ConfigFor {
+func (h *Handler) cloudConfigFor(ctx context.Context) fleet.ConfigFor {
 	return func(entry fleet.NodeConfig) (inference.DeployConfig, error) {
 		node, err := h.cfg.NewNode(entry)
 		if err != nil {
@@ -356,7 +356,7 @@ func (h *Handler) remoteConfigFor(ctx context.Context) fleet.ConfigFor {
 		}
 		stats, err := node.Metrics(ctx)
 		if err != nil {
-			return inference.DeployConfig{}, fmt.Errorf("%s: %w (run `spinloop remote deploy` if nothing is deployed)", entry.Name, err)
+			return inference.DeployConfig{}, fmt.Errorf("%s: %w (run `spinloop cloud deploy` if nothing is deployed)", entry.Name, err)
 		}
 		return inference.DeployConfig{ModelID: stats.ModelID, ServedModelName: stats.ServedName}, nil
 	}
@@ -364,15 +364,15 @@ func (h *Handler) remoteConfigFor(ctx context.Context) fleet.ConfigFor {
 
 // combinedConfigFor resolves what any node — daemon or remote — would be
 // started with: a daemon node through the gateway's own cfgFor (its
-// Spinloop source), a remote node through its own stats reply
-// (remoteConfigFor). A daemon node fails the way it always has when the
-// gateway holds no cfgFor at all; a remote node's resolution does not
+// Spinloop source), a cloud node through its own stats reply
+// (cloudConfigFor). A daemon node fails the way it always has when the
+// gateway holds no cfgFor at all; a cloud node's resolution does not
 // depend on cfgFor, so it still works when the gateway was built with none.
 func (h *Handler) combinedConfigFor(ctx context.Context) fleet.ConfigFor {
-	remoteFor := h.remoteConfigFor(ctx)
+	cloudFor := h.cloudConfigFor(ctx)
 	return func(entry fleet.NodeConfig) (inference.DeployConfig, error) {
-		if entry.Kind == fleet.KindRemote {
-			return remoteFor(entry)
+		if entry.Kind == fleet.KindCloud {
+			return cloudFor(entry)
 		}
 		if h.cfgFor == nil {
 			return inference.DeployConfig{}, fmt.Errorf(

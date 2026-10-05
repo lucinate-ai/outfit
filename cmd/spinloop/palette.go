@@ -1,6 +1,6 @@
 // The colours and the spinner every surface of the CLI draws from — the
 // dashboard's tiles and title bar, `fleet deploy`'s progress lines, the
-// resource bars `fleet metrics` and `remote metrics` print. They live together
+// resource bars `fleet metrics` and `cloud metrics` print. They live together
 // so a second surface finds them rather than writing its own copy, which is
 // what left the same ten spinner frames declared twice in this package.
 //

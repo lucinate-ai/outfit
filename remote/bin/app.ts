@@ -17,9 +17,9 @@ new ImageStack(app, 'cloud-vm-llm-image', {
   description: 'Bakes the per-runner runtime AMIs for cloud-vm-llm',
 });
 
-// The account-level control plane `spinloop remote bootstrap` deploys once:
+// The account-level control plane `spinloop cloud bootstrap` deploys once:
 // weights bucket, VPC, roles, and the environment-aware lifecycle Lambdas.
-// Environments (EIP + instance each) are created on it by `spinloop remote
+// Environments (EIP + instance each) are created on it by `spinloop cloud
 // deploy`; the scheduled idle sweep covers them all.
 new LlmStack(app, 'cloud-vm-llm', {
   config,

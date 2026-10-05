@@ -65,12 +65,12 @@ export async function handler(event: StopEvent): Promise<LambdaFunctionURLResult
 /**
  * Function URL — POST stops one environment's instance; GET reports it. The
  * `action` query parameter chooses the shutdown: `pause` (the default for a
- * manual `spinloop remote pause`) stops without terminating, so the instance can
+ * manual `spinloop cloud pause`) stops without terminating, so the instance can
  * be re-woken; anything else terminates, which is what a manual
- * `spinloop remote stop` wants. A further query parameter, `force=true`, marks
+ * `spinloop cloud stop` wants. A further query parameter, `force=true`, marks
  * the stop as forced: the engine is not asked to shut down first, so a wedged
  * engine or daemon cannot prevent the box from going down (a manual
- * `spinloop remote restart -F`). The stop-time tag, the EC2 call and the reply
+ * `spinloop cloud restart -F`). The stop-time tag, the EC2 call and the reply
  * are the same either way.
  */
 async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> {

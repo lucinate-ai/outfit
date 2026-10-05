@@ -14,7 +14,7 @@ A `spinloop provider` group SHALL hold the catalogue commands: `list` and
 `init`, each carrying the flags, arguments, and output its former top-level
 spelling had (the old `init-providers` is renamed `init`, since the parent
 already says provider). A bare `spinloop provider` SHALL show the group's help,
-as the `fleet` and `remote` groups do.
+as the `fleet` and `cloud` groups do.
 
 The former top-level spellings of the two catalogue commands SHALL
 NOT exist. Invoking one SHALL fail with an error that names the command's new
@@ -107,7 +107,7 @@ is named by the user's selection, not stored in the catalogue.
 
 A provider whose API key is declared optional is one that also works
 unauthenticated — the same engine run as a local server and as an
-authenticated remote endpoint — so an unset key variable SHALL mean "no key",
+authenticated cloud endpoint — so an unset key variable SHALL mean "no key",
 not "a key that is missing".
 
 A provider MAY declare `optionsRequired`: a list of option keys that MUST resolve

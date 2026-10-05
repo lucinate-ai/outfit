@@ -7,10 +7,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/daemon"
 	"github.com/spinloop-ai/spinloop/internal/inference"
 	"github.com/spinloop-ai/spinloop/internal/metrics"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 // Outcome classifies how a node call ended. A fleet view renders these as rows
@@ -154,7 +154,7 @@ type Instance struct {
 }
 
 // Node is one member of the fleet. Only daemonNode implements it today; the
-// interface exists so a remote-environment kind (an `spinloop remote`
+// interface exists so a remote-environment kind (an `spinloop cloud`
 // environment read through its stats Lambda, which already yields
 // metrics.Stats) can be added without reworking the fan-out or the renderers.
 type Node interface {
@@ -207,18 +207,18 @@ func (n *daemonNode) Logs(ctx context.Context, offset int64, limit int) (daemon.
 // NewNode builds the live Node for one fleet-file entry. A daemon node resolves
 // its bearer token here — a reference that resolves to nothing fails before any
 // call is attempted, naming the variable rather than surfacing later as a 401.
-// A remote node loads its registered environment's control config; a missing
+// A cloud node loads its registered environment's control config; a missing
 // environment fails the same way, as a per-node error the fan-out renders as a
 // row rather than a blanked view.
 func (c *Config) NewNode(entry NodeConfig) (Node, error) {
-	if entry.Kind == KindRemote {
+	if entry.Kind == KindCloud {
 		// The node's name is the registered environment's key, and every
 		// environment resolves the one way: by name, from the registry.
-		cfg, err := remote.LoadEnvironment(entry.Name, os.Getenv)
+		cfg, err := cloud.LoadEnvironment(entry.Name, os.Getenv)
 		if err != nil {
 			return nil, err
 		}
-		return NewRemoteNode(entry.Name, cfg)
+		return NewCloudNode(entry.Name, cfg)
 	}
 	token, err := c.Token(entry)
 	if err != nil {

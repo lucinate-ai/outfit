@@ -72,7 +72,7 @@ because the Spinloop itself was read.
 
 ## Running the model on a cloud GPU
 
-For a model too big for your machine, `spinloop remote` runs it on a
+For a model too big for your machine, `spinloop cloud` runs it on a
 scale-to-zero GPU endpoint — one that runs only while you're using it. The
 Spinloop says what the endpoint serves:
 
@@ -89,24 +89,24 @@ The Spinloop says *what*; it no longer says *where*. Where is an
 with a `--env <name>` flag on the commands that act on it:
 
 ```sh
-spinloop remote deploy --env qwen3.6-27b-prod   # from the directory holding the Spinloop
+spinloop cloud deploy --env qwen3.6-27b-prod   # from the directory holding the Spinloop
 spinloop harness apply --env qwen3.6-27b-prod           # point opencode at it
 spinloop harness open --env qwen3.6-27b-prod    # work
-spinloop remote stop --env qwen3.6-27b-prod     # done
+spinloop cloud stop --env qwen3.6-27b-prod     # done
 ```
 
 Each `--env <name>` reads the environment's registered config at
-`${XDG_CONFIG_HOME:-~/.config}/spinloop/remotes/<name>/remote.json` — the file
-[`spinloop remote deploy`](commands/remote.md) writes when it creates the
+`${XDG_CONFIG_HOME:-~/.config}/spinloop/clouds/<name>/cloud.json` — the file
+[`spinloop cloud deploy`](commands/cloud.md) writes when it creates the
 environment — so deployment state stays per-user and per-machine while the
 Spinloop itself stays clean enough to commit. A command given no `--env` uses
 the `default` environment, and an unregistered name fails, naming the `deploy
 --env` that would create it. A name is a plain identifier: `--env ./x.json`
-fails, saying so. See [`spinloop remote`](commands/remote.md) for the full
+fails, saying so. See [`spinloop cloud`](commands/cloud.md) for the full
 lifecycle.
 
 Note the missing `BASEURL`: the endpoint's address belongs to the deployment,
-which records it in the environment's `remote.json` as `base_url`, and
+which records it in the environment's `cloud.json` as `base_url`, and
 [`spinloop harness apply`](commands/harness.md#spinloop-harness-apply) reads it from there. Write a `BASEURL` only
 to override that.
 
@@ -116,7 +116,7 @@ with the model reading as `qwen3.6-27b-prod/qwen3.6-27b`. `PROVIDER` still
 supplies the engine's settings; only the name changes, so several environments
 built from the same engine each keep their own entry instead of overwriting one.
 The provider's display name is qualified by the environment too — `llama.cpp
-(qwen3.6-27b-prod)` rather than a bare `llama.cpp` — so a remote environment reads
+(qwen3.6-27b-prod)` rather than a bare `llama.cpp` — so a cloud environment reads
 distinctly from a local engine of the same kind in a harness model picker.
 
 A launch may not state both `--env` and a fleet (the `--fleet` flag, or the
@@ -173,7 +173,7 @@ harness`](commands/fleet.md#launching-the-harness) needs no Spinloop at all
 when the fleet file names one: with none given, it configures a generic
 OpenAI-compatible provider at the gateway's address itself, its model list
 populated from the gateway's own listing, and no `MODEL`/`ALIAS` to pick.
-That provider reads the way a remote environment's does — labelled by the
+That provider reads the way a cloud environment's does — labelled by the
 gateway's own `name`, or its address when the section names none — the same
 "llama.cpp (dev-2)" pattern described above.
 
@@ -195,10 +195,10 @@ One instruction per line: a keyword followed by a single value.
 | `ALIAS`    | one of `MODEL`/`ALIAS`           | `--alias`      | `ALIAS deepseek`               |
 | `CONTEXT`  | no                               | `--context`    | `CONTEXT 128k`                 |
 | `OUTPUT`   | no                               | `--output`     | `OUTPUT 32k`                   |
-| `PARALLEL` | no                               | `spinloop serve`, `spinloop remote deploy` | `PARALLEL 2` |
+| `PARALLEL` | no                               | `spinloop serve`, `spinloop cloud deploy` | `PARALLEL 2` |
 | `BASEURL`  | no                               | `--base-url`   | `BASEURL https://gateway/v1`   |
 | `PRESET`   | no                               | `spinloop serve` | `PRESET ./preset.ini`          |
-| `ENV`      | no (repeatable)                  | `spinloop remote`, `spinloop harness` | `ENV AWS_PROFILE=prod` |
+| `ENV`      | no (repeatable)                  | `spinloop cloud`, `spinloop harness` | `ENV AWS_PROFILE=prod` |
 
 Rules:
 
@@ -220,7 +220,7 @@ Rules:
   out, `spinloop` records a quarter of the context. It cannot exceed the context
   window.
 - `PARALLEL` sets the number of concurrent request slots for `spinloop serve`
-  and `spinloop remote deploy` — a plain integer, not a size. It has no meaning
+  and `spinloop cloud deploy` — a plain integer, not a size. It has no meaning
   for a hosted provider selection, only for a served engine, so unlike
   `CONTEXT`/`OUTPUT` it has no `add`/`remove` CLI flag. Since `CONTEXT` always
   means "context per request", and llama.cpp's own `--ctx-size` is a total
@@ -240,15 +240,15 @@ Rules:
   [`spinloop serve`](commands/serve.md); `apply` ignores it. A relative path
   resolves against the Spinloop's own directory, or against its URL when the
   Spinloop itself was fetched from one; `PRESET` may also be an absolute URL of
-  its own, fetched only when `serve` (or `spinloop remote deploy`) builds the
+  its own, fetched only when `serve` (or `spinloop cloud deploy`) builds the
   launch command — never merely because the Spinloop was read. The file is read
   in the flag vocabulary of the engine `PROVIDER` names, so a preset written
   for llama.cpp is not portable to oMLX and vice versa.
 - `ENV` sets an environment variable on the machine running `spinloop` and is the
   one keyword that **may repeat**. Its value is a single `KEY=VALUE` token (no
-  spaces). The `spinloop remote` commands read it — along with a `.env` beside the
+  spaces). The `spinloop cloud` commands read it — along with a `.env` beside the
   Spinloop — before they sign their AWS calls, so credentials, region and
-  `SPINLOOP_REMOTE_*` overrides can travel with the Spinloop. `spinloop harness open` reads
+  `SPINLOOP_CLOUD_*` overrides can travel with the Spinloop. `spinloop harness open` reads
   it too, passing the whole `.env` and the `ENV` lines to the agent it launches.
   Precedence, highest to lowest: an `ENV` line, then a variable already set in
   your shell, then the `.env` — the same rule everywhere spinloop resolves local
@@ -256,10 +256,10 @@ Rules:
   to a deployed instance, and on the harness path it shapes only the launched
   agent, never spinloop's own environment.
 - The `REMOTE` keyword was removed: a `REMOTE` line fails, naming the line and
-  the replacement — `spinloop remote deploy --env <name>` at deploy time and
-  `--env <name>` on `apply`, `unapply`, `harness`, and the `remote`
+  the replacement — `spinloop cloud deploy --env <name>` at deploy time and
+  `--env <name>` on `apply`, `unapply`, `harness`, and the `cloud`
   subcommands. Where a `REMOTE` line pointed at a path or a URL, register the
-  environment's config with `spinloop remote deploy --env <name>` instead, and
+  environment's config with `spinloop cloud deploy --env <name>` instead, and
   name it from the flags.
 - Keywords are **case-insensitive** — `provider`, `Provider`, and `PROVIDER` are
   all accepted — but **UPPERCASE is canonical** and is what `spinloop harness export`

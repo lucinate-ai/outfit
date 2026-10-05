@@ -71,7 +71,7 @@ func (n *keeperDashNode) Keep(ctx context.Context, d time.Duration) (string, err
 // test drives.
 func keeperModel(node *keeperDashNode) *dashModel {
 	return &dashModel{
-		entries: []dashEntry{{name: node.f.Name(), kind: fleet.KindRemote, node: node}},
+		entries: []dashEntry{{name: node.f.Name(), kind: fleet.KindCloud, node: node}},
 		results: []fleet.NodeResult{{Name: node.f.Name()}},
 		actions: make([]dashAction, 1),
 		width:   120, height: 40,
@@ -313,7 +313,7 @@ func TestDashKeepFailureShowsItsReason(t *testing.T) {
 		err  error
 		want string
 	}{
-		{errors.New("no update_url configured: the remote deployment needs to be updated for keep support"), "no update_url"},
+		{errors.New("no update_url configured: the cloud deployment needs to be updated for keep support"), "no update_url"},
 		{errors.New("keep returned HTTP 404: no running instance"), "no running instance"},
 	} {
 		t.Run(tc.want, func(t *testing.T) {
@@ -359,16 +359,16 @@ func TestDashAbortDrivesNothingOnAKeep(t *testing.T) {
 	}
 }
 
-// The keep hint shows only where the key would drive something: a remote node
-// shows it, a local node hides it, and a busy remote node hides it. The start
-// and stop entries sit beside it by the node's own state: a stopped remote
+// The keep hint shows only where the key would drive something: a cloud node
+// shows it, a local node hides it, and a busy cloud node hides it. The start
+// and stop entries sit beside it by the node's own state: a stopped cloud
 // environment shows keep and start, a running one shows keep and stop, and a
 // busy one shows neither.
 func TestDashKeepHintOnlyWhereItDrivesSomething(t *testing.T) {
 	read := func(state string) fleet.NodeResult {
 		return fleet.NodeResult{Name: "env", Outcome: fleet.OutcomeOK, Metrics: metrics.Stats{State: state}}
 	}
-	t.Run("stopped remote shows keep and start", func(t *testing.T) {
+	t.Run("stopped cloud shows keep and start", func(t *testing.T) {
 		node := &keeperDashNode{f: newFakeDashNode("stopped")}
 		m := keeperModel(node)
 		m.results[0] = read("stopped")
@@ -379,7 +379,7 @@ func TestDashKeepHintOnlyWhereItDrivesSomething(t *testing.T) {
 			t.Errorf("detail hint:\ngot:  %q\nwant: %q", got, want)
 		}
 	})
-	t.Run("running remote shows keep and stop", func(t *testing.T) {
+	t.Run("running cloud shows keep and stop", func(t *testing.T) {
 		node := &keeperDashNode{f: newFakeDashNode("running")}
 		m := keeperModel(node)
 		m.results[0] = read("running")
@@ -402,7 +402,7 @@ func TestDashKeepHintOnlyWhereItDrivesSomething(t *testing.T) {
 			t.Errorf("grid hint:\ngot:  %q\nwant: %q", got, want)
 		}
 	})
-	t.Run("busy remote hides it", func(t *testing.T) {
+	t.Run("busy cloud hides it", func(t *testing.T) {
 		node := &keeperDashNode{f: newFakeDashNode("stopped")}
 		m := keeperModel(node)
 		m.results[0] = read("stopped")

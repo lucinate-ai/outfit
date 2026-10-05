@@ -275,12 +275,12 @@ func TestResultCarriesTheStatusAndTheVerdict(t *testing.T) {
 // NewNode for a remote entry loads the registered environment's config, and
 // whatever is missing is a per-node error the way every other missing thing
 // is: no config directory to find it in, or the environment never registered.
-func TestNewNodeForAUnregisteredRemoteEnvironment(t *testing.T) {
+func TestNewNodeForAUnregisteredCloudEnvironment(t *testing.T) {
 	cfg := &Config{}
 	t.Setenv("SPINLOOP_CONFIG_DIR", "")
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("HOME", "")
-	if _, err := cfg.NewNode(NodeConfig{Name: "env", Kind: KindRemote}); err == nil {
+	if _, err := cfg.NewNode(NodeConfig{Name: "env", Kind: KindCloud}); err == nil {
 		t.Error("a remote entry with no config directory should fail")
 	}
 	// With a registry to look in, an unregistered environment fails the node,
@@ -288,7 +288,7 @@ func TestNewNodeForAUnregisteredRemoteEnvironment(t *testing.T) {
 	// one simply finds nothing.
 	t.Setenv("SPINLOOP_CONFIG_DIR", t.TempDir())
 	for _, name := range []string{"env", "a/b"} {
-		if _, err := cfg.NewNode(NodeConfig{Name: name, Kind: KindRemote}); err == nil {
+		if _, err := cfg.NewNode(NodeConfig{Name: name, Kind: KindCloud}); err == nil {
 			t.Errorf("unregistered environment %q built a node", name)
 		}
 	}

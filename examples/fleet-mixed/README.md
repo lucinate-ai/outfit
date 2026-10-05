@@ -1,7 +1,7 @@
 # A mixed fleet
 
 One `fleet.yaml`, one set of commands, two kinds of node: machines running
-`spinloop daemon` and [`spinloop remote`](../../docs/commands/remote.md)
+`spinloop daemon` and [`spinloop cloud`](../../docs/commands/cloud.md)
 environments. The same fan-out reaches every node, so the fleet reads as a
 single table.
 
@@ -40,10 +40,10 @@ spinloop fleet start gpu-box   # tell the daemon what to run, and start it
 spinloop fleet deploy --all    # create both environments from this file
 ```
 
-Creating the environments this way is the same as running `spinloop remote
+Creating the environments this way is the same as running `spinloop cloud
 deploy --env <name>` once per node in this file, from the directory holding
 that node's `Spinloop` — see [`spinloop
-remote`](../../docs/commands/remote.md) — just one command for both.
+cloud`](../../docs/commands/cloud.md) — just one command for both.
 
 ### 3. Observe the whole fleet
 
@@ -61,6 +61,6 @@ and the rest of the fleet still shows.
 ## See also
 
 - [`examples/fleet`](../fleet/README.md) — a fleet of daemons only
-- [`examples/fleet-remote`](../fleet-remote/README.md) — a fleet of remote environments only
+- [`examples/fleet-cloud`](../fleet-cloud/README.md) — a fleet of cloud environments only
 - [`spinloop fleet`](../../docs/commands/fleet.md) — the commands over these nodes
 - [The fleet file](../../docs/fleet-file.md) — the file's format, node kinds, and routing

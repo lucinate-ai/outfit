@@ -189,7 +189,7 @@ describe('the weights gate', () => {
     expect(reply.state).toBe('seeding');
     expect(reply.seedId).toBe(SEED_ID);
     expect(reply.retry_after_seconds).toBe(60);
-    expect(reply.message).toContain(`spinloop remote seed status ${SEED_ID}`);
+    expect(reply.message).toContain(`spinloop cloud seed status ${SEED_ID}`);
     expect(runInstance).not.toHaveBeenCalled();
     expect(launchSeedInstance).not.toHaveBeenCalled();
   });
@@ -308,7 +308,7 @@ describe('the weights gate', () => {
     expect(reply.state).toBe('seeding');
     expect(reply.seedId).toBe(SEED_ID);
     expect(reply.message).toContain('no capacity in the seed zone');
-    expect(reply.message).toContain(`spinloop remote seed status ${SEED_ID}`);
+    expect(reply.message).toContain(`spinloop cloud seed status ${SEED_ID}`);
     expect(runInstance).not.toHaveBeenCalled();
   });
 });

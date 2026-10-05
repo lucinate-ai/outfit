@@ -1,8 +1,8 @@
-# Remote Log Shipping Specification
+# Cloud Log Shipping Specification
 
 ## Purpose
 
-Define how a remote GPU instance's logs are made durable: the inference engine's
+Define how a cloud GPU instance's logs are made durable: the inference engine's
 output and the boot (user-data) output are captured and shipped to CloudWatch
 Logs so they survive the instance's termination, grouped by source and
 addressable per environment and instance, with bounded on-disk and retained

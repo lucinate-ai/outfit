@@ -1,23 +1,23 @@
-# Remote Endpoint Specification
+# Cloud Endpoint Specification
 
 ## Purpose
 
-Define how a remote inference endpoint is discovered, controlled and told
-what to serve from a Spinloop: the `spinloop remote` command group.
+Define how a cloud inference endpoint is discovered, controlled and told
+what to serve from a Spinloop: the `spinloop cloud` command group.
 ## Requirements
-### Requirement: Remote command group
+### Requirement: Cloud command group
 
-The system SHALL provide a `remote` command group with the subcommands
+The system SHALL provide a `cloud` command group with the subcommands
 `bootstrap`, `bake`, `auth`, `start`, `stop`, `restart`, `deploy`,
 `ls`, and `keep`. `start`, `stop`, `restart` and `deploy` each take an
 optional Spinloop path:
 `start` SHALL boot the endpoint and block until it is serving, then perform a
 quick TCP probe of the inference endpoint — if the probe fails, a warning is
-printed to stderr explaining the network mismatch (see the Remote Start Probe
+printed to stderr explaining the network mismatch (see the Cloud Start Probe
 specification) — and finally print the base URL and API key as shell exports;
 `start` SHALL also accept a `--keep DURATION` flag that sets the instance
 retention deadline to `now + DURATION`, preventing the idle sweep from
-terminating it before that time (see the Remote Keep specification);
+terminating it before that time (see the Cloud Keep specification);
 `stop` SHALL stop it immediately rather than waiting for its idle timer;
 `restart` SHALL stop the endpoint in the manner of a pause — without
 terminating it, so its boot disk, its weights and its stable address are
@@ -27,33 +27,33 @@ specification); `restart` SHALL accept a `--force` flag with a `-F` short form
 that, when set, performs the stop without first asking the engine to shut down
 (see the Endpoint Lifecycle specification for forced stops);
 `keep` SHALL set the `Retain-Until` tag on the environment's instance for the
-given duration, without starting or stopping the instance (see the Remote Keep
-specification); `deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered remote environments
-(see the Remote Environments specification). `bootstrap` SHALL stand up the
+given duration, without starting or stopping the instance (see the Cloud Keep
+specification); `deploy` SHALL set what the endpoint serves. `ls` SHALL list the registered cloud environments
+(see the Cloud Environments specification). `bootstrap` SHALL stand up the
 account-level AWS control plane (once per account) by obtaining and driving the
 CDK project, and takes its own flags rather than a Spinloop path (see the
 Endpoint Provisioning specification). `bake` SHALL start an AMI bake for each
 runner named, and takes runner names rather than a Spinloop path (see the
 Endpoint Provisioning specification). `auth` SHALL store, report, and clear the
 long-lived control-plane credential, and takes its own flags rather than a
-Spinloop path (see the Remote Auth specification). An unrecognised subcommand
+Spinloop path (see the Cloud Auth specification). An unrecognised subcommand
 SHALL fail naming the accepted ones.
 
 #### Scenario: Starting the endpoint
 
-- **WHEN** the user runs `spinloop remote start` and the endpoint reports ready
+- **WHEN** the user runs `spinloop cloud start` and the endpoint reports ready
 - **THEN** the base URL and API key are printed as `export` lines
 
 #### Scenario: Starting warns when the network is not admitted
 
-- **WHEN** the user runs `spinloop remote start` and the endpoint reports ready
+- **WHEN** the user runs `spinloop cloud start` and the endpoint reports ready
   but the TCP probe to the inference port fails
 - **THEN** a warning is printed to stderr with a remediation command, and the
   command still exits 0
 
 #### Scenario: Starting with a keep flag
 
-- **WHEN** the user runs `spinloop remote start --keep 4h` and the endpoint reports ready
+- **WHEN** the user runs `spinloop cloud start --keep 4h` and the endpoint reports ready
 - **THEN** the base URL and API key are printed as `export` lines, and the
   instance retention deadline is set to 4 hours from now
 
@@ -65,7 +65,7 @@ SHALL fail naming the accepted ones.
 
 #### Scenario: Restarting the endpoint
 
-- **WHEN** the user runs `spinloop remote restart` for a running environment and
+- **WHEN** the user runs `spinloop cloud restart` for a running environment and
   the endpoint reports ready again
 - **THEN** the instance was stopped and re-woken without being terminated, the
   command blocked until the model was serving again, and the environment's
@@ -73,13 +73,13 @@ SHALL fail naming the accepted ones.
 
 #### Scenario: Forcing a restart skips the engine stop
 
-- **WHEN** the user runs `spinloop remote restart --force` (or `-F`)
+- **WHEN** the user runs `spinloop cloud restart --force` (or `-F`)
 - **THEN** the instance is stopped without the engine being asked to shut down
   first, and the command then blocks until the model is serving again
 
 #### Scenario: Restarting a stopped endpoint starts it
 
-- **WHEN** the user runs `spinloop remote restart` for an environment whose instance is already stopped
+- **WHEN** the user runs `spinloop cloud restart` for an environment whose instance is already stopped
 - **THEN** the instance is re-woken rather than replaced, and the command blocks
   until the model is serving again, as with a plain start
 
@@ -87,47 +87,47 @@ SHALL fail naming the accepted ones.
 
 - **WHEN** the stop half of a restart has taken effect but the wake fails
 - **THEN** the command fails saying the instance is stopped and that
-  `spinloop remote start` will bring it back
+  `spinloop cloud start` will bring it back
 
 #### Scenario: Listing environments
 
-- **WHEN** the user runs `spinloop remote ls`
+- **WHEN** the user runs `spinloop cloud ls`
 - **THEN** the registered environments are listed rather than any endpoint being
   contacted
 
 #### Scenario: Setting a keep deadline
 
-- **WHEN** the user runs `spinloop remote keep 2h`
+- **WHEN** the user runs `spinloop cloud keep 2h`
 - **THEN** the instance retention tag is set and the deadline is reported
 
 #### Scenario: Bootstrap is a recognised subcommand
 
-- **WHEN** the user runs `spinloop remote bootstrap`
+- **WHEN** the user runs `spinloop cloud bootstrap`
 - **THEN** the command is dispatched to the provisioning flow rather than
   reported as unknown
 
 #### Scenario: Bake is a recognised subcommand
 
-- **WHEN** the user runs `spinloop remote bake llamacpp`
+- **WHEN** the user runs `spinloop cloud bake llamacpp`
 - **THEN** the command is dispatched to the bake flow rather than
   reported as unknown
 
 #### Scenario: Auth is a recognised subcommand
 
-- **WHEN** the user runs `spinloop remote auth`
+- **WHEN** the user runs `spinloop cloud auth`
 - **THEN** the command is dispatched to the credential store, report, and clear
   flow rather than reported as unknown
 
 #### Scenario: Unknown subcommand
 
-- **WHEN** the user runs `spinloop remote frobnicate`
+- **WHEN** the user runs `spinloop cloud frobnicate`
 - **THEN** the command fails listing the accepted subcommands, which include
   `bootstrap`, `bake`, `auth`, and `keep`
 
 #### Scenario: The read verbs are not in the group
 
-- **WHEN** the operator runs `spinloop remote status`, `spinloop remote
-  metrics` or `spinloop remote logs`
+- **WHEN** the operator runs `spinloop cloud status`, `spinloop cloud
+  metrics` or `spinloop cloud logs`
 - **THEN** each fails naming the top-level verb that replaced it, and the
   group's help lists none of them
 
@@ -195,26 +195,26 @@ is ready, `start` SHALL stop waiting and fail rather than block indefinitely.
 
 #### Scenario: Shortening the wait
 
-- **WHEN** the user runs `spinloop remote start` with `-t 5m` (or `--timeout 5m`)
+- **WHEN** the user runs `spinloop cloud start` with `-t 5m` (or `--timeout 5m`)
 - **THEN** the command waits at most five minutes for the endpoint before
   giving up
 
 #### Scenario: Default wait when unset
 
-- **WHEN** the user runs `spinloop remote start` without a timeout flag
+- **WHEN** the user runs `spinloop cloud start` without a timeout flag
 - **THEN** the command waits up to fifteen minutes
 
-### Requirement: Environment selection for remote commands
+### Requirement: Environment selection for cloud commands
 
 The endpoint's control URLs SHALL come from a JSON configuration naming a start
 URL, a stop URL, an optional deploy URL, and a region. That configuration MAY
 also name the endpoint's own base URL; it SHALL be optional, since no control
 call needs it, and a configuration without it SHALL remain valid.
 
-A `remote` subcommand SHALL select which environment's configuration it uses
+A `cloud` subcommand SHALL select which environment's configuration it uses
 with its `--env <name>` flag, and the flag SHALL be required: the value is a
 registered environment's name, and the configuration is read from that
-environment's `remote.json` in the per-user registry (see the Remote
+environment's `cloud.json` in the per-user registry (see the Cloud
 Environments specification). A `--env` value that names an environment with no
 registered configuration, and no complete configuration in the environment
 variables, SHALL fail saying the environment is not registered and how to
@@ -230,7 +230,7 @@ special meaning.
 The Spinloop a subcommand is given as an argument SHALL NOT select an
 environment; it SHALL be read only for its `ENV` instructions and the `.env`
 file beside it, which the command applies before any AWS or control-plane work
-(see the Remote Local Environment specification).
+(see the Cloud Local Environment specification).
 
 Environment variables SHALL override individual values, and the region SHALL
 fall back to the standard AWS region variable and then to the region named in
@@ -239,25 +239,25 @@ it.
 
 #### Scenario: The flag selects the environment
 
-- **WHEN** the user runs `spinloop remote status --env qwen3.6-27b-prod`
-- **THEN** the URLs come from that environment's `remote.json` in the registry
+- **WHEN** the user runs `spinloop cloud status --env qwen3.6-27b-prod`
+- **THEN** the URLs come from that environment's `cloud.json` in the registry
 
 #### Scenario: An unregistered environment is named as such
 
-- **WHEN** a `remote` subcommand runs with `--env missing` and no environment
+- **WHEN** a `cloud` subcommand runs with `--env missing` and no environment
   `missing` is registered
 - **THEN** it fails saying the environment is not registered and that
-  `spinloop remote deploy --env missing` creates it
+  `spinloop cloud deploy --env missing` creates it
 
 #### Scenario: No flag uses the default environment
 
-- **WHEN** a `remote` subcommand runs with no `--env` flag
+- **WHEN** a `cloud` subcommand runs with no `--env` flag
 - **THEN** the `default` environment is used, whether or not a `Spinloop` is
   present in the working directory
 
 #### Scenario: An explicit Spinloop does not select an environment
 
-- **WHEN** a `remote` subcommand is given a Spinloop as its argument and no
+- **WHEN** a `cloud` subcommand is given a Spinloop as its argument and no
   `--env` flag
 - **THEN** the command uses the `default` environment and applies the
   Spinloop's `ENV` instructions and adjacent `.env` to the process environment,
@@ -265,27 +265,27 @@ it.
 
 #### Scenario: Configuration without a base URL
 
-- **WHEN** a remote configuration names the control URLs and region but no base
-  URL, and a `remote` subcommand runs
+- **WHEN** a cloud configuration names the control URLs and region but no base
+  URL, and a `cloud` subcommand runs
 - **THEN** the subcommand works as it always has, since the endpoint reports its
   own address in the replies to `start` and `status`
 
 #### Scenario: A command with no environment names the flag
 
-- **WHEN** the user runs a `remote` subcommand with no `--env`
+- **WHEN** the user runs a `cloud` subcommand with no `--env`
 - **THEN** it fails naming `--env` and listing the registered environments,
   and contacts nothing
 
 #### Scenario: An instance is never stopped without being named
 
-- **WHEN** the user runs `spinloop remote stop` with no `--env`, with an
+- **WHEN** the user runs `spinloop cloud stop` with no `--env`, with an
   environment named `default` registered
 - **THEN** nothing is stopped: the command fails naming the flag, and
   `default` is not assumed
 
 #### Scenario: default is an ordinary name
 
-- **WHEN** the user runs a `remote` subcommand with `--env default` and that
+- **WHEN** the user runs a `cloud` subcommand with `--env default` and that
   environment is registered
 - **THEN** it acts on that environment, exactly as it would for any other name
 
@@ -294,16 +294,16 @@ it.
 Requests to the control URLs SHALL be signed with the caller's own AWS
 credentials, resolved in this order: explicit AWS environment credentials or an
 explicit profile selection, then a stored control-plane credential for the
-target region (see the Remote Auth specification), then the remaining standard
+target region (see the Cloud Auth specification), then the remaining standard
 credential sources — shared config files, SSO sessions, and instance metadata.
 The order applies to every signed control request, including the requests the
-fleet issues on a remote environment's behalf, which sign through the same
-client as the `remote` subcommands.
+fleet issues on a cloud environment's behalf, which sign through the same
+client as the `cloud` subcommands.
 Requests SHALL carry the hash of the request body so that a request with a
 payload is signed over that payload. The only credentials Spinloop stores of its
 own are the stored control-plane credentials, held in the OS keystore (or,
 where no keystore exists, an owner-only file under the user's config directory)
-and created or removed by `spinloop remote auth` (see the Remote Auth
+and created or removed by `spinloop cloud auth` (see the Cloud Auth
 specification).
 
 Every control subcommand — `start`, `stop`, `status`, `deploy`, and `metrics` —
@@ -314,13 +314,13 @@ result as though the call succeeded.
 A rejected request SHALL be reported with an actionable cause. When the request
 is rejected because the caller's AWS credentials are expired or invalid, the
 command SHALL say to refresh them (env credentials, a profile, or an SSO
-session; `spinloop remote auth --store` where a stored credential was in use),
+session; `spinloop cloud auth --store` where a stored credential was in use),
 distinct from the case where the credentials are resolvable but may lack
 permission to invoke the endpoint.
 
 #### Scenario: A request carrying a body is signed over it
 
-- **WHEN** `spinloop remote deploy` sends a configuration
+- **WHEN** `spinloop cloud deploy` sends a configuration
 - **THEN** the request is signed including the body's hash, not as an empty
   payload
 
@@ -331,7 +331,7 @@ permission to invoke the endpoint.
 
 #### Scenario: Credentials are expired
 
-- **WHEN** `spinloop remote status` runs with expired or invalid AWS credentials
+- **WHEN** `spinloop cloud status` runs with expired or invalid AWS credentials
   and the control endpoint rejects the signed request
 - **THEN** the command fails with a non-zero exit and a message saying to
   refresh the AWS credentials, rather than printing a blank state
@@ -352,7 +352,7 @@ permission to invoke the endpoint.
 
 ### Requirement: Deploying what the endpoint serves
 
-`spinloop remote deploy` SHALL derive the deployment from the Spinloop and its
+`spinloop cloud deploy` SHALL derive the deployment from the Spinloop and its
 preset: `PROVIDER` SHALL select the inference engine, `MODEL` or the preset's
 Hugging Face reference SHALL name the weights as a repository and optional
 quantisation, `CONTEXT` or the preset's context size SHALL set the window,
@@ -417,7 +417,7 @@ the instance.
 
 #### Scenario: Deploying with a supplied key
 
-- **WHEN** `spinloop remote deploy` is given `--api-key-env SHARED_KEY` and that
+- **WHEN** `spinloop cloud deploy` is given `--api-key-env SHARED_KEY` and that
   variable is set
 - **THEN** the key is sent to the control plane to be stored for the
   environment, and the report says a key was applied without printing the value

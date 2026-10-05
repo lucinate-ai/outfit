@@ -1,7 +1,7 @@
 # What studio runs — read by `spinloop fleet start studio`, which derives a
 # deploy config from it and pushes it to the daemon. PROVIDER llamacpp here,
 # not mlx: pushing a config to a node — from `fleet start` or from a routed
-# wake — only supports the runners remote deploy also supports, llamacpp or
+# wake — only supports the runners cloud deploy also supports, llamacpp or
 # vllm. That is a pre-existing limit of the derivation this reuses, not
 # something new here.
 PROVIDER llamacpp

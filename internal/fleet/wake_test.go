@@ -342,9 +342,9 @@ func TestWakeTimesOutWithoutStopping(t *testing.T) {
 // Two Wake calls racing to wake the same node coalesce into one actual
 // start. This fixture's own /v1/start does not itself reject a concurrent
 // call the way a real daemon's supervisor mutex does — unlike a daemon
-// node, a remote environment's control plane has no such guard at all — so
+// node, a cloud environment's control plane has no such guard at all — so
 // without wakeSingleflight both calls would reach StartWith and each start
-// their own engine (or, for a remote node, each launch their own instance).
+// their own engine (or, for a cloud node, each launch their own instance).
 func TestWakeCoalescesConcurrentCallsForTheSameNode(t *testing.T) {
 	shortWake(t)
 	node := newFakeNode(t, string(daemon.StateIdle), "")
@@ -501,11 +501,11 @@ func TestWakeWithoutAKeyIsUngated(t *testing.T) {
 }
 
 // The wake path stays daemon-only: a remote is never woken — what it serves is
-// set by `spinloop remote deploy`. Wake boots its instance and waits for its
+// set by `spinloop cloud deploy`. Wake boots its instance and waits for its
 // engine to answer the same way it does for a daemon node, without pushing
 // the candidate resolver's config onto it — the environment already knows
 // what it serves.
-func TestWakeStartsADeployedRemoteNode(t *testing.T) {
+func TestWakeStartsADeployedCloudNode(t *testing.T) {
 	shortWake(t)
 	stubAWSCreds(t)
 
@@ -543,7 +543,7 @@ func TestWakeStartsADeployedRemoteNode(t *testing.T) {
 		engine = ln
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		// remote.Start only accepts HTTP 200 with state "ready" as done; the
+		// cloud.Start only accepts HTTP 200 with state "ready" as done; the
 		// engine's own running state comes from the status polls waitReady
 		// makes afterwards, not from this reply.
 		fmt.Fprintf(w, `{"state":"ready","healthy":true,"runner":"llamacpp","modelId":"org/m","servedName":"m","base_url":"http://%s/v1"}`, ln.Addr())
@@ -557,9 +557,9 @@ func TestWakeStartsADeployedRemoteNode(t *testing.T) {
 			engine.Close()
 		}
 	})
-	registerRemoteEnv(t, "cloud", srv.URL, srv.URL)
+	registerCloudEnv(t, "cloud", srv.URL, srv.URL)
 
-	path := writeFleet(t, "nodes:\n  - name: cloud\n    kind: remote\n", "")
+	path := writeFleet(t, "nodes:\n  - name: cloud\n    kind: cloud\n", "")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -584,7 +584,7 @@ func TestWakeStartsADeployedRemoteNode(t *testing.T) {
 	}
 }
 
-// A remote node's wake waits for the control plane's own health check to
+// A cloud node's wake waits for the control plane's own health check to
 // say ready, not just for its port to accept a connection: this fake
 // reports running-but-unhealthy for a stretch after boot, the way an engine
 // that has opened its port but is still loading weights does, before
@@ -638,9 +638,9 @@ func TestWakeWaitsForARemoteEngineToBecomeHealthy(t *testing.T) {
 			engine.Close()
 		}
 	})
-	registerRemoteEnv(t, "cloud", srv.URL, srv.URL)
+	registerCloudEnv(t, "cloud", srv.URL, srv.URL)
 
-	path := writeFleet(t, "nodes:\n  - name: cloud\n    kind: remote\n", "")
+	path := writeFleet(t, "nodes:\n  - name: cloud\n    kind: cloud\n", "")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)

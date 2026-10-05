@@ -60,7 +60,7 @@ func fleetRow(r fleet.NodeResult) (state, serving string) {
 	if !r.OK() {
 		return string(r.Outcome), r.Detail()
 	}
-	// The shared facts come from the same source the remote status view reads,
+	// The shared facts come from the same source the cloud status view reads,
 	// so the two cannot word or compute them differently.
 	// A node that runs on an instance reports its release outside the status
 	// reply, so the instance's answer fills what the reply left empty rather
@@ -150,10 +150,10 @@ func renderFleetMetrics(w io.Writer, results []fleet.NodeResult, format string) 
 		}
 		stats := r.Metrics
 		renderMetricsHeader(w, r, format)
-		// Before the continue, for the same reason the remote formats show it
+		// Before the continue, for the same reason the cloud formats show it
 		// before theirs: a node whose engine has stopped still has a useful
 		// answer to "when did it last do anything?" — and, for a retained
-		// remote environment, "how long is it kept?".
+		// cloud environment, "how long is it kept?".
 		// The table spells its facts as key-value lines, so its active line is
 		// spelled that way too; the compact formats indent theirs under the
 		// header.
@@ -164,7 +164,7 @@ func renderFleetMetrics(w io.Writer, results []fleet.NodeResult, format string) 
 		}
 		switch format {
 		case "bar":
-			// No state gate, for the same reason the remote bar format has
+			// No state gate, for the same reason the cloud bar format has
 			// none: a stopped node's retained history says what its engine
 			// was doing until it stopped, and a stopped node's current
 			// reading carries no figures for it to fall back on.
@@ -301,7 +301,7 @@ func renderFleetMetricsJSON(w io.Writer, results []fleet.NodeResult) error {
 // deploy config that source derives (StartWith) — telling the daemon what to
 // run, exactly as a routed wake already does for the Spinloop being
 // launched. A kind: daemon node with no resolvable source, and a kind:
-// remote node regardless, get a plain start: a remote environment's
+// cloud node regardless, get a plain start: a cloud environment's
 // StartWith always refuses a config, since what it serves is fixed at
 // deploy time.
 func fleetStartCmd() *cobra.Command {
@@ -451,10 +451,10 @@ func runFleetDrive(verb string, cfg *fleet.Config, all bool, names []string, cal
 	return nil
 }
 
-// fleetDeployCmd creates the AWS environment for one or more kind: remote
-// nodes, or every kind: remote node with --all, deriving what each serves
+// fleetDeployCmd creates the AWS environment for one or more kind: cloud
+// nodes, or every kind: cloud node with --all, deriving what each serves
 // from its resolved Spinloop source — the same derivation and registration
-// a standalone `spinloop remote deploy` performs for one file, so the two
+// a standalone `spinloop cloud deploy` performs for one file, so the two
 // can never disagree about what a given Spinloop deploys.
 func fleetDeployCmd() *cobra.Command {
 	var (
@@ -471,12 +471,12 @@ func fleetDeployCmd() *cobra.Command {
 	)
 	c := &cobra.Command{
 		Use:   "deploy",
-		Short: "create the AWS environment for one or more remote nodes",
-		Long: `deploys the AWS environment for each named kind: remote node, or
-every kind: remote node with --all, deriving what to serve from each node's
+		Short: "create the AWS environment for one or more cloud nodes",
+		Long: `deploys the AWS environment for each named kind: cloud node, or
+every kind: cloud node with --all, deriving what to serve from each node's
 own Spinloop source: its file field, or its name resolved as a registered
 alias or a same-named subdirectory beside the fleet file. Reuses the same
-derivation, consent, and registration behaviour as "spinloop remote deploy".`,
+derivation, consent, and registration behaviour as "spinloop cloud deploy".`,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -496,7 +496,7 @@ derivation, consent, and registration behaviour as "spinloop remote deploy".`,
 	fs := c.Flags()
 	fs.StringVarP(&path, "fleet", "f", "", fleetFileUsage)
 	fs.StringVar(&envName, "env", "", envFlagTargetUsage)
-	fs.BoolVar(&all, "all", false, "deploy every kind: remote node in the fleet")
+	fs.BoolVar(&all, "all", false, "deploy every kind: cloud node in the fleet")
 	fs.BoolVarP(&dryRun, "dry-run", "n", false, "print the config that would be deployed, without sending it")
 	fs.BoolVar(&overwrite, "overwrite", false, "proceed against an already-registered or live environment")
 	fs.BoolVar(&reseed, "reseed", false, "re-fetch the weights even if they are already in S3 (starts a ~20-minute seed)")
@@ -520,21 +520,21 @@ func runFleetDeploy(target fleetTarget, all bool, names []string, opts deployOpt
 		return fmt.Errorf("spinloop fleet deploy: --all is ambiguous with node names")
 	}
 
-	remoteNames := make([]string, 0, len(cfg.Nodes))
+	cloudNames := make([]string, 0, len(cfg.Nodes))
 	for _, n := range cfg.Nodes {
-		if n.Kind == fleet.KindRemote {
-			remoteNames = append(remoteNames, n.Name)
+		if n.Kind == fleet.KindCloud {
+			cloudNames = append(cloudNames, n.Name)
 		}
 	}
 
 	var targets []string
 	switch {
 	case all:
-		targets = remoteNames
+		targets = cloudNames
 	case len(names) == 0:
 		return fmt.Errorf(
 			"spinloop fleet deploy needs a node, or --all: %s",
-			strings.Join(remoteNames, ", "))
+			strings.Join(cloudNames, ", "))
 	default:
 		for _, name := range names {
 			entry, ok := cfg.Node(name)
@@ -542,7 +542,7 @@ func runFleetDeploy(target fleetTarget, all bool, names []string, opts deployOpt
 				return fmt.Errorf("no node %q in %s (known nodes: %s)",
 					name, cfg.Path, strings.Join(cfg.Names(), ", "))
 			}
-			if entry.Kind != fleet.KindRemote {
+			if entry.Kind != fleet.KindCloud {
 				return fmt.Errorf(
 					"node %q is kind %q: fleet deploy provisions cloud environments, and %[1]s is not one",
 					name, entry.Kind)
@@ -705,7 +705,7 @@ func (r fleetDeployResult) text() string {
 }
 
 // deployOneNode resolves and deploys a single targeted node. The node's own
-// name is the registered environment the deploy creates: a kind: remote node
+// name is the registered environment the deploy creates: a kind: cloud node
 // is only driveable by the fleet commands under that name, so there is no
 // override. It never returns an error itself — a bad node becomes a
 // fleetDeployResult, so the caller's fan-out can label it without aborting

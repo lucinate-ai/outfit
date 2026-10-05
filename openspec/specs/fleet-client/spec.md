@@ -172,7 +172,7 @@ same node-owned derivation a routed wake already uses
 (`deployConfigForNode`) — report the resolved source and derived config
 alongside the node's name, and start the node's engine with that config
 (`StartWith`) rather than a plain start, exactly as a routed wake tells a
-node what to serve. A `kind: remote` node's start is unaffected regardless
+node what to serve. A `kind: cloud` node's start is unaffected regardless
 of whether a source resolves for it: what it serves is fixed at deploy time,
 not pushed at start time, so it always uses a plain start.
 
@@ -193,10 +193,10 @@ not pushed at start time, so it always uses a plain start.
 #### Scenario: Start every node
 
 - **WHEN** `spinloop fleet start --all` runs against a file mixing `kind:
-  remote` and `kind: daemon` nodes, and every `kind: daemon` node's Spinloop
+  cloud` and `kind: daemon` nodes, and every `kind: daemon` node's Spinloop
   source resolves
 - **THEN** every node in the file starts — the daemon nodes with their
-  resolved config, the remote nodes with a plain start
+  resolved config, the cloud nodes with a plain start
 
 #### Scenario: Start with no node names the fleet
 
@@ -228,7 +228,7 @@ not pushed at start time, so it always uses a plain start.
 #### Scenario: Stop every node
 
 - **WHEN** `spinloop fleet stop --all` runs against a file mixing `kind:
-  remote` and `kind: daemon` nodes
+  cloud` and `kind: daemon` nodes
 - **THEN** every node in the file is stopped
 
 #### Scenario: Stop with no node names the fleet
@@ -264,47 +264,47 @@ not pushed at start time, so it always uses a plain start.
   as failed naming the three ways a source could have been given, and the
   command exits non-zero
 
-#### Scenario: Starting a remote node is unaffected by a resolved source
+#### Scenario: Starting a cloud node is unaffected by a resolved source
 
-- **WHEN** `spinloop fleet start gpu-env` runs, `gpu-env` is a `kind: remote`
+- **WHEN** `spinloop fleet start gpu-env` runs, `gpu-env` is a `kind: cloud`
   node, and a Spinloop source resolves for it
 - **THEN** the client starts it with a plain start; the resolved source is
-  not used, since a `kind: remote` node's `StartWith` always refuses a
+  not used, since a `kind: cloud` node's `StartWith` always refuses a
   deploy config
 
-### Requirement: Fleet deploy targets remote nodes
+### Requirement: Fleet deploy targets cloud nodes
 
 `spinloop fleet deploy <node...>` SHALL deploy the AWS environment for one or
-more `kind: remote` nodes in the fleet file, named explicitly.
-`spinloop fleet deploy --all` SHALL target every `kind: remote` node in the
+more `kind: cloud` nodes in the fleet file, named explicitly.
+`spinloop fleet deploy --all` SHALL target every `kind: cloud` node in the
 file instead. Invoked with neither a node name nor `--all`, it SHALL fail,
-listing the fleet's `kind: remote` nodes, and deploy nothing — mutating
+listing the fleet's `kind: cloud` nodes, and deploy nothing — mutating
 however many cloud environments a fleet file lists SHALL NOT happen by
 default. `--all` combined with one or more node names SHALL fail as
 ambiguous. An unknown node name SHALL fail the command, naming the known
 nodes, without deploying anything. A named `kind: daemon` node SHALL fail
 the command, explaining that `fleet deploy` provisions cloud environments
-and that node is not one; `--all` SHALL only ever select `kind: remote`
+and that node is not one; `--all` SHALL only ever select `kind: cloud`
 nodes, so a `kind: daemon` node is never targeted by it and is not reported
 at all.
 
-#### Scenario: Deploy every remote node
+#### Scenario: Deploy every cloud node
 
 - **WHEN** `spinloop fleet deploy --all` runs against a file mixing `kind:
-  remote` and `kind: daemon` nodes
-- **THEN** every `kind: remote` node is deployed and no `kind: daemon` node
+  cloud` and `kind: daemon` nodes
+- **THEN** every `kind: cloud` node is deployed and no `kind: daemon` node
   is touched or mentioned
 
 #### Scenario: Deploy named nodes
 
 - **WHEN** `spinloop fleet deploy gpu-a gpu-b` runs and both are `kind:
-  remote` nodes in the file
+  cloud` nodes in the file
 - **THEN** only those two are deployed, whatever else the file lists
 
 #### Scenario: No target is an error
 
 - **WHEN** `spinloop fleet deploy` runs with no node arguments and no `--all`
-- **THEN** it fails, listing the fleet's `kind: remote` nodes, and deploys
+- **THEN** it fails, listing the fleet's `kind: cloud` nodes, and deploys
   nothing
 
 #### Scenario: Combining --all with node names is an error
@@ -331,7 +331,7 @@ source resolves to (see fleet-config's "Node Spinloop source" and "...falls
 back to name-based lookup" requirements: its `file` field, else an alias
 registered under its name, else a `<name>/` subdirectory beside the fleet
 file), deriving the deploy config and registering the resulting environment
-exactly as `spinloop remote deploy <file>` does for that same file — the two
+exactly as `spinloop cloud deploy <file>` does for that same file — the two
 SHALL NOT be able to disagree about what a given Spinloop file deploys. A
 targeted node for which no source resolves SHALL fail for that node alone,
 naming all three ways one could have been given, without touching the other
@@ -341,14 +341,14 @@ three supplied it is never left to be inferred.
 
 Where a node declares an `instance-type` in the fleet file, the deploy config
 derived for it SHALL carry that type, so the node's environment launches as
-named — the same value a standalone `spinloop remote deploy --instance-type`
+named — the same value a standalone `spinloop cloud deploy --instance-type`
 would record for the environment — and a node declaring none SHALL deploy an
 environment on the control plane's default type. This keeps `fleet deploy` and
 a matching standalone deploy in agreement about what a node's environment
 launches as.
 
 Nodes SHALL be deployed independently: one node already registered or live
-SHALL require `--overwrite` for that node exactly as a standalone `remote
+SHALL require `--overwrite` for that node exactly as a standalone `cloud
 deploy` does, and refusing it SHALL NOT stop the other targeted nodes from
 deploying. A node whose deploy fails for any other reason SHALL likewise be
 reported against that node without aborting the rest. The command SHALL exit
@@ -356,7 +356,7 @@ non-zero when any targeted node failed to deploy, having still attempted
 every other targeted node.
 
 `--dry-run` SHALL print the plan for every targeted node without deploying
-any of them, exactly as a standalone `remote deploy --dry-run` does for one.
+any of them, exactly as a standalone `cloud deploy --dry-run` does for one.
 `--overwrite` SHALL apply to every targeted node that needs it.
 
 #### Scenario: A node deploys from its own Spinloop file
@@ -364,27 +364,27 @@ any of them, exactly as a standalone `remote deploy --dry-run` does for one.
 - **WHEN** `fleet deploy` targets a node declaring `file:
   ./envs/gpu.Spinloop`
 - **THEN** that node's environment is created and registered from that file,
-  the same as `spinloop remote deploy ./envs/gpu.Spinloop` would produce, and
+  the same as `spinloop cloud deploy ./envs/gpu.Spinloop` would produce, and
   the resolved path is reported against that node
 
 #### Scenario: A node's declared instance type is deployed
 
-- **WHEN** `fleet deploy` targets a `kind: remote` node declaring
+- **WHEN** `fleet deploy` targets a `kind: cloud` node declaring
   `instance-type: g6e.2xlarge`
 - **THEN** the environment it deploys launches as `g6e.2xlarge`, the same
-  value a standalone `spinloop remote deploy --instance-type g6e.2xlarge` of
+  value a standalone `spinloop cloud deploy --instance-type g6e.2xlarge` of
   the node's source would record
 
 #### Scenario: A node with no instance type deploys the default
 
-- **WHEN** `fleet deploy` targets a `kind: remote` node declaring no
+- **WHEN** `fleet deploy` targets a `kind: cloud` node declaring no
   `instance-type`
 - **THEN** the environment it deploys launches as the control plane's default
   instance type
 
 #### Scenario: A node with no resolvable source fails only that node
 
-- **WHEN** `fleet deploy` targets two remote nodes and one declares no `file`
+- **WHEN** `fleet deploy` targets two cloud nodes and one declares no `file`
   field, has no alias registered under its name, and has no same-named
   subdirectory beside the fleet file
 - **THEN** the other node still deploys, and the command reports against the
@@ -393,16 +393,16 @@ any of them, exactly as a standalone `remote deploy --dry-run` does for one.
 
 #### Scenario: One node's guard does not block the others
 
-- **WHEN** `fleet deploy` targets two remote nodes and one is already
+- **WHEN** `fleet deploy` targets two cloud nodes and one is already
   registered while the other is not, and `--overwrite` is not given
 - **THEN** the unregistered node deploys, the registered node is refused with
-  the same message a standalone `remote deploy` gives, and the command exits
+  the same message a standalone `cloud deploy` gives, and the command exits
   non-zero
 
 #### Scenario: Dry run previews every targeted node
 
 - **WHEN** `spinloop fleet deploy --dry-run --all` runs
-- **THEN** the plan for every `kind: remote` node in the file is printed and
+- **THEN** the plan for every `kind: cloud` node in the file is printed and
   no environment is created or registered
 
 ### Requirement: Fleet deploy reports progress and results legibly
@@ -1134,7 +1134,7 @@ the grid on escape rather than closing the dashboard out from under it.
 The dashboard SHALL refresh the fleet continuously, and SHALL also refresh
 immediately on the operator's request. The cadence SHALL be by node kind: a
 local daemon machine SHALL refresh on a short interval — seconds, not the
-watch mode's minute — and a `kind: remote` environment SHALL refresh on a
+watch mode's minute — and a `kind: cloud` environment SHALL refresh on a
 much slower cadence, a 60-second interval, one status call a minute, because
 its status is a signed call through the cloud control plane rather than a
 local socket, and its state changes on the scale of minutes. A manual refresh
@@ -1269,7 +1269,7 @@ heard from yet.
 - **Not serving**: the node answered its last refresh, that answer is current,
   no action is in flight for it, and its engine is not serving — its state is
   `idle`, the daemon has started nothing, `stopped`, a daemon engine that was
-  stopped, or `undeployed`, a remote environment with no instance at all.
+  stopped, or `undeployed`, a cloud environment with no instance at all.
 - **Unknown**: no current status can be determined for the node — it has not yet
   answered any refresh, its last refresh answered without reporting an engine
   state, or its newest answer has aged well past its cadence and no longer
@@ -1344,9 +1344,9 @@ heard from yet.
 - **THEN** its panel's status glyph is the faded grey dot, not the green of
   a serving node
 
-#### Scenario: An undeployed remote environment reads not serving
+#### Scenario: An undeployed cloud environment reads not serving
 
-- **WHEN** a remote environment's last completed refresh reports it
+- **WHEN** a cloud environment's last completed refresh reports it
   `undeployed` — it has no instance at all — and no start or stop is in
   flight for it
 - **THEN** its panel's status glyph is the faded grey dot, not the green of
@@ -1451,7 +1451,7 @@ The dashboard SHALL let the operator set the retention deadline of the node
 currently selected, from the keyboard, through the same node operation the
 one-shot keep command uses. Keep applies to a node's instance — the time until
 which the cloud's idle sweep leaves it alone — so it SHALL be offered only for
-nodes that support retention, namely the fleet's remote environments; a node
+nodes that support retention, namely the fleet's cloud environments; a node
 without retention support SHALL take no keep.
 
 The keep key SHALL open a duration prompt rather than send anything. The
@@ -1494,7 +1494,7 @@ prompt and the same rules the grid applies to the selected node.
 
 #### Scenario: Keep opens a prompt, it does not send
 
-- **WHEN** the operator selects a remote environment with no action in flight
+- **WHEN** the operator selects a cloud environment with no action in flight
   and issues keep
 - **THEN** a duration prompt opens naming the node, pre-filled with a default
   duration, and nothing has been sent
@@ -1507,7 +1507,7 @@ prompt and the same rules the grid applies to the selected node.
 
 #### Scenario: A pre-filled keep is one key and a confirm
 
-- **WHEN** the operator issues keep on a remote environment and confirms the
+- **WHEN** the operator issues keep on a cloud environment and confirms the
   prompt without changing its duration
 - **THEN** the node is kept until now plus the default duration
 
@@ -1538,7 +1538,7 @@ prompt and the same rules the grid applies to the selected node.
 - **WHEN** the node under the cursor is a local daemon node, or has an action
   in flight
 - **THEN** the key help does not name the keep key
-- **WHEN** that node is a remote environment with no action in flight
+- **WHEN** that node is a cloud environment with no action in flight
 - **THEN** the key help names the keep key
 
 #### Scenario: A busy node is not kept again
@@ -1562,7 +1562,7 @@ prompt and the same rules the grid applies to the selected node.
 
 #### Scenario: Keep from the detail view
 
-- **WHEN** the operator issues keep from the detail view of a remote
+- **WHEN** the operator issues keep from the detail view of a cloud
   environment
 - **THEN** the same prompt opens with the same rules, and its outcome is
   shown as the grid would show it
@@ -1585,7 +1585,7 @@ the sweep has already moved past as though the node were still held.
 
 #### Scenario: A retained node shows its deadline
 
-- **WHEN** a remote environment's refresh answer carries a retention deadline
+- **WHEN** a cloud environment's refresh answer carries a retention deadline
   in the future
 - **THEN** its tile shows the deadline, and its detail screen shows the same
   line
@@ -1598,7 +1598,7 @@ the sweep has already moved past as though the node were still held.
 
 #### Scenario: An older control plane degrades to no line
 
-- **WHEN** a remote environment's control plane predates the deadline in its
+- **WHEN** a cloud environment's control plane predates the deadline in its
   stats reply
 - **THEN** its panel shows no deadline line and no error, and the rest of the
   panel is unaffected

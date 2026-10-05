@@ -28,7 +28,7 @@ The target is a registered environment (--env), a fleet file (--fleet), or
 the fleet.yaml in the working directory. A node that cannot be reached is a
 row saying so, not a failure: one unreachable machine never blanks the rest.
 
-An environment's endpoint address is spinloop remote env, and its retention
+An environment's endpoint address is spinloop cloud env, and its retention
 deadline spinloop fleet metrics — neither is a column here, because neither
 applies to every node.`,
 		Args:          cobra.NoArgs,

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// followUntilInterrupted is the wiring both `remote logs -f` and `fleet logs
+// followUntilInterrupted is the wiring both `cloud logs -f` and `fleet logs
 // -f` reach, and nothing exercised it: each command's tests drive the polling
 // loop directly, so the wrapper that installs the signal handler and decides
 // what a cancelled follow returns was never entered.

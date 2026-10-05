@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/fleet"
 	"github.com/spinloop-ai/spinloop/internal/metrics"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 func ptrPct(v float64) *float64 { return &v }
@@ -480,14 +480,14 @@ func TestFormatMetricsBarStoppedWithHistory(t *testing.T) {
 }
 
 func TestFormatMetricsBarRunning(t *testing.T) {
-	resp := &remote.StatsResponse{
+	resp := &cloud.StatsResponse{
 		Environment: "prod", State: "running", InstanceType: "g5.xlarge",
 		ModelID: "org/qwen:q4", Version: "0.4.3",
 		LastActiveAt: "2026-08-21T10:00:00Z", IdleSeconds: 3,
 		CPU:    &metrics.CpuStat{Utilization: 62},
 		Memory: &metrics.MemoryStat{Total: 1000, Used: 300},
 		GPUs:   []metrics.GpuStat{{Index: 0, Name: "H100", Utilization: 61, MemoryUsed: 80, MemoryTotal: 160}},
-		Tokens: &remote.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: ptrInt(17)},
+		Tokens: &cloud.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: ptrInt(17)},
 		History: []metrics.HistorySample{
 			{Time: 1, CPU: ptrPct(10), Mem: ptrPct(20), GPUs: []metrics.HistoryGPU{{Index: 0, Util: 50, Mem: ptrPct(50)}}},
 			{Time: 2, CPU: ptrPct(20), Mem: ptrPct(30), GPUs: []metrics.HistoryGPU{{Index: 0, Util: 61, Mem: ptrPct(50)}}},
@@ -521,10 +521,10 @@ func TestFormatMetricsBarRunning(t *testing.T) {
 // An engine family whose metrics expose no cumulative request counter yields
 // statistics without the figure, and the token block draws no line for it.
 func TestFormatMetricsBarNoRequestCount(t *testing.T) {
-	resp := &remote.StatsResponse{
+	resp := &cloud.StatsResponse{
 		Environment: "prod", State: "running", InstanceType: "g5.xlarge",
 		ModelID: "org/qwen:q4", Version: "0.4.3",
-		Tokens: &remote.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024},
+		Tokens: &cloud.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024},
 	}
 	var b bytes.Buffer
 	if err := renderFleetMetrics(&b, nodeResultsFor(resp), "bar"); err != nil {
@@ -540,7 +540,7 @@ func TestFormatMetricsBarNoRequestCount(t *testing.T) {
 }
 
 func TestFormatMetricsJSONCarriesHistory(t *testing.T) {
-	resp := &remote.StatsResponse{
+	resp := &cloud.StatsResponse{
 		Environment: "prod", State: "running",
 		CPU: &metrics.CpuStat{Utilization: 62},
 		History: []metrics.HistorySample{
@@ -571,7 +571,7 @@ func TestFormatMetricsJSONCarriesHistory(t *testing.T) {
 // nodeResultsFor turns a control-plane stats reply into the one node result a
 // fan-out would produce for it, so a test can state its input as the reply and
 // assert on what the renderer draws.
-func nodeResultsFor(resp *remote.StatsResponse) []fleet.NodeResult {
+func nodeResultsFor(resp *cloud.StatsResponse) []fleet.NodeResult {
 	return []fleet.NodeResult{{
 		Name: resp.Environment, Outcome: fleet.OutcomeOK,
 		Instance: fleet.Instance{

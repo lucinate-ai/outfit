@@ -66,7 +66,7 @@ beforeAll(async () => {
   ({ handler } = await import('../lambda/start/index'));
 });
 
-/** A GET on the start URL is what `spinloop remote status` sends. */
+/** A GET on the start URL is what `spinloop cloud status` sends. */
 const statusEvent = {
   queryStringParameters: { env: 'dev' },
   requestContext: { http: { method: 'GET' } },

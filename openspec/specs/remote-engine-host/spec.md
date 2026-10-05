@@ -55,7 +55,7 @@ one the boot script previously installed for that runner.
 The stats path SHALL obtain engine and system metrics by calling the
 on-instance daemon's metrics endpoint over SSM, merging in what only the
 control plane knows (environment, instance id and type, uptime), and SHALL
-preserve the reply shape `spinloop remote metrics` renders today. The control
+preserve the reply shape `spinloop cloud metrics` renders today. The control
 plane SHALL NOT collect metrics by running per-metric shell commands on the
 instance.
 
@@ -75,7 +75,7 @@ by a compatibility path in the check.
 
 #### Scenario: Stats flow through the daemon
 
-- **WHEN** `spinloop remote metrics` runs against a running instance
+- **WHEN** `spinloop cloud metrics` runs against a running instance
 - **THEN** the reported state, GPU, CPU, RAM and token figures come from the
   daemon's metrics endpoint and render in the existing bar, table and JSON
   formats unchanged

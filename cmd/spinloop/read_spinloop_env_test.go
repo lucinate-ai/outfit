@@ -8,7 +8,7 @@ import (
 )
 
 // A Spinloop's ENV instructions reach the command that was given it, which is
-// what lets a project's AWS profile or SPINLOOP_REMOTE_* overrides live in the
+// what lets a project's AWS profile or SPINLOOP_CLOUD_* overrides live in the
 // Spinloop rather than in whatever shell is running the command.
 func TestReadSpinloopEnv_AppliesENVInstructions(t *testing.T) {
 	t.Setenv("SPINLOOP_READ_ENV_PROBE", "")

@@ -499,12 +499,12 @@ func (f *fakeFleetNode) Logs(context.Context, int64, int) (daemon.LogsResponse, 
 	return daemon.LogsResponse{}, nil
 }
 
-// A kind: remote node's start always uses a plain start, never StartWith —
+// A kind: cloud node's start always uses a plain start, never StartWith —
 // StartWith refuses a config for that kind unconditionally (see
-// remoteNode.StartWith), so fleetStartCall must not even attempt it.
-func TestFleetStartCallRemoteNodeUsesPlainStart(t *testing.T) {
+// cloudNode.StartWith), so fleetStartCall must not even attempt it.
+func TestFleetStartCallCloudNodeUsesPlainStart(t *testing.T) {
 	t.Setenv("SPINLOOP_CONFIG_DIR", t.TempDir())
-	dir := writeFleetFile(t, "nodes:\n  - name: gpu-env\n    kind: remote\n    file: ./gpu-env.Spinloop\n")
+	dir := writeFleetFile(t, "nodes:\n  - name: gpu-env\n    kind: cloud\n    file: ./gpu-env.Spinloop\n")
 	if err := os.WriteFile(filepath.Join(dir, "gpu-env.Spinloop"), []byte("PROVIDER llamacpp\nMODEL org/m:Q4\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -515,10 +515,10 @@ func TestFleetStartCallRemoteNodeUsesPlainStart(t *testing.T) {
 	node := &fakeFleetNode{name: "gpu-env"}
 	r := fleetStartCall(cfg)(context.Background(), node)
 	if !r.OK() {
-		t.Fatalf("fleetStartCall on a remote node = %+v", r)
+		t.Fatalf("fleetStartCall on a cloud node = %+v", r)
 	}
 	if node.startWithCalls != 0 {
-		t.Errorf("StartWith was called %d times for a remote node, want 0", node.startWithCalls)
+		t.Errorf("StartWith was called %d times for a cloud node, want 0", node.startWithCalls)
 	}
 	if node.startCalls != 1 {
 		t.Errorf("Start was called %d times, want 1", node.startCalls)
@@ -558,7 +558,7 @@ func TestFleetStartCallDaemonNodeUsesStartWith(t *testing.T) {
 func TestFleetStartCallResolvedButBrokenSourceNeverStarts(t *testing.T) {
 	cases := map[string]string{
 		"unparseable Spinloop": "this is not a Spinloop\x00\x01",
-		// deployConfigForNode shares remote deploy's runnerFor, which only
+		// deployConfigForNode shares cloud deploy's runnerFor, which only
 		// accepts llamacpp/vllm — the same limit that already applies to a
 		// routed wake. An MLX (or any other) provider is resolved but
 		// cannot be turned into a deploy config.

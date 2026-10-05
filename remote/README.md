@@ -1,13 +1,13 @@
 # remote — the cloud GPU deployment
 
-The deployment [`spinloop remote`](../docs/commands/remote.md) drives:
+The deployment [`spinloop cloud`](../docs/commands/cloud.md) drives:
 scale-to-zero, self-hosted LLM endpoints on AWS, each exposing an
 OpenAI-compatible API for use as a coding-agent backend. It is split into two
 layers. A **control plane** — the lifecycle Lambdas, the weights bucket, the
 VPC and the AMI bake pipelines — is deployed **once per account** by
-`spinloop remote bootstrap`. **Environments** — one per endpoint, each with its
+`spinloop cloud bootstrap`. **Environments** — one per endpoint, each with its
 own Elastic IP, API key and allowed CIDR — are created on it by
-`spinloop remote deploy`, as many as you need side by side. An environment's GPU
+`spinloop cloud deploy`, as many as you need side by side. An environment's GPU
 instance exists only while you are actually using it: the start Lambda
 launches it on demand (and re-wakes it when it is merely stopped), and the
 stop Lambda's idle sweep stops it after a period of idleness, then terminates
@@ -29,7 +29,7 @@ The instance is **stateless**, and responsibilities are split cleanly:
 - The **model weights** live in an **S3 bucket**, put there by a disposable
   seed job that streams them from Hugging Face entirely within AWS. You do not
   run it by hand: deploying a model whose weights are missing starts it for you,
-  and `spinloop remote seed` starts, follows, lists and stops one directly. The
+  and `spinloop cloud seed` starts, follows, lists and stops one directly. The
   seed runs on a **stock Amazon Linux image** — it needs no bake — reports its
   progress and outcome to CloudWatch, and terminates itself on success and on
   failure alike. A prefix is complete when it holds a `_seed.json` manifest,
@@ -45,7 +45,7 @@ availability zone — it tries each g6e zone in turn until one has capacity.
 
 The image stack defines an Image Builder **pipeline**, not a build, so
 deploying it never runs (or fails on) a bake. You trigger bakes out-of-band
-with `spinloop remote bake <runner>` (or `pnpm bake <runner>` by hand); each
+with `spinloop cloud bake <runner>` (or `pnpm bake <runner>` by hand); each
 successful bake **tags** its AMI with its engine, and the start Lambda launches
 the **newest AMI matching the engine it was told to run**. A failed bake
 produces no new AMI and changes nothing.
@@ -58,19 +58,19 @@ plane that renders units or scripts the new binary understands — the other
 order launches instances whose daemon never starts.
 
 ```
-spinloop remote bootstrap ─▶ control-plane stack (Lambdas, S3, VPC, roles) + bake pipelines
-spinloop remote bake llamacpp ─▶ Image Builder pipeline ─(async)─▶ AMI (driver + engine), tagged
-spinloop remote deploy ─▶ deploy Lambda ─▶ creates env <name>: EIP, SG (your CIDR),
+spinloop cloud bootstrap ─▶ control-plane stack (Lambdas, S3, VPC, roles) + bake pipelines
+spinloop cloud bake llamacpp ─▶ Image Builder pipeline ─(async)─▶ AMI (driver + engine), tagged
+spinloop cloud deploy ─▶ deploy Lambda ─▶ creates env <name>: EIP, SG (your CIDR),
                                       │  API key, deploy-config (what to serve)
                                       └─ seeds weights ─▶ S3 weights bucket (shared)
                                          newest AMI by tag + weights ◀─┐ (at launch)
-spinloop remote start ─SigV4▶ start Lambda ─ RunInstances (try each AZ) ─▶ EC2 g6e.xlarge
-spinloop remote status ──?env▶ (Function URL,  + the env's EIP, SSM)      │ L40S 48GB
-spinloop remote stop ───────▶ stop Lambda        AWS_IAM auth             │ s3 sync weights
-spinloop remote pause ──────▶  (stop, not terminate)                      │ engine on :8000
+spinloop cloud start ─SigV4▶ start Lambda ─ RunInstances (try each AZ) ─▶ EC2 g6e.xlarge
+spinloop cloud status ──?env▶ (Function URL,  + the env's EIP, SSM)      │ L40S 48GB
+spinloop cloud stop ───────▶ stop Lambda        AWS_IAM auth             │ s3 sync weights
+spinloop cloud pause ──────▶  (stop, not terminate)                      │ engine on :8000
                                   ▲
 EventBridge rate(5 min) ─────────┘ (idle sweep: stop, then terminate)  ▼
-spinloop remote schedule ─▶ schedule Lambda ─▶ SSM list + EventBridge Scheduler (cron, time zone)
+spinloop cloud schedule ─▶ schedule Lambda ─▶ SSM list + EventBridge Scheduler (cron, time zone)
                                      └─ fires start / stop Lambda for the env on each schedule
 coding agent ── OPENAI_BASE_URL=http://<env EIP>:8000/v1 + api key ──▶ direct HTTP
 ```
@@ -90,7 +90,7 @@ and the wake/idle lifecycle — see [docs/architecture.md](docs/architecture.md)
 - An AWS account with admin (or equivalent) credentials configured locally —
   for `bootstrap`, `bake`, and `deploy`. Day-to-day commands (`start`,
   `status`, …) can instead sign with the stored control-plane credential from
-  `spinloop remote auth --store`, so they keep working between SSO log-ins
+  `spinloop cloud auth --store`, so they keep working between SSO log-ins
 - Node.js 22+ and [pnpm](https://pnpm.io)
 - The [`spinloop`](https://github.com/spinloop-ai/spinloop) CLI, which drives the
   endpoint
@@ -125,17 +125,17 @@ aws ec2 describe-instance-type-offerings --location-type availability-zone \
 ## Deploy
 
 The one-time account setup is
-[`spinloop remote bootstrap`](../docs/commands/remote.md#bootstrapping-the-account),
+[`spinloop cloud bootstrap`](../docs/commands/cloud.md#bootstrapping-the-account),
 which drives this directory for you — download, consent plan, then the shared
 deploy. Baking the AMIs is the separate
-[`spinloop remote bake`](../docs/commands/remote.md#baking-the-amis) step after
-it; endpoints come after that, one `spinloop remote deploy` per environment:
+[`spinloop cloud bake`](../docs/commands/cloud.md#baking-the-amis) step after
+it; endpoints come after that, one `spinloop cloud deploy` per environment:
 
 ```sh
-spinloop remote bootstrap   # once per account: control-plane stack + pipelines
-spinloop remote auth --store  # optional: store a day-to-day credential in the OS keystore
-spinloop remote bake        # bakes the runner AMI(s); waits until they are available
-spinloop remote deploy      # creates the Spinloop's REMOTE environment and says
+spinloop cloud bootstrap   # once per account: control-plane stack + pipelines
+spinloop cloud auth --store  # optional: store a day-to-day credential in the OS keystore
+spinloop cloud bake        # bakes the runner AMI(s); waits until they are available
+spinloop cloud deploy      # creates the Spinloop's REMOTE environment and says
                           # what it serves; seeds the weights if missing
 ```
 
@@ -143,7 +143,7 @@ spinloop remote deploy      # creates the Spinloop's REMOTE environment and says
 keeps it in the machine's OS keystore, so the day-to-day commands sign without
 a fresh SSO log-in. It needs a control plane that has that user: a control
 plane deployed before this capability must be re-bootstrapped first (re-running
-`spinloop remote bootstrap` is safe and updates the stack). Run `--store`
+`spinloop cloud bootstrap` is safe and updates the stack). Run `--store`
 again to rotate — it swaps the key using the stored one alone, so no
 administrator credential is needed, and deletes the superseded key; roughly
 every 90 days is a sane cadence. `bootstrap` and `bake` themselves always run
@@ -169,10 +169,10 @@ pnpm bake llamacpp     # bakes that engine's AMI — ~15-25 min, in the backgrou
 - `pnpm run deploy` deploys the **control-plane stack** — VPC, the lifecycle Lambdas,
   the S3 weights bucket, roles — and publishes its outputs for discovery. It
   creates no Elastic IP and no environment.
-- `spinloop remote deploy` reads the [`Spinloop`](Spinloop) and its
+- `spinloop cloud deploy` reads the [`Spinloop`](Spinloop) and its
   [`preset.ini`](preset.ini), creates the environment the Spinloop's `REMOTE`
   names (its EIP, API key, ingress scoped to your `--allowed-cidr`, defaulting
-  to your public IP), registers it under `~/.config/spinloop/remotes/<env>/`, and
+  to your public IP), registers it under `~/.config/spinloop/clouds/<env>/`, and
   tells it what to serve. If those weights are not in S3 it starts the seed job
   itself, all within AWS, and prints the command that follows it — wait for the
   seed to reach `succeeded` before the first `start`, since a wake before then
@@ -186,7 +186,7 @@ pnpm bake llamacpp     # bakes that engine's AMI — ~15-25 min, in the backgrou
 The bake and the weight seed are independent and can run in parallel.
 
 Everything per-environment — the model, the engine, the context window, the
-allowed CIDR — is given to `spinloop remote deploy`, not to the stack. `.env` can
+allowed CIDR — is given to `spinloop cloud deploy`, not to the stack. `.env` can
 hold `HF_TOKEN` for gated model repos (used only when seeding). The shared
 layer's own settings all have defaults, overridable in `cdk.json`:
 
@@ -212,19 +212,19 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `stopRetentionMinutes` | `60` | Keep a stopped instance (re-wakeable) this long before terminating it |
 | `gracePeriodMinutes` | `30` | Never stop this soon after boot (covers the cold load) |
 | `maxRuntimeMinutes` | `240` | Hard stop this long after boot, even if busy |
-| `controlPlaneVersion` | `dev` | The spinloop version reported in the `x-spinloop-control-plane-version` header of every Lambda response, so the CLI can warn on a mismatch. `spinloop remote bootstrap` sets it (through `SPINLOOP_CONTROL_PLANE_VERSION`) to its own version; a hand-run `pnpm run deploy` leaves it `dev`, which never triggers the warning |
+| `controlPlaneVersion` | `dev` | The spinloop version reported in the `x-spinloop-control-plane-version` header of every Lambda response, so the CLI can warn on a mismatch. `spinloop cloud bootstrap` sets it (through `SPINLOOP_CONTROL_PLANE_VERSION`) to its own version; a hand-run `pnpm run deploy` leaves it `dev`, which never triggers the warning |
 
 The **model, quant, context window and engine flags are not in this table** —
-they come from the `Spinloop` and its preset via `spinloop remote deploy`, so
+they come from the `Spinloop` and its preset via `spinloop cloud deploy`, so
 changing model is a command, not a redeploy.
 
 What needs what:
 - Change **model, quant, context or engine flags** → edit the `Spinloop`/preset,
-  then `spinloop remote deploy --overwrite`. No bake, no redeploy.
+  then `spinloop cloud deploy --overwrite`. No bake, no redeploy.
 - Change an environment's **allowed CIDR** →
-  `spinloop remote deploy --overwrite --allowed-cidr <ip>/32`.
+  `spinloop cloud deploy --overwrite --allowed-cidr <ip>/32`.
 - Change the **spinloop release** fresh boots install →
-  `spinloop remote deploy --overwrite --spinloop-version <x.y.z>` (omit the flag
+  `spinloop cloud deploy --overwrite --spinloop-version <x.y.z>` (omit the flag
   for the latest). Takes effect at the next boot — a running instance keeps
   the daemon it was deployed with.
 - Change **`llamacppRelease`/`vllmVersion`/`nvidiaDriverPackage`** → bump the
@@ -241,12 +241,12 @@ For vLLM, FP8 is hardware-native on the L40S (Ada generation).
 
 The `Spinloop` is the control surface. `PROVIDER` names the engine, so the same
 file that runs a model locally under `spinloop serve` deploys it to the cloud
-under `spinloop remote deploy`:
+under `spinloop cloud deploy`:
 
 ```sh
-spinloop remote deploy                 # what ./Spinloop describes
-spinloop remote deploy path/to/Spinloop  # something else
-spinloop remote deploy --dry-run       # print the config without sending it
+spinloop cloud deploy                 # what ./Spinloop describes
+spinloop cloud deploy path/to/Spinloop  # something else
+spinloop cloud deploy --dry-run       # print the config without sending it
 ```
 
 Cutting back to vLLM means a Spinloop with `PROVIDER vllm` and the FP8 repo as
@@ -258,7 +258,7 @@ names, so nothing else has to agree.
 
 A model published with extra files beside its weights — a speculative-decoding
 drafter, a perception encoder — can carry them too. The deploy-config names
-them by **role**, and `spinloop remote deploy` fills that in from the preset keys
+them by **role**, and `spinloop cloud deploy` fills that in from the preset keys
 that already drive a local serve:
 
 | Preset key | Role | Synced to | Engine flag |
@@ -299,27 +299,27 @@ tail -f /var/log/cloud-init-output.log       # boot: s3 sync progress
 
 The endpoint is driven by the `spinloop` CLI, using this directory's `Spinloop`;
 its `REMOTE` names the environment `deploy` registered under
-`~/.config/spinloop/remotes/<env>/`. Run these from this directory (`spinloop`
+`~/.config/spinloop/clouds/<env>/`. Run these from this directory (`spinloop`
 reads `./Spinloop`):
 
 ```sh
-spinloop remote start    # boots (or re-wakes a stopped) the instance, blocks
+spinloop cloud start    # boots (or re-wakes a stopped) the instance, blocks
                         # until it is serving, prints OPENAI_BASE_URL + OPENAI_API_KEY exports
 spinloop apply           # points your coding agent at the endpoint
-spinloop remote status   # instance state + endpoint health
-spinloop remote pause    # stop now (no terminate); a later start re-wakes it
-spinloop remote stop     # terminate now instead of waiting for the idle timer
+spinloop cloud status   # instance state + endpoint health
+spinloop cloud pause    # stop now (no terminate); a later start re-wakes it
+spinloop cloud stop     # terminate now instead of waiting for the idle timer
 ```
 
 `spinloop apply` writes the endpoint's base URL and API key into your harness
-config, so export the key that `spinloop remote start` prints first. The base URL
-comes from the environment's `remote.json` (`base_url`), since the Spinloop
+config, so export the key that `spinloop cloud start` prints first. The base URL
+comes from the environment's `cloud.json` (`base_url`), since the Spinloop
 states none; a `BASEURL` in the Spinloop would override it. The model
 name to request is the Spinloop's `ALIAS` (`qwen3.6-27b`) — the same value the
 server is started under, so the two cannot drift:
 
 ```sh
-eval "$(spinloop remote start)"   # sets OPENAI_BASE_URL + OPENAI_API_KEY
+eval "$(spinloop cloud start)"   # sets OPENAI_BASE_URL + OPENAI_API_KEY
 curl "$OPENAI_BASE_URL/models" -H "Authorization: Bearer $OPENAI_API_KEY"
 curl "$OPENAI_BASE_URL/chat/completions" \
   -H "Authorization: Bearer $OPENAI_API_KEY" -H 'Content-Type: application/json' \
@@ -340,14 +340,14 @@ the stop Lambda asks for that (via SSM) and **stops** the instance once
 **15–20 minutes** after the last request.
 
 Stopping (rather than terminating) keeps the boot disk and the weights the
-boot synced onto it, so the next `spinloop remote start` **re-wakes** the
+boot synced onto it, so the next `spinloop cloud start` **re-wakes** the
 instance — a boot without a fresh launch and a no-op S3 sync — instead of
 launching one from the AMI. The stop clears the page cache, so the re-wake
 re-pays the model load; it skips only the sync, and lands in the same band as
 a cold boot. The stopped instance
 is billed for its volume only, not compute, and the sweep **terminates** it
 once it has been stopped longer than `stopRetentionMinutes` (default 1 h):
-after that, the next start is a fresh launch again. `spinloop remote pause`
+after that, the next start is a fresh launch again. `spinloop cloud pause`
 does the same stop on purpose.
 
 Sampling on the box is what makes this reliable: a busy endpoint that happens
@@ -372,7 +372,7 @@ stop, it lands on the next 5-minute tick.
 
 **Pinning an instance up**: tag it `Retain-Until` with a UTC ISO-8601 time and
 neither the idle timer nor the hard cap will touch it until then — handy while
-debugging on the box. A manual `spinloop remote stop` still works.
+debugging on the box. A manual `spinloop cloud stop` still works.
 
 ```sh
 aws ec2 create-tags --resources <instance id> \
@@ -400,28 +400,28 @@ coding a day lands around $90/month. Full breakdown in
   and `/cloud-vm-llm/boot`, stream `<env>/<instance-id>` — so they survive the
   instance's termination. Lambda decisions (launch AZ, idle/terminate, deploys)
   are in the three Lambdas' CloudWatch log groups.
-- **Changing the model**: edit the `Spinloop`/preset and run `spinloop remote
+- **Changing the model**: edit the `Spinloop`/preset and run `spinloop cloud
   deploy`. It seeds the new weights if needed. No bake, no redeploy.
 - **Changing the engine version or the driver**: update `llamacppRelease` /
   `vllmVersion` / `nvidiaDriverPackage`, **bump the recipe (and component)
   `version` in `lib/image-stack.ts`** (Image Builder versions are immutable),
   then `pnpm deploy:image` + `pnpm bake <runner>`.
-- **Your home IP changed**: `spinloop remote deploy --overwrite --allowed-cidr
+- **Your home IP changed**: `spinloop cloud deploy --overwrite --allowed-cidr
   <ip>/32`. Ingress is per environment, and an existing environment keeps its
   ingress unless a CIDR is passed explicitly — auto-detection applies only to a
   first deploy.
 - **Force a fresh AMI** (same config): just `pnpm bake <runner>` — the runtime
   launches the newest tagged AMI.
-- **Seeding weights**: `spinloop remote seed start` fetches the model a Spinloop
-  names into S3, and `spinloop remote seed status <seed-id>` follows it. Deploying
+- **Seeding weights**: `spinloop cloud seed start` fetches the model a Spinloop
+  names into S3, and `spinloop cloud seed status <seed-id>` follows it. Deploying
   starts a seed automatically when the weights are missing and prints the id to
-  follow. Other subcommands: `spinloop remote seed ls` (what is in flight, with
-  progress) and `spinloop remote seed stop <seed-id>`.
-- **Force a re-seed** of weights already in S3: either `spinloop remote seed
-  start --force`, or `spinloop remote deploy --reseed` to re-fetch and redeploy
+  follow. Other subcommands: `spinloop cloud seed ls` (what is in flight, with
+  progress) and `spinloop cloud seed stop <seed-id>`.
+- **Force a re-seed** of weights already in S3: either `spinloop cloud seed
+  start --force`, or `spinloop cloud deploy --reseed` to re-fetch and redeploy
   in one step. An ordinary start/deploy does nothing when the weights are
   already there.
-- **Pin the revision** a seed fetches: `spinloop remote seed start --revision
+- **Pin the revision** a seed fetches: `spinloop cloud seed start --revision
   <commit>`. Without one, the repository's default branch is used and the commit
   it resolved to is recorded in the prefix's `_seed.json`.
 
@@ -438,7 +438,7 @@ There is deliberately **no backfill helper**. Writing a manifest over files that
 nobody verified would assert exactly the guarantee the manifest exists to make
 real. If you would rather not re-seed, the honest options are to leave the old
 prefix in place unused, or to re-seed it deliberately with
-`spinloop remote seed start --force`.
+`spinloop cloud seed start --force`.
 
 > **Rotate your Hugging Face token** if you ran the old seed with one. It fetched
 > the token into a shell variable under `set -x`, and bash's xtrace expands
@@ -473,7 +473,7 @@ From your own machine, no shell needed (the EIP is `<endpoint>`):
 
 ```sh
 curl -s -o /dev/null -w '%{http_code}\n' http://<endpoint>:8000/health   # 200 once serving
-eval "$(spinloop remote start)"                                            # base URL + key
+eval "$(spinloop cloud start)"                                            # base URL + key
 curl "$OPENAI_BASE_URL/models" -H "Authorization: Bearer $OPENAI_API_KEY"
 ```
 
@@ -507,7 +507,7 @@ pnpm cdk destroy cloud-vm-llm cloud-vm-llm-image
 ```
 
 Removes both stacks. If an instance is currently running, terminate it first
-(`spinloop remote stop`) — it is not owned by CloudFormation. The **S3 weights
+(`spinloop cloud stop`) — it is not owned by CloudFormation. The **S3 weights
 bucket is retained** on destroy (so you don't lose the seeded weights); baked
 AMIs and their snapshots are not owned by the stacks either. Delete the bucket,
 deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
@@ -515,7 +515,7 @@ deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
 ## Troubleshooting
 
 - **`start` returns `unconfigured`**: nothing has been deployed yet. Run
-  `spinloop remote deploy`.
+  `spinloop cloud deploy`.
 - **`start` returns `no-ami`**: no AMI is tagged for the engine you asked for.
   Run `pnpm bake <runner>` and wait for it to reach `AVAILABLE`.
 - **`start` returns `starting` with "another start … is in progress"**: a
@@ -544,10 +544,10 @@ deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
   replaces the recipe on its own.
 - **`start` reaches `running` but never `ready`, or the model is empty**: the
   weights aren't in S3 yet, or a seed is still running. Ask the seed:
-  `spinloop remote seed ls`, then `spinloop remote seed status <seed-id>`. A seed
+  `spinloop cloud seed ls`, then `spinloop cloud seed status <seed-id>`. A seed
   reports `failed` with a reason even after its instance is gone, so this works
   for a seed that died as well as one still going.
-- **A seed failed**: `spinloop remote seed status <seed-id>` names the reason. The
+- **A seed failed**: `spinloop cloud seed status <seed-id>` names the reason. The
   underlying records are in the `/cloud-vm-llm/seed` log group under stream
   `<seed-id>/<instance-id>` and outlive the instance. Common causes are a gated
   repository with no `hfToken` configured, a quant whose selection matches more

@@ -1,5 +1,5 @@
 // Serve: launching a local inference server for a Spinloop. The engine is chosen
-// by the Spinloop's PROVIDER, the same way `spinloop remote deploy` picks a cloud
+// by the Spinloop's PROVIDER, the same way `spinloop cloud deploy` picks a cloud
 // runner, so one file describes both what dresses the harness and what serves
 // it. Kept out of main.go so the dispatch-coverage scan in complete_test.go only
 // ever sees run()'s own switch.

@@ -14,10 +14,10 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/fleet"
 	"github.com/spinloop-ai/spinloop/internal/harness"
 	"github.com/spinloop-ai/spinloop/internal/opencode"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 	"github.com/spinloop-ai/spinloop/internal/spinloop"
 )
 
@@ -91,7 +91,7 @@ has been.`,
 	)
 
 	root.AddCommand(fleetCmd())
-	root.AddCommand(remoteCmd())
+	root.AddCommand(cloudCmd())
 	defaultFlagCompletions(root)
 	return root
 }
@@ -233,11 +233,11 @@ for a custom one. Each subcommand's --help says what it does.`,
 // args forwarded, and the environment the apply step reported as the source of
 // every key the agent is given. Both launch commands end here, so the agent a
 // launch is given can only differ the way the apply that preceded it did.
-func launchAgent(h harness.Harness, rest []string, providers, envDir string, remoteResp *remote.Response, sel spinloop.Selection, worn bool, choice *fleet.Choice) error {
-	// The resolver the launch uses knows the remote key too, so every
+func launchAgent(h harness.Harness, rest []string, providers, envDir string, cloudResp *cloud.Response, sel spinloop.Selection, worn bool, choice *fleet.Choice) error {
+	// The resolver the launch uses knows the cloud key too, so every
 	// key the agent is given comes from the same place the apply step
 	// reported.
-	resolveKey := remoteLaunchResolver(opencode.EnvResolver(envDir), remoteResp)
+	resolveKey := cloudLaunchResolver(opencode.EnvResolver(envDir), cloudResp)
 
 	// Launch the harness, forwarding stdio and any trailing args.
 	bin := h.Command()
@@ -245,9 +245,9 @@ func launchAgent(h harness.Harness, rest []string, providers, envDir string, rem
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = harnessEnv(providers, resolveKey, remoteResp)
+	cmd.Env = harnessEnv(providers, resolveKey, cloudResp)
 	// A routed launch points the agent at the node that was chosen. As
-	// on the remote path, an explicit setting in the environment already
+	// on the cloud path, an explicit setting in the environment already
 	// won: routing fills what is unset rather than overriding a
 	// deliberate choice.
 	if choice != nil {
@@ -260,7 +260,7 @@ func launchAgent(h harness.Harness, rest []string, providers, envDir string, rem
 	// agent: its adjacent .env fills any gaps left above, and its ENV
 	// instructions override everything. These shape only the child's
 	// environment — spinloop never mutates its own — and follow the same
-	// precedence the remote commands use: ENV > process environment >
+	// precedence the cloud commands use: ENV > process environment >
 	// .env.
 	if worn {
 		cmd.Env = overlayLocalEnv(cmd.Env, sel, envDir)
@@ -313,7 +313,7 @@ func versionCmd() *cobra.Command {
 	}
 }
 
-// groupFallback is the RunE a command group (fleet, remote, seed) gets: bare,
+// groupFallback is the RunE a command group (fleet, cloud, seed) gets: bare,
 // it shows the group's own help — the one cobra generates from the tree, so
 // its subcommand list cannot drift from the tree — and a word that is not a
 // subcommand is cobra's own unknown-command error. The help sentinel is
@@ -353,9 +353,9 @@ var movedSubcommands = map[string]string{
 	"fleet dashboard": "dashboard",
 	"fleet metrics":   "metrics",
 	"fleet logs":      "logs",
-	"remote status":   "status --env <name>",
-	"remote metrics":  "metrics --env <name>",
-	"remote logs":     "logs --env <name>",
+	"cloud status":    "status --env <name>",
+	"cloud metrics":   "metrics --env <name>",
+	"cloud logs":      "logs --env <name>",
 }
 
 // fleetCmd builds the fleet parent and its subcommands. The parent does
@@ -368,7 +368,7 @@ func fleetCmd() *cobra.Command {
 default; --fleet names another). Observation is fleet-wide (status, metrics,
 logs, and dashboard — the live tiled view); start and stop take one or more
 node names, or --all for the whole fleet, and with neither they list the
-fleet and touch nothing; deploy provisions kind: remote nodes' AWS
+fleet and touch nothing; deploy provisions kind: cloud nodes' AWS
 environments the same way. A node that fails is a rendered row, never an
 error — only a problem with the fleet file itself fails a command.`,
 		Args:          groupArgs,
@@ -385,36 +385,35 @@ error — only a problem with the fleet file itself fails a command.`,
 	return fleet
 }
 
-// remoteCmd builds the remote parent and its subcommands. The parent does
+// cloudCmd builds the cloud parent and its subcommands. The parent does
 // nothing itself — see groupFallback.
-func remoteCmd() *cobra.Command {
-	remote := &cobra.Command{
-		Use:   "remote",
-		Short: "control the remote GPU inference instance",
+func cloudCmd() *cobra.Command {
+	cloud := &cobra.Command{
+		Use:   "cloud",
+		Short: "control the cloud GPU inference instance",
 		Long: `runs the model on a cloud GPU that exists only while you use it, from
-the same Spinloop. The endpoint's URLs come from the Spinloop's REMOTE — a bare
-name selects an environment under ~/.config/spinloop/remotes/<name>/, a path
-names a file — falling back to the default environment. Each subcommand's
---help says what that step does.`,
+the same Spinloop. Each environment is registered under
+~/.config/spinloop/clouds/<name>/ and selected with --env <name>. Each
+subcommand's --help says what that step does.`,
 		Args:          groupArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE:          groupFallback,
 	}
-	remote.AddCommand(
-		remoteBootstrapCmd(),
-		remoteAuthCmd(),
-		remoteBakeCmd(),
-		remoteStartCmd(),
-		remotePauseCmd(),
-		remoteRestartCmd(),
-		remoteStopCmd(),
-		remoteDeployCmd(),
-		remoteSeedCmd(),
-		remoteEnvCmd(),
-		remoteListCmd(),
-		remoteKeepCmd(),
-		remoteScheduleCmd(),
+	cloud.AddCommand(
+		cloudBootstrapCmd(),
+		cloudAuthCmd(),
+		cloudBakeCmd(),
+		cloudStartCmd(),
+		cloudPauseCmd(),
+		cloudRestartCmd(),
+		cloudStopCmd(),
+		cloudDeployCmd(),
+		cloudSeedCmd(),
+		cloudEnvCmd(),
+		cloudListCmd(),
+		cloudKeepCmd(),
+		cloudScheduleCmd(),
 	)
-	return remote
+	return cloud
 }

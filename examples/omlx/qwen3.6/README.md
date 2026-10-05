@@ -18,7 +18,7 @@ every turn, that is the difference between a usable and an unusable setup.
 
 - An **Apple Silicon** Mac (M1 or later). oMLX is Apple Silicon only — there is
   no Intel or Linux build, and no cloud equivalent, so
-  [`spinloop remote`](../../../docs/commands/remote.md) cannot deploy it.
+  [`spinloop cloud`](../../../docs/commands/cloud.md) cannot deploy it.
 - [oMLX](https://omlx.ai), installed from its DMG or from source.
 - Enough unified memory for the weights. The 4-bit build is roughly 20 GB, so
   plan for a 32 GB machine or better.

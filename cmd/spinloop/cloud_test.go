@@ -1,0 +1,1406 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/spinloop-ai/spinloop/internal/cloud"
+)
+
+// stubAWSEnv pins the default credential chain to static env credentials so
+// SigV4 signing works offline without touching a real profile or IMDS.
+func stubAWSEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("AWS_ACCESS_KEY_ID", "AKIATESTTESTTESTTEST")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret")
+	t.Setenv("AWS_SESSION_TOKEN", "")
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(t.TempDir(), "no-such-file"))
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "no-such-file"))
+	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
+}
+
+// writeCloudConfig registers the `default` environment pointing at the test
+// server — the registry is the only place a configuration is read from.
+func writeCloudConfig(t *testing.T, serverURL string) {
+	t.Helper()
+	path := must1(cloud.EnvConfigPath("default"))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(cloud.Config{
+		StartURL: serverURL,
+		StopURL:  serverURL,
+		EnvURL:   serverURL,
+		Region:   "eu-west-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCloudDispatch(t *testing.T) {
+	// Bare cloud shows the group's own help — generated from the tree, so
+	// its subcommand list cannot drift — rather than an error.
+	out := captureStdout(t, func() {
+		if err := run([]string{"cloud"}); err != nil {
+			t.Fatalf("bare cloud should show its help, got %v", err)
+		}
+	})
+	if !strings.Contains(out, "bootstrap") || !strings.Contains(out, "bake") {
+		t.Errorf("bare cloud help should name its subcommands, got:\n%s", out)
+	}
+	if err := run([]string{"cloud", "bogus"}); err == nil || !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("unknown subcommand should error, got %v", err)
+	}
+}
+
+func TestCloud_Unconfigured(t *testing.T) {
+	isolateConfig(t)
+	// deploy needs a Spinloop, covered separately. metrics, logs and status
+	// moved to the top level — cmd/spinloop/commands_test.go covers their
+	// signpost under the old spelling.
+	subs := []string{"start", "restart", "stop"}
+	// Naming no environment is its own failure: these commands act on one
+	// instance, and an instance nobody named is not one to act on.
+	for _, sub := range subs {
+		err := run([]string{"cloud", sub})
+		if err == nil || !strings.Contains(err.Error(), "pass --env") {
+			t.Errorf("cloud %s with no environment should name the flag, got %v", sub, err)
+		}
+	}
+	// Naming one that has no configuration explains the setup.
+	for _, sub := range subs {
+		err := run([]string{"cloud", sub, "--env", "default"})
+		if err == nil || !strings.Contains(err.Error(), "not configured") {
+			t.Errorf("cloud %s without config should explain setup, got %v", sub, err)
+		}
+	}
+}
+
+func TestCloudStart_PrintsExports(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudStart([]string{"--env", "default", "--print-env"}); err != nil {
+			t.Errorf("cmdCloudStart: %v", err)
+		}
+	})
+	if !strings.Contains(out, "export OPENAI_BASE_URL=http://198.51.100.1:8000/v1") ||
+		!strings.Contains(out, "export OPENAI_API_KEY=sk-test") {
+		t.Errorf("start should print the endpoint exports, got:\n%s", out)
+	}
+}
+
+// Start without --print-env prints nothing to stdout (progress goes to stderr).
+func TestCloudStart_NoExportsWithoutFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudStart([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdCloudStart: %v", err)
+		}
+	})
+	if strings.Contains(out, "export OPENAI_") {
+		t.Errorf("start without --print-env should not print exports, got:\n%s", out)
+	}
+}
+
+// Start with --print-env after a positional argument still parses the flag.
+// Regression test: Go's flag package stops at the first non-flag argument,
+// so `spinloop cloud start path --print-env` would silently ignore
+// --print-env without sortFlagsBeforeArgs.
+func TestCloudStart_FlagAfterPositional(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	registerEnv(t, "testenv", cloud.Config{StartURL: server.URL, StopURL: server.URL, EnvURL: server.URL, Region: "eu-west-1"})
+
+	dir := t.TempDir()
+	spinloopFile := "PROVIDER openai-compatible\n"
+	if err := os.WriteFile(filepath.Join(dir, "Spinloop"), []byte(spinloopFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudStart([]string{dir, "--env", "testenv", "--print-env"}); err != nil {
+			t.Errorf("cmdCloudStart: %v", err)
+		}
+	})
+	if !strings.Contains(out, "export OPENAI_BASE_URL=http://198.51.100.1:8000/v1") ||
+		!strings.Contains(out, "export OPENAI_API_KEY=sk-test") {
+		t.Errorf("start with --print-env after positional should print exports, got:\n%s", out)
+	}
+}
+
+// Cloud env command prints exports for a running endpoint.
+func TestCloudEnv_PrintsExports(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("env should GET, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"base_url":"http://198.51.100.1:8000/v1","api_key":"sk-remote"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudEnv([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdCloudEnv: %v", err)
+		}
+	})
+	if !strings.Contains(out, "export OPENAI_BASE_URL=http://198.51.100.1:8000/v1") ||
+		!strings.Contains(out, "export OPENAI_API_KEY=sk-remote") {
+		t.Errorf("env should print the endpoint exports, got:\n%s", out)
+	}
+}
+
+func TestCloudStatus_PrintsState(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"running","healthy":true,"base_url":"http://198.51.100.1:8000/v1"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdStatus([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdStatus: %v", err)
+		}
+	})
+	for _, want := range []string{"running", "http://198.51.100.1:8000/v1"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status output missing %q:\n%s", want, out)
+		}
+	}
+	// healthy:true reads as the absence of the not-ready mark, not a separate line.
+	if strings.Contains(out, "not ready") {
+		t.Errorf("a healthy endpoint should not be marked not ready:\n%s", out)
+	}
+}
+
+// Cloud status includes the spinloop version from the stats Lambda when the
+// instance is running, so the operator can verify the release without SSH.
+func TestCloudStatus_PrintsVersion(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/start":
+			w.Write([]byte(`{"state":"running","healthy":true,"base_url":"http://198.51.100.1:8000/v1"}`))
+		default:
+			w.Write([]byte(`{"state":"running","version":"1.18.0"}`))
+		}
+	}))
+	defer server.Close()
+	path := must1(cloud.EnvConfigPath("default"))
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(cloud.Config{
+		StartURL: server.URL + "/start",
+		StopURL:  server.URL + "/stop",
+		EnvURL:   server.URL + "/env",
+		StatsURL: server.URL + "/stats",
+		Region:   "eu-west-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := cmdStatus([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "1.18.0") {
+		t.Errorf("status output missing version:\n%s", out)
+	}
+}
+
+func TestCloudStop_PrintsState(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("stop should POST, got %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudStop([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdCloudStop: %v", err)
+		}
+	})
+	if !strings.Contains(out, "stopping") {
+		t.Errorf("stop should print the state, got:\n%s", out)
+	}
+}
+
+func TestCloudPause_PrintsState(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var gotAction string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("pause should POST, got %s", r.Method)
+		}
+		gotAction = r.URL.Query().Get("action")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopping"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudPause([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdCloudPause: %v", err)
+		}
+	})
+	if gotAction != "pause" {
+		t.Errorf("pause must ask the stop Lambda for its pause mode, got action=%q", gotAction)
+	}
+	for _, want := range []string{"state: stopping", "spinloop cloud start", "spinloop cloud stop"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("pause output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// restartHandler routes a single shared server the way the control plane does:
+// GET is the status read, POST with action=pause is the pause-style stop, and a
+// bare POST is the wake. It records the stop's force parameter and call counts.
+func restartHandler(statusState string, gotForce *string, stopCalls, wakeCalls *int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet:
+			w.Write([]byte(fmt.Sprintf(`{"state":%q,"healthy":true,"base_url":"http://198.51.100.1:8000/v1"}`, statusState)))
+		case r.URL.Query().Get("action") == "pause":
+			*gotForce = r.URL.Query().Get("force")
+			*stopCalls++
+			w.Write([]byte(`{"state":"stopping"}`))
+		default:
+			*wakeCalls++
+			w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+		}
+	}
+}
+
+// A bare `cloud restart` dispatches through the tree, stops then wakes, and
+// prints the base URL as confirmation the address is unchanged.
+func TestCloudRestart_Flow(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var force string
+	var stops, wakes int
+	server := httptest.NewServer(restartHandler("running", &force, &stops, &wakes))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := run([]string{"cloud", "restart", "--env", "default"}); err != nil {
+			t.Errorf("cloud restart: %v", err)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("restart should print the endpoint's base URL, got:\n%s", out)
+	}
+	if stops != 1 || wakes != 1 {
+		t.Errorf("expected one stop and one wake, got stops=%d wakes=%d", stops, wakes)
+	}
+	if force != "" {
+		t.Errorf("restart without --force must not send force, got %q", force)
+	}
+}
+
+// --force (long and short) marks the stop forced on the way over.
+func TestCloudRestart_ForceFlag(t *testing.T) {
+	for _, flag := range []string{"--force", "-F"} {
+		t.Run(flag, func(t *testing.T) {
+			isolateConfig(t)
+			stubAWSEnv(t)
+			var force string
+			var stops, wakes int
+			server := httptest.NewServer(restartHandler("running", &force, &stops, &wakes))
+			defer server.Close()
+			writeCloudConfig(t, server.URL)
+
+			out := captureStdout(t, func() {
+				if err := cmdCloudRestart([]string{"--env", "default", flag}); err != nil {
+					t.Errorf("cloud restart %s: %v", flag, err)
+				}
+			})
+			if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+				t.Errorf("restart %s should print the base URL, got:\n%s", flag, out)
+			}
+			if force != "true" {
+				t.Errorf("restart %s must mark the stop forced, got force=%q", flag, force)
+			}
+			if stops != 1 || wakes != 1 {
+				t.Errorf("restart %s expected one stop and one wake, got stops=%d wakes=%d", flag, stops, wakes)
+			}
+		})
+	}
+}
+
+// --timeout parses as a duration like start's, and does not error.
+func TestCloudRestart_TimeoutFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var force string
+	var stops, wakes int
+	server := httptest.NewServer(restartHandler("running", &force, &stops, &wakes))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudRestart([]string{"--env", "default", "--timeout", "5m"}); err != nil {
+			t.Errorf("cloud restart --timeout: %v", err)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("restart --timeout should print the base URL, got:\n%s", out)
+	}
+}
+
+// Restarting an environment that is already stopped behaves as a start: the
+// pause-style stop is a no-op, and the wake still brings the endpoint back.
+func TestCloudRestart_AlreadyStoppedBehavesAsStart(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var force string
+	var stops, wakes int
+	server := httptest.NewServer(restartHandler("stopped", &force, &stops, &wakes))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudRestart([]string{"--env", "default"}); err != nil {
+			t.Errorf("cloud restart on a stopped environment: %v", err)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("restart of a stopped environment should print the base URL, got:\n%s", out)
+	}
+	if wakes != 1 {
+		t.Errorf("restart of a stopped environment should still wake, got wakes=%d", wakes)
+	}
+}
+
+// A failed status check does not gate the restart: the stop Lambda is correct
+// for every state, so the command skips the status line and goes ahead, and the
+// status line stays absent rather than claiming a state it never read.
+func TestCloudRestart_StatusFailureDoesNotGate(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message":"cannot read status"}`))
+			return
+		}
+		if r.URL.Query().Get("action") == "pause" {
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	out := captureStdout(t, func() {
+		errOut := captureStderr(t, func() {
+			if err := cmdCloudRestart([]string{"--env", "default"}); err != nil {
+				t.Errorf("cloud restart after a failed status check: %v", err)
+			}
+		})
+		if strings.Contains(errOut, "the instance is") {
+			t.Errorf("no status line should be printed when the status check fails:\n%s", errOut)
+		}
+	})
+	if !strings.Contains(out, "base url: http://198.51.100.1:8000/v1") {
+		t.Errorf("a failed status check should not block the restart, got:\n%s", out)
+	}
+}
+
+// When the stop took effect and the wake then fails, the recovery hint reaches
+// the user as the command's error: the instance is stopped, and start brings
+// it back.
+func TestCloudRestart_WakeFailureReportsRecovery(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("action") == "pause" {
+			w.Write([]byte(`{"state":"stopping"}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"state":"terminated","message":"cannot start"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	err := cmdCloudRestart([]string{"--env", "default"})
+	if err == nil {
+		t.Fatal("expected a wake failure error")
+	}
+	if !strings.Contains(err.Error(), "stopped") || !strings.Contains(err.Error(), "spinloop cloud start") {
+		t.Errorf("expected the recovery hint in the error, got %v", err)
+	}
+}
+
+// The parent fallback names restart in both its usage line and its
+// unknown-subcommand list, so a mistyped or bare `cloud` points to it.
+func TestCloud_RestartInGeneratedHelp(t *testing.T) {
+	isolateConfig(t)
+	// A regression from when the usage was a hand-rolled list: restart had
+	// to be added to two places by hand. The help now comes from the tree.
+	out := captureStdout(t, func() {
+		if err := run([]string{"cloud"}); err != nil {
+			t.Fatalf("bare cloud should show its help, got %v", err)
+		}
+	})
+	if !strings.Contains(out, "restart") {
+		t.Errorf("bare cloud help should name restart, got:\n%s", out)
+	}
+}
+
+// A Spinloop is read only when named with --spinloop/-O — never implicitly
+// from the working directory — for its ENV instructions, which here name the
+// control plane a command with no other configuration would not find.
+func TestCloud_SpinloopDiscovery(t *testing.T) {
+	isolateConfig(t) // no per-user config exists, so success proves the ENV reached it
+	stubAWSEnv(t)
+	unsetEnvOnCleanup(t, "SPINLOOP_CLOUD_START_URL", "SPINLOOP_CLOUD_STOP_URL", "SPINLOOP_CLOUD_REGION")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"running","healthy":true,"base_url":"http://198.51.100.1:8000/v1"}`))
+	}))
+	defer server.Close()
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	spinloopFile := fmt.Sprintf("PROVIDER openai-compatible\nENV SPINLOOP_CLOUD_START_URL=%s\nENV SPINLOOP_CLOUD_STOP_URL=%s\nENV SPINLOOP_CLOUD_REGION=eu-west-1\n", server.URL, server.URL)
+	if err := os.WriteFile("Spinloop", []byte(spinloopFile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		if err := cmdStatus([]string{"--env", "default", "--spinloop", "Spinloop"}); err != nil {
+			t.Errorf("cmdStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "running") {
+		t.Errorf("status via the Spinloop's ENV should work, got:\n%s", out)
+	}
+}
+
+// --spinloop reads a Spinloop for its ENV instructions and the adjacent
+// .env; it never selects an environment by itself. One with no ENV lines
+// supplies nothing, so with no --env or --fleet either the command fails on
+// the missing target, not on the Spinloop.
+func TestCloud_ExplicitSpinloopDoesNotNameAnEnvironment(t *testing.T) {
+	isolateConfig(t)
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("Spinloop", []byte("PROVIDER ollama\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := cmdStatus([]string{"--spinloop", "Spinloop"})
+	if err == nil || !strings.Contains(err.Error(), "no fleet at") {
+		t.Errorf("want the no-target error, got %v", err)
+	}
+}
+
+func TestCloud_SpinloopFallsBackToTheUserConfig(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopped","healthy":false,"base_url":"http://198.51.100.1:8000/v1"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("Spinloop", []byte("PROVIDER ollama\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := cmdStatus([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "stopped") {
+		t.Errorf("a Spinloop with no --env should fall back to the user config, got:\n%s", out)
+	}
+}
+
+func TestCloud_IgnoresLowercaseSpinloopFile(t *testing.T) {
+	// On case-insensitive filesystems a stat of "Spinloop" matches a file named
+	// "spinloop" (e.g. the built binary in this repo's root); discovery must not
+	// try to parse it.
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"stopped","healthy":false,"base_url":"http://198.51.100.1:8000/v1"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("spinloop", []byte{0xcf, 0xfa, 0xed, 0xfe}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := captureStdout(t, func() {
+		if err := cmdStatus([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdStatus: %v", err)
+		}
+	})
+	if !strings.Contains(out, "stopped") {
+		t.Errorf("a lowercase spinloop file should not shadow discovery, got:\n%s", out)
+	}
+}
+
+func TestCloudMetrics_Running(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-abc123",
+			"instanceType": "g6e.xlarge",
+			"runner": "llamacpp",
+			"modelId": "unsloth/Qwen3.6-27B",
+			"uptimeSeconds": 3725,
+			"tokens": {
+				"running": 1,
+				"promptTokens": 50000,
+				"generationTokens": 120000,
+				"requests": 342
+			},
+			"gpus": [{
+				"index": 0,
+				"name": "NVIDIA L40S",
+				"utilization": 85,
+				"memoryUsed": 32212254720,
+				"memoryTotal": 48130938880,
+				"temperature": 72
+			}],
+			"cpu": {"utilization": 23.5},
+			"memory": {"total": 17179869184, "used": 4294967296}
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default", "--format=table"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	for _, want := range []string{
+		"node:         default",
+		"state:        running",
+		"instance:     i-abc123",
+		"instanceType: g6e.xlarge",
+		"runner:       llamacpp",
+		"model:        unsloth/Qwen3.6-27B",
+		"uptime:       1h 2m 5s",
+		"running:          1",
+		"prompt tokens:    50000",
+		"generation tokens: 120000",
+		"requests:         342",
+		"GPU 0: NVIDIA L40S",
+		"util=85%",
+		"CPU: 24% util",
+		"RAM: 4.0 GB/16.0 GB",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCloudMetrics_Stopped(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "stopped",
+			"runner": "llamacpp",
+			"modelId": "unsloth/Qwen3.6-27B"
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default", "--format=table"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	if !strings.Contains(out, "state:        stopped") {
+		t.Errorf("metrics output missing stopped state:\n%s", out)
+	}
+	if strings.Contains(out, "prompt tokens") {
+		t.Errorf("stopped instance should not show token metrics:\n%s", out)
+	}
+}
+
+func TestCloudMetrics_WithErrors(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"uptimeSeconds": 60,
+			"errors": ["nvidia-smi failed", "vmstat timeout"]
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	errOut := captureStderr(t, func() {
+		if err := cmdMetrics([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	for _, want := range []string{"metric collection errors", "nvidia-smi failed", "vmstat timeout"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr missing %q:\n%s", want, errOut)
+		}
+	}
+}
+
+func TestCloudMetrics_DefaultFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-abc123",
+			"instanceType": "g6e.xlarge",
+			"uptimeSeconds": 100,
+			"cpu": {"utilization": 45.5},
+			"memory": {"total": 1000, "used": 300},
+			"history": [
+				{"t": 1786276800, "c": 20.0, "m": 25.0},
+				{"t": 1786276815, "c": 45.5, "m": 30.0}
+			]
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	if !strings.Contains(out, "default") || !strings.Contains(out, "running") {
+		t.Errorf("default format missing header, got:\n%s", out)
+	}
+	// The default is the gauge format: the current reading filled, with no
+	// sparkline of the retained history behind it.
+	if !strings.Contains(out, "CPU") || !strings.Contains(out, "█") {
+		t.Errorf("default format did not draw the gauge, got:\n%s", out)
+	}
+	if strings.Contains(out, "▁") || strings.Contains(out, "▃") {
+		t.Errorf("default format drew the bar's sparkline, got:\n%s", out)
+	}
+}
+
+func TestCloudMetrics_JsonFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-abc123",
+			"instanceType": "g6e.xlarge",
+			"runner": "llamacpp",
+			"modelId": "test/model",
+			"uptimeSeconds": 300
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default", "--format=json"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &results); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("decoded %d nodes, want 1", len(results))
+	}
+	result := results[0]
+	if result["node"] != "default" {
+		t.Errorf("expected node=default, got %v", result["node"])
+	}
+	metrics, _ := result["metrics"].(map[string]any)
+	if metrics["state"] != "running" {
+		t.Errorf("expected state=running, got %v", metrics["state"])
+	}
+	if result["instance"] != "i-abc123" {
+		t.Errorf("expected instance=i-abc123, got %v", result["instance"])
+	}
+}
+
+func TestCloudMetrics_JsonFormatWithCost(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceId": "i-abc123",
+			"instanceType": "g6e.xlarge",
+			"uptimeSeconds": 300
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default", "--format=json", "--cost"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &results); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("decoded %d nodes, want 1", len(results))
+	}
+	if results[0]["node"] != "default" {
+		t.Errorf("expected node=default, got %v", results[0]["node"])
+	}
+}
+
+func TestCloudMetrics_InvalidFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	writeCloudConfig(t, "http://localhost:0")
+
+	err := cmdMetrics([]string{"--env", "default", "--format=csv"})
+	if err == nil || !strings.Contains(err.Error(), "format") {
+		t.Errorf("expected format error, got %v", err)
+	}
+}
+
+func TestCloudMetrics_BarFormat(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"instanceType": "g5.2xlarge",
+			"modelId": "llama-3.1-8b",
+			"uptimeSeconds": 300,
+			"gpus": [
+				{"index": 0, "name": "A10G", "utilization": 85, "memoryUsed": 16106127360, "memoryTotal": 24297466368, "temperature": 65}
+			],
+			"cpu": {"utilization": 45.5},
+			"memory": {"total": 33145275904, "used": 12884901888},
+			"tokens": {"running": 2, "promptTokens": 1500, "generationTokens": 8200, "requests": 120}
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		err := cmdMetrics([]string{"--env", "default", "--format=bar"})
+		if err != nil {
+			t.Errorf("bar format failed: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "default") || !strings.Contains(out, "running") {
+		t.Errorf("bar output missing header:\n%s", out)
+	}
+	if !strings.Contains(out, "CPU") {
+		t.Errorf("bar output missing CPU bar:\n%s", out)
+	}
+	if !strings.Contains(out, "RAM") {
+		t.Errorf("bar output missing RAM bar:\n%s", out)
+	}
+	if !strings.Contains(out, "GPU util") {
+		t.Errorf("bar output missing GPU util bar:\n%s", out)
+	}
+	if !strings.Contains(out, "GPU mem") {
+		t.Errorf("bar output missing GPU mem bar:\n%s", out)
+	}
+	if !strings.Contains(out, "85%") {
+		t.Errorf("bar output missing GPU utilization percentage:\n%s", out)
+	}
+	if !strings.Contains(out, "running:") {
+		t.Errorf("bar output missing token stats:\n%s", out)
+	}
+}
+
+func TestCloudMetrics_BarFormatStopped(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "stopped",
+			"instanceType": "g5.2xlarge"
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		err := cmdMetrics([]string{"--env", "default", "--format=bar"})
+		if err != nil {
+			t.Errorf("bar format failed: %v", err)
+		}
+	})
+
+	if !strings.Contains(out, "stopped") {
+		t.Errorf("bar output should show stopped state:\n%s", out)
+	}
+	if strings.Contains(out, "CPU") {
+		t.Errorf("bar output should not show bars for stopped state:\n%s", out)
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := []struct {
+		in   int
+		want string
+	}{
+		{0, "0s"},
+		{45, "45s"},
+		{125, "2m 5s"},
+		{3725, "1h 2m 5s"},
+		{86400, "24h 0m 0s"},
+	}
+	for _, tc := range tests {
+		if got := formatDuration(tc.in); got != tc.want {
+			t.Errorf("formatDuration(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	tests := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0 B"},
+		{500, "500 B"},
+		{1024, "1 KB"},
+		{1048576, "1 MB"},
+		{4294967296, "4.0 GB"},
+		{32212254720, "30.0 GB"},
+	}
+	for _, tc := range tests {
+		if got := formatBytes(tc.in); got != tc.want {
+			t.Errorf("formatBytes(%d) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestCloudMetrics_WatchMode(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		// Fail on 3rd call to stop the loop.
+		if callCount >= 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message": "server error"}`))
+			return
+		}
+		w.Write([]byte(`{"environment": "dev", "state": "running", "uptimeSeconds": 100}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	// Short interval so the test completes quickly.
+	oldInterval := metricsWatchInterval
+	metricsWatchInterval = 50 * time.Millisecond
+	defer func() { metricsWatchInterval = oldInterval }()
+
+	out := captureStdout(t, func() {
+		err := cmdMetrics([]string{"--env", "default", "--watch", "--format=table"})
+		// Expects error from the 3rd call.
+		if err == nil {
+			t.Error("watch should exit with error when server fails")
+		}
+	})
+
+	if callCount < 3 {
+		t.Errorf("watch should have polled at least 3 times, got %d calls", callCount)
+	}
+	// Should see the metrics output multiple times (watch polls repeatedly).
+	count := strings.Count(out, "node:         default")
+	if count < 2 {
+		t.Errorf("watch should have produced at least 2 outputs, got %d:\n%s", count, out)
+	}
+}
+
+func TestCloudMetrics_WatchShortFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount >= 2 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message": "server error"}`))
+			return
+		}
+		w.Write([]byte(`{"environment": "dev", "state": "stopped"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	oldInterval := metricsWatchInterval
+	metricsWatchInterval = 10 * time.Millisecond
+	defer func() { metricsWatchInterval = oldInterval }()
+
+	out := captureStdout(t, func() {
+		err := cmdMetrics([]string{"--env", "default", "-w", "--format=table"})
+		if err == nil {
+			t.Error("-w should exit with error when server fails")
+		}
+	})
+	if !strings.Contains(out, "node:         default") {
+		t.Errorf("-w flag should work like --watch:\n%s", out)
+	}
+	if callCount < 2 {
+		t.Errorf("-w should have polled at least twice, got %d calls", callCount)
+	}
+}
+
+func TestCloudMetrics_MultiGPU(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"gpus": [
+				{"index": 0, "name": "GPU A", "utilization": 50, "memoryUsed": 1073741824, "memoryTotal": 2147483648, "temperature": 60},
+				{"index": 1, "name": "GPU B", "utilization": 70, "memoryUsed": 2147483648, "memoryTotal": 2147483648, "temperature": 75}
+			]
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default", "--format=table"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	for _, want := range []string{"GPU 0: GPU A", "GPU 1: GPU B", "avg util:", "total mem:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("multi-GPU output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCloudMetrics_JsonStopped(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment": "dev", "state": "stopped"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default", "--format=json"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &results); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("decoded %d nodes, want 1", len(results))
+	}
+	metrics, _ := results[0]["metrics"].(map[string]any)
+	if metrics["state"] != "stopped" {
+		t.Errorf("expected state=stopped, got %v", metrics["state"])
+	}
+}
+
+func TestCloudMetrics_JsonWithErrors(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{
+			"environment": "dev",
+			"state": "running",
+			"uptimeSeconds": 100,
+			"errors": ["nvidia-smi failed"]
+		}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	out := captureStdout(t, func() {
+		if err := cmdMetrics([]string{"--env", "default", "--format=json"}); err != nil {
+			t.Errorf("cmdMetrics: %v", err)
+		}
+	})
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &results); err != nil {
+		t.Fatalf("JSON output is not valid: %v\n%s", err, out)
+	}
+	if len(results) != 1 {
+		t.Fatalf("decoded %d nodes, want 1", len(results))
+	}
+	metrics, _ := results[0]["metrics"].(map[string]any)
+	errors, ok := metrics["errors"].([]any)
+	if !ok || len(errors) == 0 {
+		t.Errorf("expected errors in JSON output:\n%s", out)
+	}
+}
+
+// The start probe runs after the endpoint is ready. When the probe connects,
+// no warning is printed.
+func TestCloudStart_ProbeSucceedsNoWarning(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	// Create a TCP listener to simulate a reachable endpoint.
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			c.Close()
+		}
+	}()
+	defer l.Close()
+
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d/v1", port)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"state":"ready","base_url":"%s","api_key":"sk-test"}`, baseURL)))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	stderr := captureStderr(t, func() {
+		if err := cmdCloudStart([]string{"--env", "default"}); err != nil {
+			t.Errorf("cmdCloudStart: %v", err)
+		}
+	})
+	if strings.Contains(stderr, "not reachable") {
+		t.Errorf("should not warn when probe succeeds, got:\n%s", stderr)
+	}
+}
+
+// When the probe fails, start warns but still exits 0.
+func TestCloudStart_ProbeFailsWarns(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	origDetect := detectPublicCIDRFn
+	detectPublicCIDRFn = func(context.Context) (string, error) { return "203.0.113.5/32", nil }
+	t.Cleanup(func() { detectPublicCIDRFn = origDetect })
+
+	origProbe := cloud.ProbeTimeout
+	cloud.ProbeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { cloud.ProbeTimeout = origProbe })
+
+	baseURL := "http://192.0.2.1:8000/v1" // unreachable
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"state":"ready","base_url":"%s","api_key":"sk-test"}`, baseURL)))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	errOut := captureStderr(t, func() {
+		err := cmdCloudStart([]string{"--env", "default"})
+		if err != nil {
+			t.Fatalf("start should exit 0 after a probe warning, got %v", err)
+		}
+	})
+
+	if !strings.Contains(errOut, "not reachable from this network") {
+		t.Errorf("expected a reachability warning, got:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "203.0.113.5/32") {
+		t.Errorf("expected the detected CIDR in the hint, got:\n%s", errOut)
+	}
+}
+
+// When the probe fails and IP detection also fails, the hint uses a placeholder.
+func TestCloudStart_ProbeFailsIPDetectFails(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+
+	origDetect := detectPublicCIDRFn
+	detectPublicCIDRFn = func(context.Context) (string, error) { return "", fmt.Errorf("network error") }
+	t.Cleanup(func() { detectPublicCIDRFn = origDetect })
+
+	origProbe := cloud.ProbeTimeout
+	cloud.ProbeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { cloud.ProbeTimeout = origProbe })
+
+	baseURL := "http://192.0.2.1:8000/v1"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(fmt.Sprintf(`{"state":"ready","base_url":"%s","api_key":"sk-test"}`, baseURL)))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	errOut := captureStderr(t, func() {
+		err := cmdCloudStart([]string{"--env", "default"})
+		if err != nil {
+			t.Fatalf("start should exit 0 even when probe and IP detection both fail, got %v", err)
+		}
+	})
+
+	if !strings.Contains(errOut, "not reachable from this network") {
+		t.Errorf("expected a reachability warning, got:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "<your-ip>/32") {
+		t.Errorf("expected the placeholder CIDR, got:\n%s", errOut)
+	}
+}
+
+// TestCloudMetrics_WatchBuffersBeforeClear verifies the fetch-before-clear
+// invariant: metrics are rendered into a buffer first, then the screen is
+// cleared and the buffer is written. This eliminates the blank-frame flash
+// that occurs when you clear the screen before you have content to show.
+// Regression for: io.Writer refactor was lost when cloud.go was reverted.
+func TestCloudMetrics_WatchBuffersBeforeClear(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.Header().Set("Content-Type", "application/json")
+		if callCount >= 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte(`{"message": "stop"}`))
+			return
+		}
+		w.Write([]byte(`{"environment": "dev", "state": "running", "uptimeSeconds": 10}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
+
+	oldInterval := metricsWatchInterval
+	metricsWatchInterval = 50 * time.Millisecond
+	defer func() { metricsWatchInterval = oldInterval }()
+
+	out := captureStdout(t, func() {
+		cmdMetrics([]string{"--env", "default", "--watch", "--format=table"})
+	})
+
+	// The clear-screen escape sequence.
+	clearScreen := "\033[2J\033[H"
+
+	// First render must NOT have a clear-screen prefix — there's nothing to
+	// clear yet, and writing clear before content causes a visible flash.
+	firstClear := strings.Index(out, clearScreen)
+	firstEnv := strings.Index(out, "node:")
+	if firstClear != -1 && firstClear < firstEnv {
+		t.Error("first render must not clear screen before rendering content")
+	}
+
+	// Subsequent renders DO have clear-screen before the new content, so the
+	// update is in-place.  With 3 calls (2 good, 1 error), we expect at least
+	// 2 renders and thus at least 1 clear between them.
+	count := strings.Count(out, "node:")
+	if count < 2 {
+		t.Fatalf("expected at least 2 renders, got %d", count)
+	}
+
+	// There should be at least one clear-screen that appears between the first
+	// and second "node:" line.
+	firstIdx := strings.Index(out, "node:")
+	secondIdx := strings.Index(out[firstIdx+len("node:"):], "node:")
+	secondIdx += firstIdx + len("node:")
+
+	between := out[firstIdx:secondIdx]
+	if !strings.Contains(between, clearScreen) {
+		t.Errorf("expected clear-screen escape between first and second render.\n"+
+			"Output (%d bytes):\n%s", len(out), out)
+	}
+}
+
+// TestCloudKeep sets the retention deadline.
+func TestCloudKeep_PrintsDeadline(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("cmd") != "set-keep" {
+			t.Errorf("expected cmd=set-keep, got %q", r.URL.Query().Get("cmd"))
+		}
+		if r.URL.Query().Get("retainUntil") == "" {
+			t.Error("expected retainUntil query param")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"environment":"test"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	// Also need to write the update URL.
+	path := must1(cloud.EnvConfigPath("default"))
+	data := must1(os.ReadFile(path))
+	var cfg cloud.Config
+	json.Unmarshal(data, &cfg)
+	cfg.UpdateURL = server.URL
+	os.WriteFile(path, must1(json.Marshal(cfg)), 0o600)
+
+	out := captureStdout(t, func() {
+		if err := cmdCloudKeep([]string{"--env", "default", "4h"}); err != nil {
+			t.Errorf("cmdCloudKeep: %v", err)
+		}
+	})
+	if !strings.Contains(out, "retain until:") {
+		t.Errorf("keep should print the deadline, got:\n%s", out)
+	}
+}
+
+// TestCloudKeep_MissingDuration fails.
+func TestCloudKeep_MissingDuration(t *testing.T) {
+	err := cmdCloudKeep([]string{"--env", "default"})
+	if err == nil || !strings.Contains(err.Error(), "usage") {
+		t.Errorf("expected usage error, got %v", err)
+	}
+}
+
+// TestCloudKeep_InvalidDuration fails.
+func TestCloudKeep_InvalidDuration(t *testing.T) {
+	err := cmdCloudKeep([]string{"--env", "default", "4hours"})
+	if err == nil || !strings.Contains(err.Error(), "invalid duration") {
+		t.Errorf("expected duration parse error, got %v", err)
+	}
+}
+
+// TestCloudStart_KeepFlag passes the retainUntil parameter.
+func TestCloudStart_KeepFlag(t *testing.T) {
+	isolateConfig(t)
+	stubAWSEnv(t)
+	var gotRetainUntil string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRetainUntil = r.URL.Query().Get("retainUntil")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"state":"ready","base_url":"http://198.51.100.1:8000/v1","api_key":"sk-test"}`))
+	}))
+	defer server.Close()
+	writeCloudConfig(t, server.URL)
+
+	// Probe reachability will fail, but that's stderr and doesn't affect the test.
+	out := captureStdout(t, func() {
+		cmdCloudStart([]string{"--env", "default", "--keep", "2h"})
+	})
+	// The keep deadline should be reported on stderr (via progress).
+	// We can check that the request included the retainUntil parameter.
+	if gotRetainUntil == "" {
+		t.Error("expected retainUntil query param on start with --keep")
+	}
+	// stdout should only have the export lines (no retain until on stdout).
+	if strings.Contains(out, "retain until") {
+		t.Errorf("retain until should not appear on stdout, got:\n%s", out)
+	}
+}

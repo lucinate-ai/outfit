@@ -109,7 +109,7 @@ describe('starting a seed', () => {
     expect(reply.started).toBe(true);
     expect(reply.seedId).toBe(SEED_ID);
     expect(reply.weightsPrefix).toBe('models/llamacpp/org/model/Q4_K_M/');
-    expect(reply.message).toContain(`spinloop remote seed status ${SEED_ID}`);
+    expect(reply.message).toContain(`spinloop cloud seed status ${SEED_ID}`);
     // The prefix is derived, not carried by the caller: the same inputs the
     // deploy path uses decide where the weights go.
     expect(buildSeedJob.mock.calls[0][0]).toMatchObject({

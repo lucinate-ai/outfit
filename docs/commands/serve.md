@@ -68,7 +68,7 @@ to stderr there. `--dry-run` never opens the view.
 ## The engine comes from `PROVIDER`
 
 `PROVIDER` already names the engine, so `serve` needs no keyword of its own —
-the same way [`spinloop remote deploy`](remote.md) picks the engine for a cloud
+the same way [`spinloop cloud deploy`](cloud.md) picks the engine for a cloud
 GPU:
 
 | `PROVIDER` | `serve` runs |

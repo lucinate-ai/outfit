@@ -440,7 +440,7 @@ func TestBuildProviderBlock_NoModelIsNoDefault(t *testing.T) {
 	}
 }
 
-func TestRemoteProviderLabel(t *testing.T) {
+func TestCloudProviderLabel(t *testing.T) {
 	cases := []struct {
 		name, engine, env, want string
 	}{
@@ -450,8 +450,8 @@ func TestRemoteProviderLabel(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := RemoteProviderLabel(tc.engine, tc.env); got != tc.want {
-				t.Errorf("RemoteProviderLabel(%q, %q) = %q, want %q", tc.engine, tc.env, got, tc.want)
+			if got := CloudProviderLabel(tc.engine, tc.env); got != tc.want {
+				t.Errorf("CloudProviderLabel(%q, %q) = %q, want %q", tc.engine, tc.env, got, tc.want)
 			}
 		})
 	}
@@ -611,7 +611,7 @@ func TestBuildPiProvider_RequiredKeyKeepsReference(t *testing.T) {
 
 // The opencode block injects the resolved key, so a remote llama.cpp endpoint
 // is authenticated rather than 401ing.
-func TestBuildProviderBlock_LlamacppReferencesKeyForRemote(t *testing.T) {
+func TestBuildProviderBlock_LlamacppReferencesKeyForCloud(t *testing.T) {
 	cat, _ := Load()
 	resolve := func(name string) string {
 		if name == "OPENAI_API_KEY" {
@@ -637,14 +637,14 @@ func TestBuildProviderBlock_LlamacppReferencesKeyForRemote(t *testing.T) {
 		t.Error("a local keyless server should get no apiKey at all")
 	}
 
-	// A remote endpoint keeps the reference even with the key unset, so setting
+	// A cloud endpoint keeps the reference even with the key unset, so setting
 	// it before the agent runs is enough.
 	block, _, err = BuildProviderBlock("llamacpp", cat.Providers["llamacpp"], "local-model", "http://198.51.100.1:8000/v1", noEnv)
 	if err != nil {
 		t.Fatalf("BuildProviderBlock: %v", err)
 	}
 	if got := block["options"].(map[string]any)["apiKey"]; got != "{env:OPENAI_API_KEY}" {
-		t.Errorf("apiKey = %v, want the env reference for a remote endpoint", got)
+		t.Errorf("apiKey = %v, want the env reference for a cloud endpoint", got)
 	}
 }
 
@@ -733,7 +733,7 @@ func TestIsLocalEndpoint(t *testing.T) {
 }
 
 // Pi resolves its $VAR reference when it runs, so a placeholder written for a
-// remote endpoint can never be repaired by exporting the key afterwards — Pi
+// cloud endpoint can never be repaired by exporting the key afterwards — Pi
 // would keep sending the placeholder. The placeholder is therefore only right
 // for a local server.
 func TestBuildPiProvider_RemoteOptionalKeyKeepsReference(t *testing.T) {
@@ -805,7 +805,7 @@ func TestBuildProviderBlock_OMLXReferencesKeyWhenSet(t *testing.T) {
 
 // TestBuildPiProvider_OMLXPlaceholderThenReference pins both sides of the Pi
 // rule for oMLX: a keyless local server gets the literal placeholder (Pi hides a
-// provider's models until some auth is configured), while a remote endpoint gets
+// provider's models until some auth is configured), while a cloud endpoint gets
 // the $VAR reference Pi resolves at run time.
 func TestBuildPiProvider_OMLXPlaceholderThenReference(t *testing.T) {
 	cat, _ := Load()
@@ -822,12 +822,12 @@ func TestBuildPiProvider_OMLXPlaceholderThenReference(t *testing.T) {
 		t.Errorf("api = %q, want openai-completions", local.API)
 	}
 
-	remote, _, err := BuildPiProvider("omlx", p, "my-model", "http://mac-studio.local:8000/v1", noEnv)
+	cloud, _, err := BuildPiProvider("omlx", p, "my-model", "http://mac-studio.local:8000/v1", noEnv)
 	if err != nil {
 		t.Fatalf("BuildPiProvider: %v", err)
 	}
-	if remote.APIKey != "$OPENAI_API_KEY" {
-		t.Errorf("remote apiKey = %q, want $OPENAI_API_KEY", remote.APIKey)
+	if cloud.APIKey != "$OPENAI_API_KEY" {
+		t.Errorf("remote apiKey = %q, want $OPENAI_API_KEY", cloud.APIKey)
 	}
 }
 
@@ -863,7 +863,7 @@ func TestBuildPiProvider_HonoursPerProviderBaseURLEnv(t *testing.T) {
 			// A provider with a key variable must get the reference Pi resolves at
 			// run time, not the placeholder meant for keyless local servers.
 			if p.APIKeyEnv != "" && prov.APIKey != "$"+p.APIKeyEnv {
-				t.Errorf("apiKey = %q, want $%s for a remote endpoint", prov.APIKey, p.APIKeyEnv)
+				t.Errorf("apiKey = %q, want $%s for a cloud endpoint", prov.APIKey, p.APIKeyEnv)
 			}
 		})
 	}

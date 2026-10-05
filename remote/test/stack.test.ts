@@ -39,7 +39,7 @@ function tempDotEnv(content: string): string {
 
 describe('config', () => {
   it('needs no per-environment settings (control plane only)', () => {
-    // allowedCidr, runner, model settings all moved to `spinloop remote deploy`.
+    // allowedCidr, runner, model settings all moved to `spinloop cloud deploy`.
     expect(() => loadConfig(new cdk.App(), NO_DOTENV)).not.toThrow();
   });
 

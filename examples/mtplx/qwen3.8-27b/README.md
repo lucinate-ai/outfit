@@ -14,7 +14,7 @@ unified memory.
 
 - An **Apple Silicon** Mac (M1 or later). MTPLX is Apple Silicon only — there is
   no Intel or Linux build, and **no machine image**, so
-  [`spinloop remote`](../../../docs/commands/remote.md) cannot deploy it. It
+  [`spinloop cloud`](../../../docs/commands/cloud.md) cannot deploy it. It
   serves locally, or on a
   [fleet node](../../../docs/commands/fleet.md) you run yourself.
 - [MTPLX](https://mtplx.com), installed so that `mtplx` is on your `PATH`.

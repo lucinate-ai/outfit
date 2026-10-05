@@ -18,12 +18,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spinloop-ai/spinloop/internal/catalog"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/config"
 	"github.com/spinloop-ai/spinloop/internal/daemon"
 	"github.com/spinloop-ai/spinloop/internal/discovery"
 	"github.com/spinloop-ai/spinloop/internal/harness"
 	"github.com/spinloop-ai/spinloop/internal/opencode"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 // completionShells lists the supported shells in a stable order, for the
@@ -197,7 +197,7 @@ func compNoValues(_ *cobra.Command, _ []string, _ string) ([]string, cobra.Shell
 // compEnvs offers the registered environment names. An unreadable registry
 // yields no candidates rather than an error, as completion must never fail.
 func compEnvs(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-	envs, err := remote.ListEnvironments()
+	envs, err := cloud.ListEnvironments()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -252,7 +252,7 @@ func fileSlot(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellC
 	return nil, cobra.ShellCompDirectiveDefault
 }
 
-// keepSlot is `remote keep <duration> [spinloop]`: a duration first, then the
+// keepSlot is `cloud keep <duration> [spinloop]`: a duration first, then the
 // optional Spinloop.
 func keepSlot(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 	switch len(args) {

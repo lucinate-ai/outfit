@@ -52,11 +52,11 @@ the served engine's command is defined by the `local-serving` capability.
 - **WHEN** a Spinloop has no `PROVIDER` instruction
 - **THEN** parsing fails saying the PROVIDER instruction is missing
 
-#### Scenario: Naming a remote endpoint
+#### Scenario: Naming a cloud endpoint
 
 - **WHEN** a Spinloop contains `REMOTE ./remote.json` on any line
 - **THEN** parsing fails on that line, since the `REMOTE` instruction was
-  removed: the environment is now named with `remote deploy --env <name>` at
+  removed: the environment is now named with `cloud deploy --env <name>` at
   deploy time and `--env <name>` at the commands that act on it
 
 #### Scenario: Declaring local environment variables
@@ -81,16 +81,16 @@ the served engine's command is defined by the `local-serving` capability.
 
 - **WHEN** a Spinloop contains `PARALLEL 0`, `PARALLEL -1`, or `PARALLEL abc`
 - **THEN** parsing accepts the raw value, exactly as it does for `CONTEXT`, and
-  the command that goes on to use it (`serve`, `remote deploy`, a fleet wake)
+  the command that goes on to use it (`serve`, `cloud deploy`, a fleet wake)
   fails naming the value, rather than silently treating it as a slot count
 
 ### Requirement: REMOTE is a removed keyword
 
 A `REMOTE` instruction SHALL be rejected at parse time with an error that names
 the offending line, says the `REMOTE` instruction was removed, and states the
-replacement: name the environment with `remote deploy --env <name>` at deploy
+replacement: name the environment with `cloud deploy --env <name>` at deploy
 time, and pass `--env <name>` to the commands that act on the environment
-(`remote` subcommands, `apply`, `unapply`, `harness`). The error SHALL NOT be
+(`cloud` subcommands, `apply`, `unapply`, `harness`). The error SHALL NOT be
 the generic unknown-keyword message.
 
 #### Scenario: A REMOTE line is rejected with the migration message
@@ -121,7 +121,7 @@ applicable to any supported harness.
 ### Requirement: Spinloop path resolution
 
 Commands that take a Spinloop path (`apply`, `unapply`, `serve`, `alias`,
-`harness --spinloop`, and the `remote` subcommands) SHALL default to `./Spinloop`
+`harness --spinloop`, and the `cloud` subcommands) SHALL default to `./Spinloop`
 when no path is given, SHALL accept a directory and use the `Spinloop` file
 inside it, SHALL accept a registered alias name in place of a path, and SHALL
 accept an `http://` or `https://` URL in place of a path, fetched over HTTP
@@ -148,9 +148,9 @@ variable alongside the path and alias it already suggests.
   `Spinloop`
 - **THEN** `path/to/dir/Spinloop` is applied
 
-#### Scenario: A remote subcommand resolves the same way
+#### Scenario: A cloud subcommand resolves the same way
 
-- **WHEN** the user runs `spinloop remote status` in a directory holding an
+- **WHEN** the user runs `spinloop cloud status` in a directory holding an
   `Spinloop`
 - **THEN** that Spinloop is read to find the endpoint's configuration
 

@@ -39,7 +39,7 @@ is for: one per project, applied per project. Register each under a short name
 with `spinloop alias` and the names work anywhere a path does;
 `SPINLOOP_ALIAS` names one for the whole shell.
 
-**What does `spinloop remote` cost?** It runs in your own AWS account. The
+**What does `spinloop cloud` cost?** It runs in your own AWS account. The
 control plane and baked AMIs are one-time; a GPU instance bills only while it
 is running, and an idle endpoint is stopped (no GPU billing) and later
 terminated by its retention window. You can also read

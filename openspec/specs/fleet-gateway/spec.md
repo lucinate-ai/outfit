@@ -96,18 +96,18 @@ running and is a wake candidate — waking is allowed for it (its own `wake`
 setting, or the fleet-wide one when it names none) and it names a model to
 start with — the list SHALL additionally carry that model, under the same
 served-name-first naming a wake would start it with: a daemon node's own
-Spinloop source describes it, and a remote node's own stats reply carries it
+Spinloop source describes it, and a cloud node's own stats reply carries it
 — the environment's stored deploy config, which the stats reply carries
 whether the environment is running or stopped (unlike the status reply,
 which only relays it while running). A running node SHALL contribute nothing
 but what it reports: a running engine is never displaced, so its source's
-model is not a request the gateway would answer from it. An undeployed remote
+model is not a request the gateway would answer from it. An undeployed cloud node
 environment — one whose stats read fails outright, having no deploy config
 to read — and a node for which waking is not allowed SHALL contribute
 nothing beyond what is running, and duplicates SHALL be listed once. The
 model a node would be started with SHALL be resolved at most once in a short
 window shared by all models requests, so a burst does not re-read every
-node's source or re-fetch every remote node's stats.
+node's source or re-fetch every cloud node's stats.
 
 #### Scenario: Running models are listed
 
@@ -128,16 +128,16 @@ node's source or re-fetch every remote node's stats.
   request is made
 - **THEN** the response lists only what the running nodes serve
 
-#### Scenario: A deployed remote environment's model is listed
+#### Scenario: A deployed cloud environment's model is listed
 
-- **WHEN** a remote environment is stopped, its stats reply reports what its
+- **WHEN** a cloud environment is stopped, its stats reply reports what its
   stored deploy config would serve, and waking is allowed for it, and a
   models request is made
 - **THEN** the response lists that model beside what the running nodes serve
 
-#### Scenario: A stopped remote environment's model is not listed
+#### Scenario: A stopped cloud environment's model is not listed
 
-- **WHEN** a remote environment is stopped and has nothing deployed, and a
+- **WHEN** a cloud environment is stopped and has nothing deployed, and a
   models request is made
 - **THEN** the response does not list it: the gateway has nothing stored to
   start it with
@@ -151,7 +151,7 @@ node's source or re-fetch every remote node's stats.
 #### Scenario: A burst of models requests resolves each source once
 
 - **WHEN** several models requests arrive within the window in which a node's
-  source or a remote node's status is resolved
+  source or a cloud node's status is resolved
 - **THEN** each node's source or status is read once for the burst
 
 #### Scenario: Nothing reachable lists nothing
@@ -198,7 +198,7 @@ the chosen engine gives is the reply the caller gets.
 
 The engine's address SHALL be resolved the way routing resolves it: the node's
 declared engine override as given, otherwise the node's host with the port and
-path the engine reports. Where a node reports its engine's host — a remote
+path the engine reports. Where a node reports its engine's host — a cloud node
 environment, whose control plane publishes the instance's address and which the
 fleet file names by environment alone — that reported host SHALL be used in
 place of the node's host, so the request reaches the instance rather than an
@@ -310,16 +310,16 @@ model to start with, matching the one the request asks for:
   the fleet file, resolved the way `spinloop fleet start` resolves it —
   describing a config whose model or served name is the one the request asks
   for.
-- A remote node names one through its own stats reply, which reads the
+- A cloud node names one through its own stats reply, which reads the
   environment's stored deploy config directly and so carries its model id
   whether the environment is running or stopped — unlike its status reply,
   which only relays the deploy config while running, and unlike the stats
-  reply itself, which carries no served name. An undeployed remote
+  reply itself, which carries no served name. An undeployed cloud node
   environment's stats read fails outright, having no deploy config to read;
   it names nothing and is not a candidate.
 
 A node is started with what it names, never with a config invented for the
-request: a daemon node is started with the Spinloop source's config; a remote
+request: a daemon node is started with the Spinloop source's config; a cloud node
 node is started as it is — its stored deploy config decides what it serves,
 and the gateway pushes it nothing new. Candidates whose stored config already
 names the model SHALL be tried first, since they have the weights, and the
@@ -328,20 +328,20 @@ cannot serve — SHALL NOT fail the request while other candidates remain.
 
 A daemon engine started this way SHALL be gated with the key the node's fleet
 entry names, supplied by the gateway: the gateway is the client that starts
-the engine, so the key the client sets is the key the engine takes. A remote
+the engine, so the key the client sets is the key the engine takes. A cloud node
 environment's engine is gated by its own key, resolved the same way a request
 already routed to it resolves one; the gateway does not change it. The wait
 SHALL be bounded by a wake timeout, defaulting to five minutes and
 overridable by `--wake-timeout`; exceeding it SHALL fail the request saying
 the engine did not answer in time, and the started engine SHALL be left
-running rather than stopped, so a slow load — or, for a remote node, a slow
+running rather than stopped, so a slow load — or, for a cloud node, a slow
 boot — is not thrown away.
 
 When several requests ask for a model nothing is serving at once, the gateway
 SHALL start at most one engine per node and answer every request from it: the
 first request's wait is the wait the rest join, regardless of the node's
 kind. A daemon node's own control API refuses a second concurrent start on
-its own, but a remote environment's control plane does not, so the gateway
+its own, but a cloud environment's control plane does not, so the gateway
 SHALL NOT rely on that alone: two requests racing to wake the same node
 SHALL be coalesced before either reaches the node, not just reconciled after
 one of them answers. A node another request woke first SHALL be used the
@@ -351,7 +351,7 @@ A request for a model nothing is serving, and for which waking is not allowed
 on any node that names it, SHALL fail without starting anything, naming the
 nodes and what they could serve, and the command that would start one. A
 model no node is running and no node names — no daemon source describes it
-and no remote node is deployed with it — SHALL fail the same way regardless
+and no cloud node is deployed with it — SHALL fail the same way regardless
 of any wake setting: nothing to wake with, and the failure SHALL say so
 rather than trying to start a node with nothing.
 
@@ -362,18 +362,18 @@ rather than trying to start a node with nothing.
 - **THEN** that node is started with its own config, gated with the key its
   fleet entry names, and the request is answered once the engine answers
 
-#### Scenario: A cold request wakes a deployed remote environment
+#### Scenario: A cold request wakes a deployed cloud environment
 
-- **WHEN** no node is running the model a request names, one remote node's
+- **WHEN** no node is running the model a request names, one cloud node's
   stats reply reports it is deployed to serve it, and waking is allowed for
   it
 - **THEN** that environment's instance is started, its own stored deploy
   config decides what it serves, and the request is answered once its engine
   answers
 
-#### Scenario: An undeployed remote node is not a wake candidate
+#### Scenario: An undeployed cloud node is not a wake candidate
 
-- **WHEN** the only node whose name could match a request is a remote
+- **WHEN** the only node whose name could match a request is a cloud node
   environment with nothing deployed
 - **THEN** it is not started, and the failure says nothing is deployed to
   serve the model, naming the deployment path
@@ -397,10 +397,10 @@ rather than trying to start a node with nothing.
 - **THEN** that node is started once, and both requests are answered from the
   same engine
 
-#### Scenario: Concurrent cold requests share one remote wake
+#### Scenario: Concurrent cold requests share one cloud node wake
 
 - **WHEN** two requests arrive at once for a model nothing is serving, and one
-  remote node's stats reply reports it is deployed to serve it
+  cloud node's stats reply reports it is deployed to serve it
 - **THEN** that environment's instance is started once, not once per request,
   and both requests are answered once its engine answers
 
@@ -418,9 +418,9 @@ rather than trying to start a node with nothing.
 - **THEN** nothing is started, and the request fails naming the node whose
   source describes the model and the command that would start it
 
-#### Scenario: A remote node opted out is not woken though the fleet wakes
+#### Scenario: A cloud node opted out is not woken though the fleet wakes
 
-- **WHEN** the fleet file's wake policy is `on`, a stopped remote node
+- **WHEN** the fleet file's wake policy is `on`, a stopped cloud node
   declares its own `wake: off`, and it is the only node that names the
   model a request asks for
 - **THEN** it is not started, and the failure names it and says waking is
@@ -429,7 +429,7 @@ rather than trying to start a node with nothing.
 #### Scenario: Nothing can serve the model
 
 - **WHEN** no node is running the model a request names, no node's Spinloop
-  source describes it, and no remote node is deployed with it
+  source describes it, and no cloud node is deployed with it
 - **THEN** the request fails, naming each node and why it cannot serve the
   model, and nothing is started
 
@@ -499,7 +499,7 @@ serving facts — the model it serves when it is running, the name it serves
 that model under where it reports one, whether its engine has answered, and
 when it was last active. For a node that is not running, the reply SHALL name
 the model a request would start it with, where the node names one — a daemon
-node's own source, or a remote node's own stats reply — and waking is
+node's own source, or a cloud node's own stats reply — and waking is
 allowed for it (its own `wake` setting, or the fleet's when it names none); a
 node that names no such model, or for which waking is not allowed, SHALL
 report none. A node that does not answer SHALL be reported as such in the
@@ -531,9 +531,9 @@ gateway holds no copy of either beyond what it already holds.
 - **THEN** the topology names that model as what a request would start the
   node with
 
-#### Scenario: A stopped, deployed remote node reports what it would start
+#### Scenario: A stopped, deployed cloud node reports what it would start
 
-- **WHEN** a remote node is stopped, its stats reply reports its stored
+- **WHEN** a cloud node is stopped, its stats reply reports its stored
   deploy config, and waking is allowed for it
 - **THEN** the topology names that config's model as what a request would
   start it with, the same way a daemon node's is named

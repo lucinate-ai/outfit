@@ -24,10 +24,10 @@ PRESET   ./preset.ini       # `spinloop serve` builds the llama-server command f
 # the dynamic one — so the repo and file are set separately in the preset
 # (hf + hff). See README.md.
 #
-# For `spinloop remote deploy` you DO need a MODEL line, because the cloud seed
+# For `spinloop cloud deploy` you DO need a MODEL line, because the cloud seed
 # globs filenames rather than resolving a tag. The glob is case-insensitive, so
 # this still matches Muse-Glimmer-30B-KQuant-Dynamic-Q4_K_XL.gguf:
 #   MODEL  meta-models/Muse-Glimmer-30B-GGUF:kquant-dynamic
-# (then `spinloop remote deploy --env muse-glimmer-30b` from this directory)
+# (then `spinloop cloud deploy --env muse-glimmer-30b` from this directory)
 # Adding MODEL breaks the local `spinloop serve` path above — read the "Deploying
 # to the cloud" section of README.md before you do.

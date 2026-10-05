@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spinloop-ai/spinloop/internal/remote"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/spinloop"
 )
 
@@ -288,7 +288,7 @@ func TestCode_SameLaunchAsHarnessOpen(t *testing.T) {
 	// harness from what the environment reports as deployed.
 	env := deployedEnvServer(t)
 	defer env.Close()
-	registerEnv(t, "dev-1", remote.Config{
+	registerEnv(t, "dev-1", cloud.Config{
 		StartURL: env.URL, StopURL: env.URL, EnvURL: env.URL,
 		BaseURL: "http://198.51.100.1:8000/v1", Region: "eu-west-1", Environment: "dev-1",
 	})

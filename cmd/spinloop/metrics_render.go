@@ -1,8 +1,8 @@
-// Shared metrics rendering. Both `spinloop remote metrics` (one cloud endpoint)
+// Shared metrics rendering. Both `spinloop cloud metrics` (one cloud endpoint)
 // and `spinloop fleet metrics` (a node per machine) display the same
 // internal/metrics stats, so the parts that draw those stats live here and
 // each caller supplies only its own heading — the environment and instance
-// type for remote, the node name for fleet.
+// type for cloud, the node name for fleet.
 
 package main
 
@@ -118,7 +118,7 @@ func renderActiveKeyValue(w io.Writer, lastActiveAt string, idleSeconds int, ret
 }
 
 // validateMetricsFormat rejects a --format value the metrics commands do not
-// understand, naming the ones they do. Both `remote metrics` and
+// understand, naming the ones they do. Both `cloud metrics` and
 // `fleet metrics` run it before doing any work.
 func validateMetricsFormat(format string) error {
 	switch format {

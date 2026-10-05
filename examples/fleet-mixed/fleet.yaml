@@ -1,13 +1,13 @@
-# A mixed fleet: a machine running `spinloop daemon` and two `spinloop remote`
+# A mixed fleet: a machine running `spinloop daemon` and two `spinloop cloud`
 # environments, observed side by side. The same command reaches every node,
 # whatever kind it is.
 #
 #   spinloop status, or spinloop metrics -w
 #
 # A daemon node names the machine (host) and the variable holding its bearer
-# token (tokenEnv). A remote node names its environment — its node name *is* the
+# token (tokenEnv). A cloud node names its environment — its node name *is* the
 # env. The token and the control URLs stay out of this file — in the .env and
-# in each environment's remote.json — so it names machines and environments,
+# in each environment's cloud.json — so it names machines and environments,
 # never secrets or accounts.
 #
 # None of the three nodes below declares a `file` field: each one's own name
@@ -23,7 +23,7 @@ nodes:
 
   # Two cloud environments, driven through their control plane.
   - name: qwen
-    kind: remote
+    kind: cloud
 
   - name: llama
-    kind: remote
+    kind: cloud

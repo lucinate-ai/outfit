@@ -1,7 +1,0 @@
-# What the "qwen" environment serves. `spinloop fleet deploy qwen` reads this
-# the same way `spinloop remote deploy --env qwen` does when run in this directory.
-# See docs/commands/remote.md for what each instruction does.
-PROVIDER llamacpp
-ALIAS    qwen3.6-27b
-MODEL    unsloth/Qwen3.6-27B-MTP-GGUF:UD-Q6_K_XL
-CONTEXT  131072

@@ -12,7 +12,7 @@ to prove the setup end to end before reaching for something larger (see the
 ## Prerequisites
 
 - An **Apple Silicon** Mac (M1 or later). oMLX is Apple Silicon only, so
-  [`spinloop remote`](../../../docs/commands/remote.md) cannot deploy it.
+  [`spinloop cloud`](../../../docs/commands/cloud.md) cannot deploy it.
 - [oMLX](https://omlx.ai), installed from its DMG or from source.
 - The 6-bit build is only a few GB, so memory is not a concern here.
 

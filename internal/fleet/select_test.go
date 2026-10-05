@@ -301,7 +301,7 @@ func TestEngineBaseURL(t *testing.T) {
 		},
 		{
 			name: "a reported engine host is used in place of the fleet file's",
-			node: NodeConfig{Name: "env", Kind: "remote"},
+			node: NodeConfig{Name: "env", Kind: "cloud"},
 			status: daemon.StatusResponse{
 				Engine: &daemon.EngineEndpoint{Host: "1.2.3.4", Port: 8000, Path: "/v1"},
 			},
@@ -309,7 +309,7 @@ func TestEngineBaseURL(t *testing.T) {
 		},
 		{
 			name: "an override still beats a reported engine host",
-			node: NodeConfig{Name: "env", Kind: "remote", Engine: &EngineOverride{Host: "proxy"}},
+			node: NodeConfig{Name: "env", Kind: "cloud", Engine: &EngineOverride{Host: "proxy"}},
 			status: daemon.StatusResponse{
 				Engine: &daemon.EngineEndpoint{Host: "1.2.3.4", Port: 8000, Path: "/v1"},
 			},
@@ -329,7 +329,7 @@ func TestEngineBaseURL(t *testing.T) {
 	}
 }
 
-// A loopback-bound engine on a remote node is refused with both remedies,
+// A loopback-bound engine on a cloud node is refused with both remedies,
 // rather than handed over as an address that cannot connect.
 func TestLoopbackEngineIsRefused(t *testing.T) {
 	cfg := &Config{Path: "fleet.yaml"}
@@ -337,7 +337,7 @@ func TestLoopbackEngineIsRefused(t *testing.T) {
 
 	_, err := cfg.EngineBaseURL(NodeConfig{Name: "gpu", Host: "gpu-box"}, status)
 	if err == nil {
-		t.Fatal("a loopback engine on a remote node should be refused")
+		t.Fatal("a loopback engine on a cloud node should be refused")
 	}
 	for _, want := range []string{"gpu", "loopback", "--host", "fleet.yaml"} {
 		if !strings.Contains(err.Error(), want) {
@@ -410,7 +410,7 @@ func TestEngineKeyResolution(t *testing.T) {
 // instance, never the gate — so its key is looked up whatever the status says,
 // from the node's own reference or the fleet's, and a remote with no resolvable
 // key fails before a launch depends on it.
-func TestRemoteEngineKeyResolution(t *testing.T) {
+func TestCloudEngineKeyResolution(t *testing.T) {
 	cfg := &Config{Path: "fleet.yaml", Dir: t.TempDir(), APIKeyEnv: "FLEET_KEY"}
 	t.Setenv("FLEET_KEY", "sk-fleet")
 	t.Setenv("NODE_ENGINE_KEY", "sk-node")
@@ -418,20 +418,20 @@ func TestRemoteEngineKeyResolution(t *testing.T) {
 	empty := daemon.StatusResponse{}
 
 	// The fleet's key, by default.
-	remote := NodeConfig{Name: "cloud", Kind: KindRemote}
+	remote := NodeConfig{Name: "cloud", Kind: KindCloud}
 	if key, err := cfg.engineKeyFor(remote, empty); err != nil || key != "sk-fleet" {
 		t.Errorf("key = %q, %v; want sk-fleet", key, err)
 	}
 
 	// The node's own reference overrides it.
-	own := NodeConfig{Name: "cloud", Kind: KindRemote, EngineTokenEnv: "NODE_ENGINE_KEY"}
+	own := NodeConfig{Name: "cloud", Kind: KindCloud, EngineTokenEnv: "NODE_ENGINE_KEY"}
 	if key, err := cfg.engineKeyFor(own, empty); err != nil || key != "sk-node" {
 		t.Errorf("key = %q, %v; want sk-node", key, err)
 	}
 
 	// No key named anywhere fails, naming the node and both places to fix it.
 	cfg.APIKeyEnv = ""
-	_, err := cfg.engineKeyFor(NodeConfig{Name: "cloud", Kind: KindRemote}, empty)
+	_, err := cfg.engineKeyFor(NodeConfig{Name: "cloud", Kind: KindCloud}, empty)
 	if err == nil {
 		t.Fatal("a remote with no key named should fail")
 	}

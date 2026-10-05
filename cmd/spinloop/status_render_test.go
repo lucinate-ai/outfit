@@ -7,7 +7,7 @@ import (
 	"github.com/spinloop-ai/spinloop/internal/daemon"
 )
 
-// The shared status view is where `remote status` and `fleet status` agree on
+// The shared status view is where `cloud status` and `fleet status` agree on
 // the facts they both carry; this pins the wording so the two cannot diverge.
 func TestStatusFactServingText(t *testing.T) {
 	f := statusFact{

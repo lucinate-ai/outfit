@@ -69,11 +69,11 @@ spinloop harness apply                                    # point the agent at i
 Or skip the middle: `spinloop hf <ref> --apply` configures the active harness
 straight from the result. To serve the model from a cloud GPU instead of this
 machine, give the written Spinloop to
-[`spinloop remote deploy`](remote.md).
+[`spinloop cloud deploy`](cloud.md).
 
 ## Where next
 
 - [`spinloop hf`](../commands/hf.md) — the full reference, including gated
   repos and mirrors
 - [Serve a model locally](local-serving.md) — running the engine
-- [Deploy to a cloud GPU](remote.md) — the same Spinloop, in the cloud
+- [Deploy to a cloud GPU](cloud.md) — the same Spinloop, in the cloud

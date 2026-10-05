@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/fleet"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 func logsCmd() *cobra.Command {
@@ -80,7 +80,7 @@ func cmdLogs(args []string) error { return execCmd(logsCmd(), args) }
 // any node is contacted.
 func validateLogQuery(q fleet.LogQuery, format string, limit int) error {
 	switch q.Source {
-	case "", remote.LogSourceEngine, remote.LogSourceBoot, remote.LogSourceAll:
+	case "", cloud.LogSourceEngine, cloud.LogSourceBoot, cloud.LogSourceAll:
 	default:
 		return fmt.Errorf("--source must be engine, boot or all, got %q", q.Source)
 	}

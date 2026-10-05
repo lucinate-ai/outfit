@@ -33,7 +33,7 @@ Four words carry the whole tool:
 | [Open your coding agent](guides/harness.md) | Configure the agent for a provider and model, and launch it |
 | [From a Hugging Face model](guides/hugging-face.md) | Turn a model page's reference into a `Spinloop` that serves it |
 | [Run a daemon node](guides/daemon.md) | Keep an engine supervised over the HTTP control API, so anything can start, stop, and watch it |
-| [Deploy to a cloud GPU](guides/remote.md) | The same `Spinloop`, on a machine that stops when you do |
+| [Deploy to a cloud GPU](guides/cloud.md) | The same `Spinloop`, on a machine that stops when you do |
 | [Run a fleet](guides/fleet.md) | One spinloop observing and driving every machine you run |
 | [Serve the fleet as a gateway](guides/gateway.md) | The whole fleet under one OpenAI-compatible endpoint |
 | [Work a backlog](guides/work-items.md) | A file of work items, worked by one-shot agents at the pace the fleet allows |
@@ -44,7 +44,7 @@ Four words carry the whole tool:
 ## Environment variables
 
 The ones you will meet first — **[Environment variables](env-vars.md) is the
-full list**, including the `SPINLOOP_REMOTE_*` overrides:
+full list**, including the `SPINLOOP_CLOUD_*` overrides:
 
 | Variable | Effect |
 | -------- | ------ |
