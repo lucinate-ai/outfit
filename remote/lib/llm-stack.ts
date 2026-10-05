@@ -335,6 +335,7 @@ export class LlmStack extends cdk.Stack {
     });
 
     const commonEnv = {
+      CONTROL_PLANE_VERSION: cfg.controlPlaneVersion,
       TAG_KEY,
       TAG_VALUE,
       ENGINE_PORT: String(cfg.enginePort),
@@ -499,6 +500,7 @@ export class LlmStack extends cdk.Stack {
       memorySize: 256,
       logGroup: lambdaLogGroup('DeployFnLogGroup', 'deploy'),
       environment: {
+        CONTROL_PLANE_VERSION: cfg.controlPlaneVersion,
         ENGINE_PORT: String(cfg.enginePort),
         VPC_ID: vpc.vpcId,
         // Seeding: the Lambda launches the disposable download instance itself
@@ -569,6 +571,7 @@ export class LlmStack extends cdk.Stack {
       memorySize: 256,
       logGroup: lambdaLogGroup('SeedFnLogGroup', 'seed'),
       environment: {
+        CONTROL_PLANE_VERSION: cfg.controlPlaneVersion,
         TAG_KEY,
         ...seedEnv,
         MAX_CONCURRENT_SEEDS: String(cfg.maxConcurrentSeeds),
@@ -627,6 +630,7 @@ export class LlmStack extends cdk.Stack {
       memorySize: 128,
       logGroup: lambdaLogGroup('EnvFnLogGroup', 'env'),
       environment: {
+        CONTROL_PLANE_VERSION: cfg.controlPlaneVersion,
         TAG_KEY,
         TAG_VALUE,
         ENGINE_PORT: String(cfg.enginePort),
@@ -662,6 +666,7 @@ export class LlmStack extends cdk.Stack {
       memorySize: 128,
       logGroup: lambdaLogGroup('UpdateFnLogGroup', 'update'),
       environment: {
+        CONTROL_PLANE_VERSION: cfg.controlPlaneVersion,
         TAG_KEY,
         TAG_VALUE,
       },

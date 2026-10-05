@@ -54,6 +54,13 @@ path, logging which one it picked. To pin the choice, pass `--package-manager`
 env var. A pinned manager that isn't installed fails the preflight rather than
 falling back. `spinloop remote bake` honours the same flags.
 
+Bootstrap stamps the control plane with the version of the `spinloop` that deploys
+it, and every control plane response carries that version. When a later `remote`
+command sees a version different from its own, it prints one warning to stderr
+naming both, and carries on; re-run `spinloop remote bootstrap` to bring the
+control plane up to date. No warning appears for a control plane deployed before
+this was added, or when either side is a development build.
+
 ## Baking the AMIs
 
 Each engine runs from a baked AMI (driver + engine, no model).

@@ -20,6 +20,12 @@ export const AMI_RUNNER_TAG_KEY = 'cloud-vm-llm:runner';
  */
 export interface LlmConfig {
   region: string;
+  /**
+   * The spinloop version this control plane was deployed with. Every Lambda
+   * reports it in a response header so the CLI can warn when it differs from
+   * its own. `spinloop remote bootstrap` supplies it; "dev" when unset.
+   */
+  controlPlaneVersion: string;
   /** Optional Hugging Face token, used only for the seeding of gated repos. */
   hfToken: string;
   /** Instance type every environment's runtime instance launches as. */
@@ -222,6 +228,11 @@ export function loadConfig(
 
   return {
     region: contextString(app, 'region', DEFAULTS.region),
+    controlPlaneVersion: contextString(
+      app,
+      'controlPlaneVersion',
+      process.env.SPINLOOP_CONTROL_PLANE_VERSION || 'dev',
+    ),
     hfToken: contextString(app, 'hfToken', dotEnv.HF_TOKEN ?? DEFAULTS.hfToken),
     instanceType: contextString(app, 'instanceType', DEFAULTS.instanceType),
     vllmVersion: contextString(app, 'vllmVersion', DEFAULTS.vllmVersion),

@@ -76,6 +76,10 @@ scaled; see [`spinloop serve`](commands/serve.md#parallelism).
   an endpoint needs `spinloop remote bootstrap` to have run once per account;
   a missing control plane says so. An older control plane that lacks a feature
   says to re-run `bootstrap` to add it.
+- **A warning says the control plane is at a different version.** The
+  `spinloop` you are running differs from the one that deployed the control
+  plane. Commands still run, but re-run `spinloop remote bootstrap` to update
+  it, or install the matching `spinloop`.
 - **The AMI is not baked.** `spinloop remote bake` once per engine, and it
   waits until the AMI is available.
 - **A cold start takes about ten minutes.** `start` prints its progress on

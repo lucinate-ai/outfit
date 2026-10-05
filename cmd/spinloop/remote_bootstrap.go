@@ -37,6 +37,10 @@ var (
 	preflightFn                = checkNodeAndPackageManager
 )
 
+// controlPlaneVersionEnv is read by the CDK app (remote/lib/config.ts) to stamp
+// the control plane with the version of the CLI that deploys it.
+const controlPlaneVersionEnv = "SPINLOOP_CONTROL_PLANE_VERSION"
+
 // packageManagerEnv pins the Node package manager bootstrap drives the CDK
 // project with, when the --package-manager flag is not given.
 const packageManagerEnv = "SPINLOOP_REMOTE_PACKAGE_MANAGER"
@@ -278,6 +282,9 @@ func execStep(ctx context.Context, name string, argv []string, workDir string) e
 	fmt.Fprintf(os.Stderr, "\n$ %s\n", strings.Join(argv, " "))
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = workDir
+	// The control plane reports this version in every response, so a CLI at a
+	// different version can warn about the mismatch.
+	cmd.Env = append(os.Environ(), controlPlaneVersionEnv+"="+version)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
