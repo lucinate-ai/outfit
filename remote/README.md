@@ -210,6 +210,7 @@ layer's own settings all have defaults, overridable in `cdk.json`:
 | `stopRetentionMinutes` | `60` | Keep a stopped instance (re-wakeable) this long before terminating it |
 | `gracePeriodMinutes` | `30` | Never stop this soon after boot (covers the cold load) |
 | `maxRuntimeMinutes` | `240` | Hard stop this long after boot, even if busy |
+| `controlPlaneVersion` | `dev` | The spinloop version reported in the `x-spinloop-control-plane-version` header of every Lambda response, so the CLI can warn on a mismatch. `spinloop remote bootstrap` sets it (through `SPINLOOP_CONTROL_PLANE_VERSION`) to its own version; a hand-run `pnpm run deploy` leaves it `dev`, which never triggers the warning |
 
 The **model, quant, context window and engine flags are not in this table** —
 they come from the `Spinloop` and its preset via `spinloop remote deploy`, so

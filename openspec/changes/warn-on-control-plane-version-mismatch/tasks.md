@@ -14,4 +14,4 @@
 
 ## 3. Docs
 
-- [ ] 3.1 Document the warning in the `spinloop remote` docs and the `remote/` README
+- [x] 3.1 Document the warning in the `spinloop remote` docs and the `remote/` README
