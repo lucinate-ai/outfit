@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -205,7 +206,7 @@ func TestAPI_AnUnknownPathIsNamedAsSuch(t *testing.T) {
 	for _, p := range []struct{ method, path string }{
 		{http.MethodGet, "/nope"},
 		{http.MethodDelete, "/v1/items"},
-		{http.MethodPost, "/v1/items/a/retry"},
+		{http.MethodPost, "/v1/items/a/restart"},
 		{http.MethodPut, "/v1/items/a/log"},
 		{http.MethodGet, "/v1/items/a"},
 	} {
@@ -252,6 +253,7 @@ func TestAPI_ABearerTokenGatesEveryPath(t *testing.T) {
 		{http.MethodGet, "/v1/items/a/log", ""},
 		{http.MethodDelete, "/v1/items/a", ""},
 		{http.MethodPost, "/v1/items/a/abort", ""},
+		{http.MethodPost, "/v1/items/a/retry", ""},
 		{http.MethodGet, "/nope", ""},
 	}
 	for token, wantStatus := range map[string]int{"": http.StatusUnauthorized, "the-wrong-token": http.StatusUnauthorized} {
@@ -611,6 +613,135 @@ func TestAPI_AnAbortOfANonRunningItemIsRefused(t *testing.T) {
 	code, raw = apiDo(t, srv, "", http.MethodPost, "/v1/items/ghost/abort", "")
 	if code != http.StatusNotFound || !strings.Contains(raw, "ghost") {
 		t.Fatalf("an id the file does not carry is refused, naming it, got %d: %s", code, raw)
+	}
+}
+
+func TestAPI_ARetryReturnsAFailedItemToTheBacklog(t *testing.T) {
+	wl, store, path := testWorkList(t, itemsFile(itemSpec{id: "a", instr: "do a", dir: "./a"}),
+		func(s *memStore) {
+			s.seedRecord("a", ItemState{State: StateFailed, Why: "it failed", Node: "n1"})
+		})
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := workListServer(t, wl, "")
+	defer srv.Close()
+
+	code, raw := apiDo(t, srv, "", http.MethodPost, "/v1/items/a/retry", "")
+	if code != http.StatusOK {
+		t.Fatalf("a retry the work list accepts is answered, got %d: %s", code, raw)
+	}
+	if st, recorded := store.records["a"]; recorded {
+		t.Errorf("the record is gone from the state, got %+v", st)
+	}
+	for _, v := range wl.List() {
+		if v.ID == "a" && v.State != StateBacklog {
+			t.Errorf("the item shows backlog, got %s", v.State)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("the items file is unchanged by a retry")
+	}
+}
+
+func TestAPI_ARetryOfAnItemThatHasNotFailedIsRefused(t *testing.T) {
+	wl, _, _ := testWorkList(t, itemsFile(itemSpec{id: "a", instr: "do a", dir: "./a"}), nil)
+	srv := workListServer(t, wl, "")
+	defer srv.Close()
+
+	// In the backlog: the refusal names the item and its state.
+	code, raw := apiDo(t, srv, "", http.MethodPost, "/v1/items/a/retry", "")
+	if code != http.StatusConflict || !strings.Contains(raw, `\"a\"`) || !strings.Contains(raw, StateBacklog) {
+		t.Fatalf("retrying a backlog item is refused, naming the item and its state, got %d: %s", code, raw)
+	}
+	for _, state := range []string{StateDone, StateRunning} {
+		wl.mu.Lock()
+		wl.records["a"] = ItemState{State: state, Node: "n1"}
+		wl.mu.Unlock()
+		code, raw = apiDo(t, srv, "", http.MethodPost, "/v1/items/a/retry", "")
+		if code != http.StatusConflict || !strings.Contains(raw, state) {
+			t.Fatalf("retrying a %s item is refused, naming the state, got %d: %s", state, code, raw)
+		}
+		wl.mu.Lock()
+		_, kept := wl.records["a"]
+		wl.mu.Unlock()
+		if !kept {
+			t.Errorf("a refused retry leaves the %s record in place", state)
+		}
+	}
+	code, raw = apiDo(t, srv, "", http.MethodPost, "/v1/items/ghost/retry", "")
+	if code != http.StatusNotFound || !strings.Contains(raw, "ghost") {
+		t.Fatalf("an id the file does not carry is refused, naming it, got %d: %s", code, raw)
+	}
+	code, _ = apiDo(t, srv, "", http.MethodGet, "/v1/items/a/retry", "")
+	if code != http.StatusNotFound {
+		t.Errorf("a retry is a POST only, got %d for a GET", code)
+	}
+}
+
+// A retried item is admitted again by the run's loop, like any backlog item.
+func TestWorkList_ARetriedItemIsAdmittedAgain(t *testing.T) {
+	topo := &fakeTopo{}
+	topo.set(Topology{Wake: true, Nodes: []Node{runningNode("n", "org/m", nil)}})
+	h := &fakeHarness{name: "opencode", bin: "unused"}
+	var mu sync.Mutex
+	launches := 0
+	rec := &launchRecorder{factory: func(bin string, args []string, dir, logPath string, env []string) (Child, error) {
+		mu.Lock()
+		launches++
+		n := launches
+		mu.Unlock()
+		if n == 1 {
+			return newFakeChild(errors.New("boom"), nil), nil
+		}
+		return newFakeChild(nil, nil), nil
+	}}
+	d := NewDispatcher(h, "http://gateway:4000", "the-token", false)
+	d.start = rec.start
+	dir := t.TempDir()
+	path := writeItems(t, itemsFile(itemSpec{id: "a", dir: dir}))
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wl, err := NewWorkList(path, store, d, "http://gateway:4000", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wl.Close()
+	srv := workListServer(t, wl, "")
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{
+			Gateway:    "http://gateway:4000",
+			ItemsPath:  path,
+			Topologist: topo,
+			Dispatcher: d,
+			Tick:       2 * time.Millisecond,
+			WorkList:   wl,
+		})
+	}()
+	if err := waitForState(t, path, "a", StateFailed); err != nil {
+		t.Fatal(err)
+	}
+	code, raw := apiDo(t, srv, "", http.MethodPost, "/v1/items/a/retry", "")
+	if code != http.StatusOK {
+		t.Fatalf("the retry is answered: %d: %s", code, raw)
+	}
+	if err := waitForState(t, path, "a", StateDone); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("the interrupt ends the run without an error: %v", err)
 	}
 }
 

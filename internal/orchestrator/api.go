@@ -42,7 +42,7 @@ const LoopbackListen = "127.0.0.1:4010"
 // pathsServed is the surface the work list API answers, for the 404 that
 // names it.
 var pathsServed = []string{
-	"/v1/items", "/v1/items/{id}", "/v1/items/{id}/log", "/v1/items/{id}/abort", "/health",
+	"/v1/items", "/v1/items/{id}", "/v1/items/{id}/log", "/v1/items/{id}/abort", "/v1/items/{id}/retry", "/health",
 }
 
 // Handler is the work list API: the work list it serves, the token its
@@ -116,6 +116,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			handler = h.handleLog(id)
 		case ok && action == "abort" && r.Method == http.MethodPost:
 			handler = h.handleAbort(id)
+		case ok && action == "retry" && r.Method == http.MethodPost:
+			handler = h.handleRetry(id)
 		default:
 			handler = h.notFound(r)
 		}
@@ -307,6 +309,18 @@ func (h *Handler) handleRemove(id string) http.HandlerFunc {
 func (h *Handler) handleAbort(id string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		if err := h.wl.Abort(id); err != nil {
+			writeError(w, apiStatus(err), err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
+	}
+}
+
+// handleRetry puts a failed item back in the backlog; an item that has not
+// failed is refused, naming the item and its state.
+func (h *Handler) handleRetry(id string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if err := h.wl.Retry(id); err != nil {
 			writeError(w, apiStatus(err), err)
 			return
 		}

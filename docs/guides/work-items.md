@@ -121,9 +121,9 @@ backlog through the run's [work list API](../commands/orchestrator.md#the-work-l
 `work list` reports every item with its state — one plain line per item, a
 dash where a value is absent; `work logs <id>` (`-f` to follow) prints an
 item's kept agent output; `work abort <id>` stops a running item and puts
-it back in the backlog; `work remove <id>` takes an item out of the file, its
+it back in the backlog; `work retry <id>` does the same for a failed item; `work remove <id>` takes an item out of the file, its
 state, and its log. `work board` draws the same list as a live kanban — a
-column per state, with keys to add, abort, remove, and tail an item's
+column per state, with keys to add, abort, retry, remove, and tail an item's
 log without leaving the screen. The commands name the API's address
 with `--url` and present its token, and a refusal reads the way the API states it.
 
@@ -148,7 +148,7 @@ giving only the gateway's address.
 - [`spinloop orchestrator`](../commands/orchestrator.md) — the full command reference, and
   the [work list API](../commands/orchestrator.md#the-work-list-api) a client works the backlog through
 - [`spinloop work`](../commands/work.md) — the backlog driven from the shell,
-  through the run's work list API: add, list, logs, abort, remove, and the
+  through the run's work list API: add, list, logs, abort, retry, remove, and the
   live [`board`](../commands/work.md#watching-the-board)
 - [The fleet file](../fleet-file.md) — tags, concurrency, and waking
 - [The gateway](../commands/gateway.md) — the front door the orchestrator reads and routes through

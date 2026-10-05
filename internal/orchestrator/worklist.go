@@ -561,6 +561,30 @@ func (w *WorkList) Abort(id string) error {
 	return nil
 }
 
+// Retry puts a failed item back in the backlog: its record is removed from
+// the state, so the run admits it again on a later pass. The items file and
+// the item's kept output are left as they are; the output is replaced when
+// the new attempt starts. An item that has not failed is refused, naming the
+// item and its state, and an id the file does not carry is refused, naming it.
+func (w *WorkList) Retry(id string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.carries(id) {
+		return &errMissing{msg: fmt.Sprintf("the items file carries no item with id %q", id)}
+	}
+	state := StateBacklog
+	if r, recorded := w.records[id]; recorded {
+		state = r.State
+	}
+	if state != StateFailed {
+		return &errConflict{msg: fmt.Sprintf("item %q is not failed: it is %s", id, state)}
+	}
+	delete(w.records, id)
+	w.saveLocked()
+	w.log.Info("item retried", slog.String("item", id))
+	return nil
+}
+
 // detachLocked removes the in-flight flight and its record and saves the
 // state, the caller holding the lock: ok false where the id is not in
 // flight. The API's abort and the marker's consumption both take the item

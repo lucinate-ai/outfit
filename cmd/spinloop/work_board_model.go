@@ -56,6 +56,7 @@ type workBoardVerb string
 
 const (
 	workAbort  workBoardVerb = "abort"
+	workRetry  workBoardVerb = "retry"
 	workRemove workBoardVerb = "remove"
 	workAdd    workBoardVerb = "add"
 )
@@ -431,6 +432,11 @@ func (m *workBoardModel) updateBoardKey(msg tea.KeyMsg) tea.Cmd {
 		if v := m.selectedItem(); v != nil {
 			return m.beginAction(workAbort, v.ID)
 		}
+	case "t":
+		// As with abort, the API refuses a retry of what has not failed.
+		if v := m.selectedItem(); v != nil {
+			return m.beginAction(workRetry, v.ID)
+		}
 	case "x":
 		if m.selectedItem() != nil {
 			m.confirm = true
@@ -573,6 +579,11 @@ func (m *workBoardModel) beginAction(verb workBoardVerb, id string) tea.Cmd {
 			_, err := workRequest(base, token, "POST", "/v1/items/"+url.PathEscape(id)+"/abort", nil)
 			return workBoardActionMsg{verb: verb, id: id, err: err}
 		}
+	case workRetry:
+		run = func() tea.Msg {
+			_, err := workRequest(base, token, "POST", "/v1/items/"+url.PathEscape(id)+"/retry", nil)
+			return workBoardActionMsg{verb: verb, id: id, err: err}
+		}
 	case workRemove:
 		run = func() tea.Msg {
 			_, err := workRequest(base, token, "DELETE", "/v1/items/"+url.PathEscape(id), nil)
@@ -610,6 +621,8 @@ func workBoardActionLine(msg workBoardActionMsg) string {
 	switch msg.verb {
 	case workAbort:
 		return fmt.Sprintf("item %q stopped: it is back in the backlog", msg.id)
+	case workRetry:
+		return fmt.Sprintf("item %q is back in the backlog", msg.id)
 	case workRemove:
 		return fmt.Sprintf("item %q removed", msg.id)
 	}

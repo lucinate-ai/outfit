@@ -406,8 +406,8 @@ func (m workBoardModel) footerLine(w int, keys string) string {
 }
 
 // boardKeys names the keys that would do something for what is selected:
-// abort is named only on a running card, remove only on one that is not,
-// detail only where there is an item to open.
+// abort is named only on a running card, retry only on a failed one, remove
+// only on one that is not running, detail only where there is an item to open.
 func (m workBoardModel) boardKeys() string {
 	parts := []string{}
 	cols := m.columnIndexes()
@@ -420,6 +420,9 @@ func (m workBoardModel) boardKeys() string {
 		if v.State == orchestrator.StateRunning {
 			parts = append(parts, "a abort")
 		} else {
+			if v.State == orchestrator.StateFailed {
+				parts = append(parts, "t retry")
+			}
 			parts = append(parts, "x remove")
 		}
 	}
