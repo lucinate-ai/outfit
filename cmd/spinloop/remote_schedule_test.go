@@ -202,3 +202,44 @@ func TestRemoteSchedule_NeedsAnEnvironment(t *testing.T) {
 		t.Errorf("expected the no-environment error, got %v", err)
 	}
 }
+
+func TestRemoteSchedule_ClearAndShowReportControlPlaneFailures(t *testing.T) {
+	scheduleFixture(t, http.StatusInternalServerError, `{"error":"scheduler unavailable"}`)
+	for _, verb := range []string{"clear", "show"} {
+		err := cmdRemoteSchedule([]string{verb, "--env", "default"})
+		if err == nil || !strings.Contains(err.Error(), "scheduler unavailable") {
+			t.Errorf("%s: expected the control plane's reason, got %v", verb, err)
+		}
+	}
+}
+
+func TestRemoteSchedule_SetFailsWithoutAnEnvironmentBeforeSendingAnything(t *testing.T) {
+	isolateConfig(t)
+	err := cmdRemoteSchedule([]string{"set", "--start", "0 8 * * *"})
+	if err == nil || !strings.Contains(err.Error(), "no environment named") {
+		t.Errorf("expected the no-environment error, got %v", err)
+	}
+}
+
+func TestPrintSchedules_ShowsUTCWhenTheZoneIsEmptyAndPassesAnOddNextRunThrough(t *testing.T) {
+	var b strings.Builder
+	list := &remote.ScheduleList{Schedules: []remote.Schedule{{Action: "start", Cron: "0 8 * * *"}}}
+	list.Next.Start = "tomorrow-ish"
+	printSchedules(&b, list)
+	out := b.String()
+	if !strings.Contains(out, "start  0 8 * * *  (UTC)") {
+		t.Errorf("an empty zone should read as UTC:\n%s", out)
+	}
+	if !strings.Contains(out, "next start: tomorrow-ish") {
+		t.Errorf("an unparseable next run should be shown as sent:\n%s", out)
+	}
+}
+
+func TestFormatNextRun_ConvertsOffsetsToUTC(t *testing.T) {
+	if got := formatNextRun("2026-10-06T09:00:00+02:00"); got != "2026-10-06T07:00:00Z" {
+		t.Errorf("got %q", got)
+	}
+	if got := formatNextRun(""); got != "" {
+		t.Errorf("an empty value should stay empty, got %q", got)
+	}
+}

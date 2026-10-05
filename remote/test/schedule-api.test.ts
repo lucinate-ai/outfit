@@ -7,9 +7,9 @@ import { schedulerNamePrefix, schedulesParam } from '../lambda/shared/schedules'
 
 const LAMBDA_ENV = {
   SCHEDULE_GROUP: 'test-group',
-  SCHEDULER_ROLE_ARN: 'arn:aws:iam::000000000000:role/scheduler',
-  START_FN_ARN: 'arn:aws:lambda:us-east-1:000000000000:function:start',
-  STOP_FN_ARN: 'arn:aws:lambda:us-east-1:000000000000:function:stop',
+  SCHEDULER_ROLE_ARN: 'arn:aws:iam::0:role/scheduler',
+  START_FN_ARN: 'arn:aws:lambda:us-east-1:0:function:start',
+  STOP_FN_ARN: 'arn:aws:lambda:us-east-1:0:function:stop',
 };
 
 const ssmSend = vi.fn();
@@ -177,6 +177,35 @@ describe('GET', () => {
     ssmSend.mockRejectedValue(Object.assign(new Error('missing'), { name: 'ParameterNotFound' }));
     const res = await handler(event('GET', 'dev'));
     expect(JSON.parse(res.body)).toMatchObject({ schedules: [], next: { start: null, stop: null } });
+  });
+});
+
+describe('failures after validation', () => {
+  it('keeps the stored list and surfaces the AWS error, rather than calling it a bad request', async () => {
+    schedulerSend.mockRejectedValue(Object.assign(new Error('throttled'), { name: 'ThrottlingException' }));
+    await expect(handler(event('PUT', 'dev', { schedules: OFFICE }))).rejects.toThrow('throttled');
+    // The list was stored before the mirror was attempted, so a repeat converges.
+    expect(sent(ssmSend)[0][0]).toBe('PutParameterCommand');
+  });
+
+  it('leaves the schedules alone when the stored list cannot be removed', async () => {
+    ssmSend.mockRejectedValue(Object.assign(new Error('denied'), { name: 'AccessDeniedException' }));
+    await expect(handler(event('DELETE', 'dev'))).rejects.toThrow('denied');
+    expect(schedulerSend).not.toHaveBeenCalled();
+  });
+
+  it('removes schedules listed across several Scheduler pages', async () => {
+    const prefix = schedulerNamePrefix('dev');
+    let page = 0;
+    schedulerSend.mockImplementation(async (cmd: { constructor: { name: string } }) => {
+      if (cmd.constructor.name !== 'ListSchedulesCommand') return {};
+      page += 1;
+      return page === 1
+        ? { Schedules: [{ Name: `${prefix}1` }], NextToken: 't' }
+        : { Schedules: [{ Name: `${prefix}2` }] };
+    });
+    await handler(event('DELETE', 'dev'));
+    expect(sent(schedulerSend).filter(([n]) => n === 'DeleteScheduleCommand')).toHaveLength(2);
   });
 });
 
