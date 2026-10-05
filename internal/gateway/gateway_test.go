@@ -1537,3 +1537,44 @@ func TestDefaultRequestLimitAdmitsWhatOneMiBRefused(t *testing.T) {
 		t.Fatalf("HTTP %d, body %s", resp.StatusCode, body)
 	}
 }
+
+// failingBody yields some bytes and then a read error, the way a client that
+// drops its connection part-way through a body does.
+type failingBody struct{ sent bool }
+
+func (b *failingBody) Read(p []byte) (int, error) {
+	if b.sent {
+		return 0, fmt.Errorf("connection reset")
+	}
+	b.sent = true
+	return copy(p, `{"model":"org/wanted","messages":[`), nil
+}
+
+func TestPartiallyReadRequestIsNeverForwarded(t *testing.T) {
+	node := newFakeNode(t, string(daemon.StateRunning), "org/wanted")
+	h := New(fleetOf(t, []string{"box"}, node), "", Options{})
+	req := httptest.NewRequest(http.MethodPost, "http://gw/v1/chat/completions", &failingBody{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("HTTP %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "reading the request") {
+		t.Errorf("the refusal should say the read failed: %s", rec.Body.String())
+	}
+	node.mu.Lock()
+	defer node.mu.Unlock()
+	if node.statusHits != 0 || node.engineGotBody != "" {
+		t.Error("a partly read request reached a node")
+	}
+}
+
+func TestMalformedJSONStillReadsAsMalformed(t *testing.T) {
+	node := newFakeNode(t, string(daemon.StateRunning), "org/wanted")
+	h := New(fleetOf(t, []string{"box"}, node), "", Options{})
+	resp, body := post(t, h, "", `{"model":`)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "not a JSON body") {
+		t.Fatalf("HTTP %d, body %s; want 400 naming malformed JSON", resp.StatusCode, body)
+	}
+}

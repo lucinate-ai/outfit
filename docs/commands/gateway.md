@@ -167,6 +167,13 @@ The gateway needs the same environment a machine running
 `spinloop fleet start` would: the tokens the fleet file names, set in its
 process environment or in a `.env` beside the fleet file.
 
+### Request size
+
+A completion request body is read in full or refused. The limit is 64 MiB by
+default, set with `--max-request-bytes`. A larger body is answered `413`, naming
+the limit and the flag, and nothing is sent to an engine. A long-context model
+fed whole conversations may need the limit raised.
+
 ## The gateway's token
 
 Callers present the gateway's token as a bearer token on every request — a
