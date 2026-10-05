@@ -137,6 +137,42 @@ describe('nextRuns', () => {
   });
 });
 
+describe('validateSchedules, malformed entries', () => {
+  it('rejects an entry that is not an object and a cron that is not a string', () => {
+    expect(() => validateSchedules(['0 8 * * *'])).toThrow(/schedule 1 must be an object/);
+    expect(() => validateSchedules([null])).toThrow(/must be an object/);
+    expect(() => validateSchedules([{ action: 'start', cron: 8 }])).toThrow(/cron must be a string/);
+  });
+
+  it('treats an empty time zone as UTC and rejects a non-string one', () => {
+    expect(validateSchedules([{ action: 'stop', cron: '0 18 * * *', timezone: '' }])[0].timezone).toBe('UTC');
+    expect(() => validateSchedules([{ action: 'stop', cron: '0 18 * * *', timezone: 5 }])).toThrow(
+      /unknown time zone/,
+    );
+  });
+
+  it('names the schedule that is wrong, by position', () => {
+    expect(() =>
+      validateSchedules([
+        { action: 'start', cron: '0 8 * * *' },
+        { action: 'stop', cron: '0 18 * * *', timezone: 'Nowhere/Land' },
+      ]),
+    ).toThrow(/schedule 2/);
+  });
+});
+
+describe('parseCron, field edges', () => {
+  it.each(['1,,2 * * * *', '1/2/3 * * * *', '*/x * * * *', '1- * * * *'])('rejects %j', (expr) => {
+    expect(() => parseCron(expr)).toThrow(ScheduleError);
+  });
+
+  it('accepts a step on a start value, and reads the full day-of-month range as unrestricted', () => {
+    expect(parseCron('5/20 * * * *').minutes).toEqual([5, 25, 45]);
+    expect(parseCron('0 0 1-31 * 1').anyDayOfMonth).toBe(true);
+    expect(toSchedulerCron('0 0 1-31 * 1')).toBe('cron(0 0 ? * MON *)');
+  });
+});
+
 describe('identifiers', () => {
   it('derives a short, stable Scheduler name prefix per environment', () => {
     const prefix = schedulerNamePrefix('dev');
