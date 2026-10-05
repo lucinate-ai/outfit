@@ -1341,7 +1341,7 @@ func TestWorkBoard_RetryMovesAFailedCardBackToBacklog(t *testing.T) {
 	a := newWBAPI(t, []orchestrator.ItemView{wbItem("crank", orchestrator.StateFailed)}, nil)
 	m := newWBTestModel(t, a)
 	wbRound(t, m)
-	wbAct(t, m, "right", "t")
+	wbAct(t, m, "right", "t", "y")
 	if a.callCount("POST /v1/items/crank/retry") != 1 {
 		t.Fatal("the retry did not reach the API")
 	}
@@ -1358,7 +1358,7 @@ func TestWorkBoard_RetryOfAnItemThatHasNotFailedIsRefusedTheAPISWay(t *testing.T
 	a := newWBAPI(t, []orchestrator.ItemView{wbItem("solo", orchestrator.StateBacklog)}, nil)
 	m := newWBTestModel(t, a)
 	wbRound(t, m)
-	wbAct(t, m, "t")
+	wbAct(t, m, "t", "y")
 	if !strings.Contains(m.statusLine, `item "solo" is not failed`) {
 		t.Errorf("status = %q, want the API's own refusal", m.statusLine)
 	}
@@ -1390,5 +1390,34 @@ func TestWorkBoard_RetryIsNamedOnlyOnAFailedCard(t *testing.T) {
 		if got := strings.Contains(keys, "t retry"); got != want {
 			t.Errorf("%s card: keys %q, retry named = %v, want %v", state, keys, got, want)
 		}
+	}
+}
+
+func TestWorkBoard_RetryAsksFirst(t *testing.T) {
+	a := newWBAPI(t, []orchestrator.ItemView{wbItem("crank", orchestrator.StateFailed)}, nil)
+	m := newWBTestModel(t, a)
+	wbRound(t, m)
+	wbKeys(t, m, "right", "t")
+	footer := wbPlain(m.footerLine(m.effWidth(), m.boardKeys()))
+	if !strings.Contains(footer, `retry item "crank"?`) {
+		t.Errorf("the question did not stand: %q", footer)
+	}
+	if a.callCount("/retry") != 0 {
+		t.Error("the retry was sent before the yes")
+	}
+	wbKeys(t, m, "n")
+	if a.callCount("/retry") != 0 {
+		t.Error("a declined retry was sent anyway")
+	}
+	if !strings.Contains(m.statusLine, "nothing retried") {
+		t.Errorf("status = %q, want the declined line", m.statusLine)
+	}
+	if !strings.Contains(wbPlain(m.View()), "Failed 1") {
+		t.Error("the declined card left the Failed column")
+	}
+	// Escape abandons the question the same way.
+	wbKeys(t, m, "t", "esc")
+	if a.callCount("/retry") != 0 {
+		t.Error("an abandoned retry was sent anyway")
 	}
 }

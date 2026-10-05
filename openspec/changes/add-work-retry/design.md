@@ -52,7 +52,8 @@ id completion slot, and the message `item %q is back in the backlog`.
 
 **Board:** a `workRetry` verb beside `workAbort`/`workRemove`, bound to the
 `t` key (`r` is refresh). As with abort, there is no client-side state guard:
-the API's refusal is shown on the status line. The key hint adds `t retry`
+the API's refusal is shown on the status line. The key asks for a yes first, through the same on-screen question the
+removal uses (`y` sends, `n` or `esc` declines). The key hint adds `t retry`
 on a failed card. A failed card keeps `x remove`, so the hint code shows
 both there.
 

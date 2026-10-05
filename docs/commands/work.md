@@ -177,7 +177,8 @@ what the cursor stands on:
   `work logs -f` tails it, ending when the item ends or drops out.
   `esc` returns; the board cannot be quit from inside the detail.
 - `a` aborts a running item, `t` retries a failed one, `x` removes one that
-  is not running — the removal asks first, and declining sends nothing. A refusal from the API
+  is not running — the retry and the removal each ask first, and declining
+  sends nothing. A refusal from the API
   reads on the status line the way the API states it.
 - `n` opens the add form — the same add `work add` sends, through the
   API's add path. Its five fields stand before you at once (id,

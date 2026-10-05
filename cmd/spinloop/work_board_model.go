@@ -210,7 +210,7 @@ type workBoardModel struct {
 	formAsk  bool // the discard question stands in front of the form
 	form     workBoardForm
 
-	confirm bool // a removal stands in front of the board, waiting on its yes
+	confirm workBoardVerb // the action (remove or retry) standing in front of the board, waiting on its yes; empty when none
 
 	width, height int
 }
@@ -382,20 +382,25 @@ func (m *workBoardModel) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.updateFormKey(msg)
 	}
-	if m.confirm {
+	if m.confirm != "" {
 		switch msg.String() {
 		case "y":
 			v := m.selectedItem()
-			m.confirm = false
+			verb := m.confirm
+			m.confirm = ""
 			if v == nil {
 				return m, nil
 			}
-			return m, m.beginAction(workRemove, v.ID)
+			return m, m.beginAction(verb, v.ID)
 		case "n", "esc":
-			m.confirm = false
-			m.statusLine = "declined — nothing removed"
+			declined := "nothing removed"
+			if m.confirm == workRetry {
+				declined = "nothing retried"
+			}
+			m.confirm = ""
+			m.statusLine = "declined — " + declined
 		case "q", "ctrl+c":
-			m.confirm = false
+			m.confirm = ""
 			return m, tea.Quit
 		}
 		return m, nil
@@ -434,12 +439,12 @@ func (m *workBoardModel) updateBoardKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	case "t":
 		// As with abort, the API refuses a retry of what has not failed.
-		if v := m.selectedItem(); v != nil {
-			return m.beginAction(workRetry, v.ID)
+		if m.selectedItem() != nil {
+			m.confirm = workRetry
 		}
 	case "x":
 		if m.selectedItem() != nil {
-			m.confirm = true
+			m.confirm = workRemove
 		}
 	case "n":
 		m.formOpen = true
