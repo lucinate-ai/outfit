@@ -720,6 +720,7 @@ export class LlmStack extends cdk.Stack {
       memorySize: 256,
       logGroup: lambdaLogGroup('ScheduleFnLogGroup', 'schedule'),
       environment: {
+        CONTROL_PLANE_VERSION: cfg.controlPlaneVersion,
         SCHEDULE_GROUP: scheduleGroup.ref,
         SCHEDULER_ROLE_ARN: schedulerRole.roleArn,
         START_FN_ARN: startFn.functionArn,

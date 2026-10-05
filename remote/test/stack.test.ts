@@ -362,7 +362,9 @@ describe('LlmStack (control plane)', () => {
     );
     expect(schedule).toBeDefined();
     const vars = Object.keys(schedule.Properties.Environment.Variables).sort();
-    expect(vars).toEqual(['SCHEDULER_ROLE_ARN', 'SCHEDULE_GROUP', 'START_FN_ARN', 'STOP_FN_ARN'].sort());
+    expect(vars).toEqual(
+      ['CONTROL_PLANE_VERSION', 'SCHEDULER_ROLE_ARN', 'SCHEDULE_GROUP', 'START_FN_ARN', 'STOP_FN_ARN'].sort(),
+    );
 
     const statements = allPolicyStatements(template);
     const writes = statements.filter((s) => [s.Action].flat().includes('scheduler:CreateSchedule'));
