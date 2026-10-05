@@ -11,6 +11,7 @@ The gateway already coalesces concurrent wakes inside one gateway process, but t
 - A lock left behind by a start that never finished (the Lambda was killed) expires when that start would have timed out, and the next start takes it over.
 - The lock is an SSM parameter created only if absent, `/cloud-vm-llm/<env>/wake-lock`. The start Lambda's role gains `ssm:DeleteParameter` on that parameter name only.
 - Locks are per environment: starts for different environments do not wait for each other.
+- A start that sees its instance stopped, stopping or terminated after it has issued its start command now ends at once with a retryable reply, instead of polling until its deadline. Without this, a stop mid-start would leave the environment locked for up to 15 minutes. Stops themselves are not locked and never wait for a start.
 
 ## Capabilities
 
@@ -20,7 +21,7 @@ None.
 
 ### Modified Capabilities
 
-- `endpoint-lifecycle`: adds a requirement that concurrent starts of one environment are serialised and that a held or abandoned lock is handled as above. The existing "Starting on demand" behaviour is otherwise unchanged.
+- `endpoint-lifecycle`: adds requirements that concurrent starts of one environment are serialised, that a held or abandoned lock is handled as above, and that a start ends promptly when its instance is stopped under it. The existing "Starting on demand" behaviour is otherwise unchanged.
 
 ## Impact
 
