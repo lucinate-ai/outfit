@@ -45,6 +45,25 @@ A lock SHALL record when it expires, no earlier than the moment the start holdin
 - **WHEN** a start has held the lock for longer than a typical wake but not past its time limit
 - **THEN** another start does not take the lock over
 
+### Requirement: A stop during a start ends the start
+
+Once a start has launched the instance or issued the command to start it, and then sees the instance stopped, stopping, shutting down or terminated, the start SHALL end at once with a retryable reply that names the state it saw, and SHALL release the lock. It SHALL NOT keep polling an instance that is not coming up until its time limit. The reply SHALL be retryable so that a client still waiting on its start can ask again, which re-wakes the instance or launches a fresh one; a stop does not wait for, or take, the start's lock.
+
+#### Scenario: The instance is stopped after the start command
+
+- **WHEN** a start has issued the command to start a stopped instance and the instance is then stopped by a pause, a scheduled stop or the idle sweep
+- **THEN** the start ends promptly with a retryable reply naming the state, and the lock is released
+
+#### Scenario: The instance is terminated while the engine loads
+
+- **WHEN** an instance is terminated after it has reached running, while the start waits for the model to answer
+- **THEN** the start ends promptly with a retryable reply naming the state, and the lock is released
+
+#### Scenario: A stop is never refused because a start is running
+
+- **WHEN** a start holds the environment's lock and a pause, stop or scheduled stop for the environment arrives
+- **THEN** the stop is carried out and is not refused or delayed by the lock
+
 ### Requirement: A start does not proceed without its lock
 
 When the control plane cannot tell whether the lock is held, because the lock could not be read or written, the start SHALL NOT proceed to launch or re-wake. It SHALL reply with a retryable state and SHALL log the cause.
