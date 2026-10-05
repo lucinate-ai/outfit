@@ -4,8 +4,9 @@
 // the parsers here are ports of that Lambda's, kept value-for-value compatible
 // so the remote path can later delegate to a daemon running this code and the
 // TypeScript collectors can be deleted. Every stat is optional — a host
-// without a source for one (no nvidia-smi, say) simply omits it, which is how
-// a macOS node reports engine stats without GPU figures.
+// without a source for one (no nvidia-smi, say) simply omits it. A macOS node
+// reports GPU utilisation and name from the I/O Kit accelerator service, and
+// no GPU memory or temperature.
 package metrics
 
 // Stats is the collected state of one serving host: what is running, its
@@ -82,7 +83,9 @@ type TokenStats struct {
 	Requests *int `json:"requests,omitempty"`
 }
 
-// GpuStat holds per-GPU metrics from nvidia-smi.
+// GpuStat holds per-GPU metrics from nvidia-smi, or from the I/O Kit
+// accelerator on macOS, where MemoryUsed, MemoryTotal and Temperature are zero
+// because the host reports none.
 type GpuStat struct {
 	Index       int    `json:"index"`
 	Name        string `json:"name"`

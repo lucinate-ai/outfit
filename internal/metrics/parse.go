@@ -44,6 +44,62 @@ func ParseGPUStats(out string) []GpuStat {
 	return gpus
 }
 
+var (
+	// ioregServiceHeader matches the line that opens one service in
+	// `ioreg -r` output, e.g. "+-o AGXAcceleratorG16G  <class ...>".
+	ioregServiceHeader = regexp.MustCompile(`^\s*\+-o\s+(\S+)`)
+	// ioregModel matches the `"model" = "Apple M5 Max"` property.
+	ioregModel = regexp.MustCompile(`^\s*"model"\s*=\s*"([^"]*)"`)
+	// ioregUtilisation matches the device-wide utilisation figure inside a
+	// performance statistics dictionary: Apple's "Device Utilization %" and
+	// the AMD drivers' "Device Utilization (%)".
+	ioregUtilisation = regexp.MustCompile(`"Device Utilization (?:%|\(%\))"\s*=\s*(\d+)`)
+)
+
+// ParseIOAcceleratorGPU parses the output of
+//
+//	ioreg -rd1 -c IOAccelerator -w 0
+//
+// into one GpuStat per accelerator service that reports a device utilisation.
+// The name is the service's "model" property, falling back to the service
+// name; the index is the order of appearance. Memory and temperature are left
+// zero: Apple Silicon has no GPU memory total and temperature needs root. A
+// service with no utilisation figure contributes no GPU, and empty output
+// yields none.
+func ParseIOAcceleratorGPU(out string) []GpuStat {
+	var gpus []GpuStat
+	var service, model string
+	util := -1
+	flush := func() {
+		if util >= 0 {
+			name := model
+			if name == "" {
+				name = service
+			}
+			gpus = append(gpus, GpuStat{Index: len(gpus), Name: name, Utilization: util})
+		}
+		service, model, util = "", "", -1
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if m := ioregServiceHeader.FindStringSubmatch(line); m != nil {
+			flush()
+			service = m[1]
+			continue
+		}
+		if m := ioregModel.FindStringSubmatch(line); m != nil {
+			model = m[1]
+		}
+		if !strings.Contains(line, "erformance") {
+			continue
+		}
+		if m := ioregUtilisation.FindStringSubmatch(line); m != nil {
+			util = atoiOrZero(m[1])
+		}
+	}
+	flush()
+	return gpus
+}
+
 // ParseVmstatCPU parses `vmstat 1 2` output, whose last line is the sampled
 // interval. The idle column (id) is field 15 of the standard 17-column layout;
 // utilization is 100 - idle. Returns nil when the output is not vmstat's.

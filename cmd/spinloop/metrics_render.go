@@ -349,15 +349,13 @@ func currentGPUUtil(gpus []metrics.GpuStat, idx int) *float64 {
 	return nil
 }
 
-// currentGPUMem is the GPU's memory ratio from the current reading, 0 where
-// the GPU reports no total — the gauge's own rule for that case.
+// currentGPUMem is the GPU's memory ratio from the current reading, nil where
+// the reading names no such GPU or the GPU reports no memory total (macOS), so
+// no memory series is drawn for it unless retained history carries one.
 func currentGPUMem(gpus []metrics.GpuStat, idx int) *float64 {
 	for _, g := range gpus {
-		if g.Index == idx {
-			pct := 0.0
-			if g.MemoryTotal > 0 {
-				pct = float64(g.MemoryUsed) / float64(g.MemoryTotal) * 100
-			}
+		if g.Index == idx && g.MemoryTotal > 0 {
+			pct := float64(g.MemoryUsed) / float64(g.MemoryTotal) * 100
 			return &pct
 		}
 	}
@@ -453,8 +451,14 @@ func renderGPUTable(w io.Writer, gpus []metrics.GpuStat) {
 	}
 	fmt.Fprintln(w)
 	for _, g := range gpus {
-		fmt.Fprintf(w, "  GPU %d: %s  util=%d%%  mem=%s/%s  temp=%dC\n",
-			g.Index, g.Name, g.Utilization, formatBytes(g.MemoryUsed), formatBytes(g.MemoryTotal), g.Temperature)
+		fmt.Fprintf(w, "  GPU %d: %s  util=%d%%", g.Index, g.Name, g.Utilization)
+		if g.MemoryTotal > 0 {
+			fmt.Fprintf(w, "  mem=%s/%s", formatBytes(g.MemoryUsed), formatBytes(g.MemoryTotal))
+		}
+		if g.Temperature > 0 {
+			fmt.Fprintf(w, "  temp=%dC", g.Temperature)
+		}
+		fmt.Fprintln(w)
 	}
 	if len(gpus) > 1 {
 		var totalUtil, totalMemUsed, totalMemTotal int64
@@ -464,8 +468,11 @@ func renderGPUTable(w io.Writer, gpus []metrics.GpuStat) {
 			totalMemTotal += g.MemoryTotal
 		}
 		avgUtil := int(totalUtil) / len(gpus)
-		fmt.Fprintf(w, "  avg util: %d%%  total mem: %s/%s\n",
-			avgUtil, formatBytes(totalMemUsed), formatBytes(totalMemTotal))
+		fmt.Fprintf(w, "  avg util: %d%%", avgUtil)
+		if totalMemTotal > 0 {
+			fmt.Fprintf(w, "  total mem: %s/%s", formatBytes(totalMemUsed), formatBytes(totalMemTotal))
+		}
+		fmt.Fprintln(w)
 	}
 }
 
