@@ -72,6 +72,16 @@ spinloop remote keep 4h --env qwen3.6-27b  # the idle sweep won't touch it for 4
 spinloop remote restart --env qwen3.6-27b  # fresh engine, same address
 ```
 
+Work office hours? Let the cloud start and stop it for you:
+
+```sh
+spinloop remote schedule set --env qwen3.6-27b \
+  --start "0 8 * * 1-5" --stop "0 18 * * 1-5" --timezone Europe/London
+```
+
+It's up and warm by the time you sit down, and paused when you leave. See
+[`spinloop remote`](../commands/remote.md#starting-and-stopping-on-a-schedule).
+
 ## From another machine
 
 The environment is registered per user and per machine, so two machines that

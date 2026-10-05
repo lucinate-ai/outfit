@@ -70,6 +70,8 @@ spinloop remote stop ───────▶ stop Lambda        AWS_IAM auth   
 spinloop remote pause ──────▶  (stop, not terminate)                      │ engine on :8000
                                   ▲
 EventBridge rate(5 min) ─────────┘ (idle sweep: stop, then terminate)  ▼
+spinloop remote schedule ─▶ schedule Lambda ─▶ SSM list + EventBridge Scheduler (cron, time zone)
+                                     └─ fires start / stop Lambda for the env on each schedule
 coding agent ── OPENAI_BASE_URL=http://<env EIP>:8000/v1 + api key ──▶ direct HTTP
 ```
 
@@ -479,7 +481,11 @@ The Lambdas log every decision to CloudWatch. In the **stop** Lambda's log
 group, each 5-minute tick prints a JSON line — grep `"mode":"idle"` to see why
 it kept or terminated the instance (e.g. `"decision":"stop","reason":"idle for
 32.9 min"`, or `"reason":"retained until …"` when a `Retain-Until` tag is set).
-The **start** Lambda logs the launch AZ and each wake phase.
+The **start** Lambda logs the launch AZ and each wake phase. A schedule firing
+logs `"mode":"scheduled"`: in the start Lambda's group it carries the wake's
+result, and in the stop Lambda's group `"action":"stop"`, `"action":"noop"`, or
+`"action":"skip","reason":"retained"` when a `Retain-Until` deadline held the
+instance up.
 
 ## Security notes
 

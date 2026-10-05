@@ -302,7 +302,7 @@ spinloop harness open [<spinloop>] [-H <name>] [--spinloop[=<path>]] [args...]
                                           # launch the harness (a leading Spinloop or alias is
                                           #   applied first)
 spinloop completion <shell>                # tab completion (bash, zsh, powershell)
-spinloop remote <bootstrap|bake|start|pause|stop|restart|status|metrics|logs|deploy|env|ls|keep|seed> [path]
+spinloop remote <bootstrap|bake|start|pause|stop|restart|status|metrics|logs|deploy|env|ls|keep|schedule|seed> [path]
                                          # control the remote GPU inference instance
                                          #   (bootstrap does the once-per-account setup;
                                          #    bake bakes the runner AMI(s) it launches from;
@@ -310,6 +310,7 @@ spinloop remote <bootstrap|bake|start|pause|stop|restart|status|metrics|logs|dep
                                          #    pause stops it while keeping it re-wakeable;
                                          #    restart gives a fresh engine at the same address;
                                          #    keep holds it against the idle sweep;
+                                         #    schedule starts and stops it on cron times;
                                          #    logs reads the shipped logs, alive or not;
                                          #    env prints the running endpoint's env vars;
                                          #    seed fetches model weights into S3 as a
@@ -636,6 +637,8 @@ spinloop remote restart --env dev-2             # fresh engine, same address: st
                           # it, then wake it
 spinloop remote keep 4h --env dev-2             # hold it against the idle sweep
                           # for 4 hours (start --keep does the same at wake time)
+spinloop remote schedule set --env dev-2 --start "0 8 * * 1-5" --stop "0 18 * * 1-5"
+                          # start it at 08:00 and pause it at 18:00, Monday to Friday
 spinloop remote stop --env dev-2                # terminate now instead of waiting
                           # for the idle timer
 ```

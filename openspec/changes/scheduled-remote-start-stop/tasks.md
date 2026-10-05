@@ -32,6 +32,6 @@
 
 ## 6. Documentation and specs
 
-- [ ] 6.1 Update `docs/commands`, the remote guide and the control-plane HTTP API page
-- [ ] 6.2 Add a note to `docs/maintainer/internals.md` on the cron conversion and the Scheduler/SSM split
-- [ ] 6.3 Run `go test ./...`, `go vet ./...`, `gofmt`, and `pnpm test` in `remote/`
+- [x] 6.1 Update `docs/commands`, the remote guide, the README and `remote/README.md`
+- [x] 6.2 Add a note to `docs/maintainer/internals.md` on the cron conversion and the Scheduler/SSM split
+- [x] 6.3 Run `go test ./...`, `go vet ./...`, `gofmt`, and `pnpm test` in `remote/`
