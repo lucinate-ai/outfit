@@ -3,7 +3,7 @@
 Work the [orchestrator](orchestrator.md)'s work list — the backlog it works —
 from the shell, as a client of the [work list API](orchestrator.md#the-work-list-api)
 the orchestrator serves: add an item, read the work, read an item's kept
-output, stop a running item, remove an item — or watch the whole run on a
+output, stop a running item, re-queue a failed one, remove an item — or watch the whole run on a
 live board.
 
 ```sh
@@ -11,6 +11,7 @@ spinloop work add --url http://127.0.0.1:4010 --id fix-parser --instructions "fi
 spinloop work list --url http://127.0.0.1:4010
 spinloop work logs --url http://127.0.0.1:4010 fix-parser -f
 spinloop work abort --url http://127.0.0.1:4010 fix-parser
+spinloop work retry --url http://127.0.0.1:4010 fix-parser
 spinloop work remove --url http://127.0.0.1:4010 docs-refresh
 spinloop work board --url http://127.0.0.1:4010
 ```
@@ -117,6 +118,23 @@ naming it, and an item the run records `backlog`, `done` or `failed` is refused
 too, naming the item and its state. The API answers once the item is stopped,
 and the command reports its answer: a refusal reads the way the API states it.
 
+## Retrying a failed item
+
+```sh
+spinloop work retry --url http://127.0.0.1:4010 fix-parser
+```
+
+Puts a failed item back in the backlog through the API's retry path: its record
+is removed, and the run's next pass admits it again. The item's fields in the
+items file are unchanged, and its kept output from the failed attempt stays
+until the new attempt writes over it.
+
+Only a failed item can be retried: an id the file does not carry is refused,
+naming it, and an item the run records `backlog`, `running` or `done` is refused
+too, naming the item and its state. The API answers once the item is back in
+the backlog, and the command reports its answer: a refusal reads the way the
+API states it.
+
 ## Removing an item
 
 ```sh
@@ -158,8 +176,9 @@ what the cursor stands on:
   timings and failure reason, with its kept output tailed beneath as
   `work logs -f` tails it, ending when the item ends or drops out.
   `esc` returns; the board cannot be quit from inside the detail.
-- `a` aborts a running item, `x` removes one that is not — the removal
-  asks first, and declining sends nothing. A refusal from the API
+- `a` aborts a running item, `t` retries a failed one, `x` removes one that
+  is not running — the retry and the removal each ask first, and declining
+  sends nothing. A refusal from the API
   reads on the status line the way the API states it.
 - `n` opens the add form — the same add `work add` sends, through the
   API's add path. Its five fields stand before you at once (id,
@@ -185,8 +204,9 @@ work into a pipe.
   run owns.
 - It never runs an agent, and never starts or stops one: an abort asks the run
   to stop its agent, and the run's own grace bounds the stop.
-- It does not re-run an ended item. A `done` or `failed` record stands against
-  the id's re-add, the way the orchestrator's does.
+- It does not re-run a `done` item, and a `failed` one only when asked with
+  `work retry`. A `done` or `failed` record stands against the id's re-add,
+  the way the orchestrator's does.
 - An abort is a stop, not a cancel of the work: the item goes back to the
   backlog and is worked again on a later pass. To keep it out, remove it.
 
@@ -194,7 +214,7 @@ work into a pipe.
 
 | Flag | Meaning |
 | ---- | ------- |
-| `--url <address>` | The work list API's base address — `add`, `list`, `logs`, `abort`, `remove`, `board` |
+| `--url <address>` | The work list API's base address — `add`, `list`, `logs`, `abort`, `retry`, `remove`, `board` |
 | `--api-token <value>` | The work list API's bearer token — every subcommand |
 | `--api-token-file <path>` | The file the work list API's bearer token stands in — every subcommand |
 | `--id <id>` | The item's id — `add` |

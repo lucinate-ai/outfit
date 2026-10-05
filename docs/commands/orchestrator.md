@@ -143,6 +143,7 @@ shows in that state, not `backlog`.
 | `POST /v1/items` | Add an item to the file and the backlog: the file's validation on its fields, and the file stays a valid items file after the write. |
 | `DELETE /v1/items/{id}` | Take an item out of the work list: the items file, its record, and its kept output, all of it. |
 | `POST /v1/items/{id}/abort` | Stop a running item's agent the way a clean interrupt stops it — the polite signal, the grace, then the hard end — and put the item back in the backlog, where the run admits it again on a later pass. |
+| `POST /v1/items/{id}/retry` | Put a failed item back in the backlog: its record is removed, so the run admits it again on a later pass. The items file is unchanged and the failed attempt's output stays until the new attempt writes over it. |
 | Any other path or method | A `404` naming the paths the API serves. |
 
 The mutations refuse rather than force:
@@ -154,6 +155,9 @@ The mutations refuse rather than force:
   the abort that goes first — and a `404` where the file does not carry the id,
   naming it.
 - An **abort** is refused a `409` where the item is not running — naming the
+  item and its state — and a `404` where the file does not carry the id,
+  naming it.
+- A **retry** is refused a `409` where the item is not failed — naming the
   item and its state — and a `404` where the file does not carry the id,
   naming it.
 

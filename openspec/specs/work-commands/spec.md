@@ -4,11 +4,13 @@ Work the items of a running orchestrator from the shell — add an item, read
 the backlog, stop a running item, remove an item — as a client of the
 orchestrator's work list API: the commands name the API's address, present its
 token, and the run's view of the items is the source of truth.
+
 ## Requirements
+
 ### Requirement: The work commands as work list clients
 
 `spinloop work` SHALL be a top-level command group with the subcommands
-add, list, abort, remove, logs and board, each a client of the
+add, list, abort, retry, remove, logs and board, each a client of the
 orchestrator's work list API. Every subcommand SHALL take a `--url` flag
 naming the API's base address, and SHALL present the API's token as a
 bearer on every request it makes — resolved from `--api-token`, else
@@ -233,3 +235,30 @@ in: the API's call is the whole ask, and it answers once the item is out.
 - **WHEN** the operator removes an id the items file does not carry
 - **THEN** the API refuses, naming the id, and the command fails naming it
 
+### Requirement: Retrying a failed item through the work list API
+
+`spinloop work retry <id>` SHALL call the API's `POST /v1/items/{id}/retry`
+path to put a failed item back in the backlog, and report the API's answer:
+where the API accepts, the command SHALL say the item is back in the
+backlog; where it refuses — an item that is not failed, naming its state, or
+an id the run does not carry — the command SHALL fail naming the refusal the
+way the API states it. The command SHALL take exactly one id, and SHALL NOT
+itself check the item's state: the API is the one that holds it.
+
+#### Scenario: A failed item is retried
+
+- **WHEN** the operator runs `work retry` naming a failed item and the API
+  accepts
+- **THEN** the command says the item is back in the backlog
+
+#### Scenario: An item that has not failed is refused
+
+- **WHEN** the operator runs `work retry` naming an item that is running,
+  done, or backlog
+- **THEN** the API refuses, and the command fails naming the item and its
+  state
+
+#### Scenario: An id the run does not carry is refused
+
+- **WHEN** the operator runs `work retry` naming an id the API does not carry
+- **THEN** the command fails, naming the id, the way the API states it

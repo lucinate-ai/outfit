@@ -379,7 +379,7 @@ func padTo(line string, w int) string {
 }
 
 // footerLine is the board's bottom line: the keys that would do something
-// where the cursor stands, replaced by the removal question while one is
+// where the cursor stands, replaced by the removal or retry question while one is
 // pending and by an in-flight action's progress while a call is out; the
 // status line rides at the end.
 func (m workBoardModel) footerLine(w int, keys string) string {
@@ -387,13 +387,13 @@ func (m workBoardModel) footerLine(w int, keys string) string {
 	if m.action.verb != "" {
 		line = m.action.progress(workBoardNow())
 	}
-	if m.confirm {
+	if m.confirm != "" {
 		v := m.selectedItem()
 		id := ""
 		if v != nil {
 			id = fmt.Sprintf(" %q", v.ID)
 		}
-		line = "remove item" + id + "?" + dashHintGap +
+		line = string(m.confirm) + " item" + id + "?" + dashHintGap +
 			dashKeyHints("y yes"+dashHintGap+"n no")
 	}
 	if m.statusLine != "" {
@@ -406,8 +406,8 @@ func (m workBoardModel) footerLine(w int, keys string) string {
 }
 
 // boardKeys names the keys that would do something for what is selected:
-// abort is named only on a running card, remove only on one that is not,
-// detail only where there is an item to open.
+// abort is named only on a running card, retry only on a failed one, remove
+// only on one that is not running, detail only where there is an item to open.
 func (m workBoardModel) boardKeys() string {
 	parts := []string{}
 	cols := m.columnIndexes()
@@ -420,6 +420,9 @@ func (m workBoardModel) boardKeys() string {
 		if v.State == orchestrator.StateRunning {
 			parts = append(parts, "a abort")
 		} else {
+			if v.State == orchestrator.StateFailed {
+				parts = append(parts, "t retry")
+			}
 			parts = append(parts, "x remove")
 		}
 	}

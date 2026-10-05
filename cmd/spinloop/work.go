@@ -40,7 +40,7 @@ func workCmd() *cobra.Command {
 		Long: `works the orchestrator's work list — the backlog it works — from
 the shell, as a client of the work list API the orchestrator serves: add an
 item, read the work, read an item's kept output, stop a running item,
-remove an item.
+re-queue a failed item, remove an item.
 
 Each subcommand takes --url, the API's base address, and presents the API's
 token — from --api-token, else --api-token-file, else the SPINLOOP_API_TOKEN
@@ -53,6 +53,7 @@ fails before it calls the API, naming the flag.`,
 		workAddCmd(),
 		workListCmd(),
 		workAbortCmd(),
+		workRetryCmd(),
 		workRemoveCmd(),
 		workLogsCmd(),
 		workBoardCmd(),
@@ -375,6 +376,44 @@ the command reports its answer: a refusal reads the way the API states it.`,
 				return err
 			}
 			fmt.Printf("item %q stopped: it is back in the backlog\n", id)
+			return nil
+		},
+	}
+	fs := c.Flags()
+	workAPIFlags(fs, &base, &apiToken, &apiTokenFile)
+	c.ValidArgsFunction = itemIDSlot
+	return c
+}
+
+// workRetryCmd builds `work retry`.
+func workRetryCmd() *cobra.Command {
+	var base, apiToken, apiTokenFile string
+	c := &cobra.Command{
+		Use:   "retry <id>",
+		Short: "put a failed item back in the backlog",
+		Long: `puts a failed item back in the backlog, through the work list API
+the orchestrator serves: the item's record removed, and the run's next pass
+admits it again. The item's fields are unchanged, and its kept output stays
+until the new attempt writes over it.
+
+Only a failed item can be retried: an item the run records backlog, running
+or done is refused, naming the item and its state, and an id the file does
+not carry is refused, naming it. The API answers once the item is back in
+the backlog, and the command reports its answer: a refusal reads the way the
+API states it.`,
+		Args:          cobra.ExactArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(_ *cobra.Command, args []string) error {
+			id := args[0]
+			b, token, err := workTarget("work retry", base, apiToken, apiTokenFile)
+			if err != nil {
+				return err
+			}
+			if _, err := workRequest(b, token, http.MethodPost, "/v1/items/"+url.PathEscape(id)+"/retry", nil); err != nil {
+				return err
+			}
+			fmt.Printf("item %q is back in the backlog\n", id)
 			return nil
 		},
 	}

@@ -207,6 +207,49 @@ func TestWorkAbort_TheRefusalsReadTheWayTheAPIStatesThem(t *testing.T) {
 	}
 }
 
+func TestWorkRetry_CallsTheRetryPathAndReports(t *testing.T) {
+	base, got := workAPIStub(t, http.StatusOK, map[string]any{"ok": true, "id": "a"})
+	out, err := runWork(t, "retry", "a", "--url", base)
+	if err != nil {
+		t.Fatalf("the retry: %v (out %s)", err, out)
+	}
+	if !strings.Contains(out, `item "a" is back in the backlog`) {
+		t.Errorf("the retry reports the item back in the backlog: %s", out)
+	}
+	if got.method != "POST" || got.path != "/v1/items/a/retry" {
+		t.Errorf("the retry calls the API's retry path for the id: %s %s", got.method, got.path)
+	}
+}
+
+func TestWorkRetry_TheRefusalsReadTheWayTheAPIStatesThem(t *testing.T) {
+	base, _ := workAPIStub(t, http.StatusConflict,
+		workAPIErrorReply(`item "a" is not failed: it is running`))
+	_, err := runWork(t, "retry", "a", "--url", base)
+	if err == nil || !strings.Contains(err.Error(), "it is running") {
+		t.Errorf("a not-failed item is refused, naming its state: %v", err)
+	}
+
+	base, _ = workAPIStub(t, http.StatusNotFound,
+		workAPIErrorReply(`the items file carries no item with id "b"`))
+	_, err = runWork(t, "retry", "b", "--url", base)
+	if err == nil || !strings.Contains(err.Error(), `no item with id "b"`) {
+		t.Errorf("an id the file does not carry is refused, naming it: %v", err)
+	}
+}
+
+func TestWorkRetry_NeedsOneIDAndAnAddress(t *testing.T) {
+	if _, err := runWork(t, "retry", "--url", "http://127.0.0.1:1"); err == nil {
+		t.Error("retry with no id is refused")
+	}
+	if _, err := runWork(t, "retry", "a", "b", "--url", "http://127.0.0.1:1"); err == nil {
+		t.Error("retry with two ids is refused")
+	}
+	_, err := runWork(t, "retry", "a")
+	if err == nil || !strings.Contains(err.Error(), "--url") {
+		t.Errorf("retry with no address names the flag: %v", err)
+	}
+}
+
 func TestWorkList_PlainLinesInFileOrder(t *testing.T) {
 	reply := map[string]any{"object": "list", "data": []any{
 		map[string]any{"id": "a", "instructions": "do a", "dir": ".", "state": "backlog"},

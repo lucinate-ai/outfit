@@ -63,6 +63,7 @@ func (a *wbAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	list := func(v string) string {
 		tail := strings.TrimPrefix(r.URL.Path, "/v1/items/")
 		tail = strings.TrimSuffix(tail, "/log")
+		tail = strings.TrimSuffix(tail, "/retry")
 		return strings.TrimSuffix(tail, "/abort")
 	}
 	switch {
@@ -93,6 +94,25 @@ func (a *wbAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Tags: body.Tags, Priority: body.Priority, State: orchestrator.StateBacklog,
 		})
 		out(http.StatusOK, map[string]any{"ok": true})
+	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/retry"):
+		id := list(r.URL.Path)
+		for i := range a.items {
+			if a.items[i].ID == id {
+				if a.items[i].State != orchestrator.StateFailed {
+					out(http.StatusConflict, map[string]any{"error": map[string]string{
+						"message": fmt.Sprintf("item %q is not failed: it is %s", id, a.items[i].State),
+					}})
+					return
+				}
+				a.items[i].State = orchestrator.StateBacklog
+				a.items[i].Node, a.items[i].EndedAt, a.items[i].Why = "", "", ""
+				out(http.StatusOK, map[string]any{"ok": true})
+				return
+			}
+		}
+		out(http.StatusNotFound, map[string]any{"error": map[string]string{
+			"message": fmt.Sprintf("the work list does not carry item %q", id),
+		}})
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/abort"):
 		id := list(r.URL.Path)
 		for i := range a.items {
@@ -1315,4 +1335,89 @@ func TestWorkBoard_ProgramSmoke(t *testing.T) {
 	feed.until(t, "Backlog 2")
 	tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
 	tm.WaitFinished(t, teatest.WithFinalTimeout(3*time.Second))
+}
+
+func TestWorkBoard_RetryMovesAFailedCardBackToBacklog(t *testing.T) {
+	a := newWBAPI(t, []orchestrator.ItemView{wbItem("crank", orchestrator.StateFailed)}, nil)
+	m := newWBTestModel(t, a)
+	wbRound(t, m)
+	wbAct(t, m, "right", "t", "y")
+	if a.callCount("POST /v1/items/crank/retry") != 1 {
+		t.Fatal("the retry did not reach the API")
+	}
+	if !strings.Contains(m.statusLine, `item "crank" is back in the backlog`) {
+		t.Errorf("status = %q, want the retried line", m.statusLine)
+	}
+	view := wbPlain(m.View())
+	if !strings.Contains(view, "Failed 0") || !strings.Contains(view, "Backlog 1") {
+		t.Errorf("the card did not move back:\n%s", view)
+	}
+}
+
+func TestWorkBoard_RetryOfAnItemThatHasNotFailedIsRefusedTheAPISWay(t *testing.T) {
+	a := newWBAPI(t, []orchestrator.ItemView{wbItem("solo", orchestrator.StateBacklog)}, nil)
+	m := newWBTestModel(t, a)
+	wbRound(t, m)
+	wbAct(t, m, "t", "y")
+	if !strings.Contains(m.statusLine, `item "solo" is not failed`) {
+		t.Errorf("status = %q, want the API's own refusal", m.statusLine)
+	}
+	if !strings.Contains(wbPlain(m.View()), "solo") {
+		t.Error("the refusal took the board down with it")
+	}
+}
+
+func TestWorkBoard_RetryIsNamedOnlyOnAFailedCard(t *testing.T) {
+	cases := map[string]bool{
+		orchestrator.StateBacklog: false,
+		orchestrator.StateRunning: false,
+		orchestrator.StateDone:    false,
+		orchestrator.StateFailed:  true,
+	}
+	for state, want := range cases {
+		a := newWBAPI(t, []orchestrator.ItemView{wbItem("solo", state)}, nil)
+		m := newWBTestModel(t, a)
+		wbRound(t, m)
+		keys := m.boardKeys()
+		if m.selectedItem() == nil {
+			wbKeys(t, m, "right")
+			keys = m.boardKeys()
+		}
+		for i := 0; i < 3 && m.selectedItem() == nil; i++ {
+			wbKeys(t, m, "right")
+			keys = m.boardKeys()
+		}
+		if got := strings.Contains(keys, "t retry"); got != want {
+			t.Errorf("%s card: keys %q, retry named = %v, want %v", state, keys, got, want)
+		}
+	}
+}
+
+func TestWorkBoard_RetryAsksFirst(t *testing.T) {
+	a := newWBAPI(t, []orchestrator.ItemView{wbItem("crank", orchestrator.StateFailed)}, nil)
+	m := newWBTestModel(t, a)
+	wbRound(t, m)
+	wbKeys(t, m, "right", "t")
+	footer := wbPlain(m.footerLine(m.effWidth(), m.boardKeys()))
+	if !strings.Contains(footer, `retry item "crank"?`) {
+		t.Errorf("the question did not stand: %q", footer)
+	}
+	if a.callCount("/retry") != 0 {
+		t.Error("the retry was sent before the yes")
+	}
+	wbKeys(t, m, "n")
+	if a.callCount("/retry") != 0 {
+		t.Error("a declined retry was sent anyway")
+	}
+	if !strings.Contains(m.statusLine, "nothing retried") {
+		t.Errorf("status = %q, want the declined line", m.statusLine)
+	}
+	if !strings.Contains(wbPlain(m.View()), "Failed 1") {
+		t.Error("the declined card left the Failed column")
+	}
+	// Escape abandons the question the same way.
+	wbKeys(t, m, "t", "esc")
+	if a.callCount("/retry") != 0 {
+		t.Error("an abandoned retry was sent anyway")
+	}
 }
