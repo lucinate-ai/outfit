@@ -167,6 +167,13 @@ The gateway needs the same environment a machine running
 `spinloop fleet start` would: the tokens the fleet file names, set in its
 process environment or in a `.env` beside the fleet file.
 
+### Request size
+
+A completion request body is read in full or refused. The limit is 64 MiB by
+default, set with `--max-request-bytes`. A larger body is answered `413`, naming
+the limit and the flag, and nothing is sent to an engine. A long-context model
+fed whole conversations may need the limit raised.
+
 ## The gateway's token
 
 Callers present the gateway's token as a bearer token on every request — a
@@ -196,6 +203,7 @@ on a shared machine wants, and the reason the token is not optional there.
 | `--api-token-file` | Read the gateway's bearer token from this file |
 | `--api-token` | The gateway's bearer token |
 | `--wake-timeout` | How long to wait for a woken engine to answer (default 5m) |
+| `--max-request-bytes` | The largest completion request body to accept, in bytes (default 67108864, 64 MiB); a larger one is answered `413` |
 
 ## See also
 

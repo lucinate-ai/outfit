@@ -27,6 +27,7 @@ import (
 func gatewayCmd() *cobra.Command {
 	var fleetPath, listen, apiToken, apiTokenFile string
 	var wakeTimeout time.Duration
+	var maxRequestBytes int64
 	var loopback bool
 	c := &cobra.Command{
 		Use:   "gateway",
@@ -51,7 +52,7 @@ The agent then needs only the gateway's token, as OPENAI_API_KEY.`,
 		SilenceUsage:  true,
 		RunE: func(c *cobra.Command, args []string) error {
 			resolve(c)
-			return runGatewayCommand(fleetPath, listen, apiToken, apiTokenFile, wakeTimeout, loopback, c.Flags())
+			return runGatewayCommand(fleetPath, listen, apiToken, apiTokenFile, wakeTimeout, maxRequestBytes, loopback, c.Flags())
 		},
 	}
 	fs := c.Flags()
@@ -61,6 +62,7 @@ The agent then needs only the gateway's token, as OPENAI_API_KEY.`,
 	fs.StringVar(&apiTokenFile, "api-token-file", "", "read the gateway's bearer token from this file")
 	fs.StringVar(&apiToken, "api-token", "", "the gateway's bearer token")
 	fs.DurationVar(&wakeTimeout, "wake-timeout", 0, "how long to wait for a woken engine to answer")
+	fs.Int64Var(&maxRequestBytes, "max-request-bytes", gateway.DefaultMaxRequestBytes, "the largest completion request body to accept, in bytes")
 	compRegister(c, "fleet", compFiles)
 	return c
 }
@@ -70,7 +72,7 @@ func cmdGateway(args []string) error { return execCmd(gatewayCmd(), args) }
 
 // runGatewayCommand is the body of `spinloop gateway`: the server, and the
 // signal handling that shuts it down cleanly.
-func runGatewayCommand(fleetPath, listen, apiToken, apiTokenFile string, wakeTimeout time.Duration, loopback bool, flags *pflag.FlagSet) error {
+func runGatewayCommand(fleetPath, listen, apiToken, apiTokenFile string, wakeTimeout time.Duration, maxRequestBytes int64, loopback bool, flags *pflag.FlagSet) error {
 	// Whether --listen was typed at all, not whether it differs from the
 	// default: --listen :4000 --loopback is still a conflict, and a
 	// compare-against-default check would let it pass.
@@ -88,7 +90,10 @@ func runGatewayCommand(fleetPath, listen, apiToken, apiTokenFile string, wakeTim
 		restore = func() { fleet.WakeTimeout = prev }
 		defer restore()
 	}
-	srv, ln, err := newGatewayServer(fleetPath, listen, apiToken, apiTokenFile)
+	if maxRequestBytes < 1 {
+		return fmt.Errorf("--max-request-bytes must be at least 1, got %d", maxRequestBytes)
+	}
+	srv, ln, err := newGatewayServer(fleetPath, listen, apiToken, apiTokenFile, maxRequestBytes)
 	if err != nil {
 		return err
 	}
@@ -128,7 +133,7 @@ func gatewayListenAddr(listen string, listenExplicit, loopback bool) (string, er
 // file's token references the way a startup must, opens the listener, and
 // prints the address a fleet file's gateway section names. Everything that can
 // fail without serving fails here, before a listener exists.
-func newGatewayServer(fleetPath, listen, apiToken, apiTokenFile string) (*http.Server, net.Listener, error) {
+func newGatewayServer(fleetPath, listen, apiToken, apiTokenFile string, maxRequestBytes int64) (*http.Server, net.Listener, error) {
 	cfg, err := fleet.Resolve(fleetPath)
 	if err != nil {
 		return nil, nil, err
@@ -176,7 +181,7 @@ func newGatewayServer(fleetPath, listen, apiToken, apiTokenFile string) (*http.S
 		return deployConfigForNode(sel, path)
 	}
 
-	h := gateway.New(cfg, token, gateway.Options{ConfigFor: cfgFor, Log: logger})
+	h := gateway.New(cfg, token, gateway.Options{ConfigFor: cfgFor, Log: logger, MaxRequestBytes: maxRequestBytes})
 	ln, err := gateway.Listen(listen, token)
 	if err != nil {
 		return nil, nil, err

@@ -28,7 +28,7 @@ func TestGatewayStartsAndAnswers(t *testing.T) {
 	var ln net.Listener
 	out := captureStdout(t, func() {
 		var err error
-		srv, ln, err = newGatewayServer("", "127.0.0.1:0", "", "")
+		srv, ln, err = newGatewayServer("", "127.0.0.1:0", "", "", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +68,7 @@ func TestGatewayStartsAndAnswers(t *testing.T) {
 // A missing fleet file fails naming the expected path, and nothing listens.
 func TestGatewayFailsWithoutAFleetFile(t *testing.T) {
 	t.Chdir(t.TempDir())
-	_, ln, err := newGatewayServer("", "127.0.0.1:0", "", "")
+	_, ln, err := newGatewayServer("", "127.0.0.1:0", "", "", 0)
 	if err == nil {
 		t.Fatal("a gateway with no fleet file should fail")
 	}
@@ -87,7 +87,7 @@ func TestGatewayFailsOnAnUnsetTokenVariable(t *testing.T) {
 	fleetFileIn(t, dir, "nodes:\n  - name: gated\n    host: 127.0.0.1\n    port: 14242\n    tokenEnv: GW_NODE_TOKEN_UNSET\n")
 	t.Chdir(dir)
 
-	_, ln, err := newGatewayServer("", "127.0.0.1:0", "", "")
+	_, ln, err := newGatewayServer("", "127.0.0.1:0", "", "", 0)
 	if err == nil {
 		t.Fatal("an unset token variable should fail the gateway at startup")
 	}
@@ -109,7 +109,7 @@ func TestGatewayTokenSourcesConflict(t *testing.T) {
 
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	mustWrite(t, tokenFile, "from-file\n")
-	_, _, err := newGatewayServer("", "127.0.0.1:0", "literal", tokenFile)
+	_, _, err := newGatewayServer("", "127.0.0.1:0", "literal", tokenFile, 0)
 	if err == nil {
 		t.Fatal("two token sources should be a conflict")
 	}
@@ -126,7 +126,7 @@ func TestGatewayRefusesTokenlessNonLoopback(t *testing.T) {
 	t.Chdir(dir)
 	t.Setenv("SPINLOOP_API_TOKEN", "")
 
-	_, ln, err := newGatewayServer("", "0.0.0.0:0", "", "")
+	_, ln, err := newGatewayServer("", "0.0.0.0:0", "", "", 0)
 	if err == nil {
 		t.Fatal("a tokenless non-loopback gateway should refuse to start")
 	}
@@ -272,5 +272,12 @@ func TestFleetURL(t *testing.T) {
 		if url := fleetURL(got); url != want {
 			t.Errorf("fleetURL(%q) = %q, want %q", got, url, want)
 		}
+	}
+}
+
+func TestGatewayRefusesANonPositiveRequestLimit(t *testing.T) {
+	err := cmdGateway([]string{"--max-request-bytes", "0"})
+	if err == nil || !strings.Contains(err.Error(), "--max-request-bytes") {
+		t.Fatalf("got %v, want an error naming --max-request-bytes", err)
 	}
 }
