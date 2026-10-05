@@ -428,7 +428,10 @@ func renderStatGauges(w io.Writer, cpu *metrics.CpuStat, mem *metrics.MemoryStat
 }
 
 // renderTokenLines draws the engine's token and request counters, the block
-// both formats share.
+// both formats share. Each line is drawn only for a figure the statistics
+// carry: the request count is absent, not zero, for an engine family whose
+// metrics expose no cumulative request counter, so the line is that
+// figure's to omit, not the renderer's to keep drawing.
 func renderTokenLines(w io.Writer, tokens *metrics.TokenStats) {
 	if tokens == nil {
 		return
@@ -437,7 +440,9 @@ func renderTokenLines(w io.Writer, tokens *metrics.TokenStats) {
 	fmt.Fprintf(w, "  running:          %d\n", tokens.Running)
 	fmt.Fprintf(w, "  prompt tokens:    %d\n", tokens.PromptTokens)
 	fmt.Fprintf(w, "  generation tokens: %d\n", tokens.GenerationTokens)
-	fmt.Fprintf(w, "  requests:         %d\n", tokens.Requests)
+	if tokens.Requests != nil {
+		fmt.Fprintf(w, "  requests:         %d\n", *tokens.Requests)
+	}
 }
 
 // renderGPUTable draws the per-GPU lines of the table format, plus the

@@ -13,6 +13,8 @@ import (
 
 func ptrPct(v float64) *float64 { return &v }
 
+func ptrInt(v int) *int { return &v }
+
 func TestBarGlyph(t *testing.T) {
 	cases := []struct {
 		pct  float64
@@ -485,7 +487,7 @@ func TestFormatMetricsBarRunning(t *testing.T) {
 		CPU:    &metrics.CpuStat{Utilization: 62},
 		Memory: &metrics.MemoryStat{Total: 1000, Used: 300},
 		GPUs:   []metrics.GpuStat{{Index: 0, Name: "H100", Utilization: 61, MemoryUsed: 80, MemoryTotal: 160}},
-		Tokens: &remote.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: 17},
+		Tokens: &remote.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: ptrInt(17)},
 		History: []metrics.HistorySample{
 			{Time: 1, CPU: ptrPct(10), Mem: ptrPct(20), GPUs: []metrics.HistoryGPU{{Index: 0, Util: 50, Mem: ptrPct(50)}}},
 			{Time: 2, CPU: ptrPct(20), Mem: ptrPct(30), GPUs: []metrics.HistoryGPU{{Index: 0, Util: 61, Mem: ptrPct(50)}}},
@@ -513,6 +515,27 @@ func TestFormatMetricsBarRunning(t *testing.T) {
 	}
 	if !strings.Contains(got, "  running:          2\n") || !strings.Contains(got, "  requests:         17\n") {
 		t.Errorf("token block missing: %q", got)
+	}
+}
+
+// An engine family whose metrics expose no cumulative request counter yields
+// statistics without the figure, and the token block draws no line for it.
+func TestFormatMetricsBarNoRequestCount(t *testing.T) {
+	resp := &remote.StatsResponse{
+		Environment: "prod", State: "running", InstanceType: "g5.xlarge",
+		ModelID: "org/qwen:q4", Version: "0.4.3",
+		Tokens: &remote.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024},
+	}
+	var b bytes.Buffer
+	if err := renderFleetMetrics(&b, nodeResultsFor(resp), "bar"); err != nil {
+		t.Fatal(err)
+	}
+	got := b.String()
+	if !strings.Contains(got, "  running:          2\n") {
+		t.Errorf("running line missing: %q", got)
+	}
+	if strings.Contains(got, "  requests:") {
+		t.Errorf("requests line drawn for an engine that exposes no request count: %q", got)
 	}
 }
 

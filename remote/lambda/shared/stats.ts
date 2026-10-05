@@ -35,8 +35,12 @@ export interface TokenStats {
   promptTokens: number;
   /** Total generation/predicted tokens. */
   generationTokens: number;
-  /** Total successful requests. */
-  requests: number;
+  /**
+   * The engine's cumulative request counter, present only where the engine
+   * exposes one — vLLM's request_success_total. Absent for an engine family
+   * whose metrics carry no cumulative request count (llama.cpp's, today).
+   */
+  requests?: number;
 }
 
 /**

@@ -27,7 +27,9 @@ resources:
         llamacpp:n_decode_total 900
         llamacpp:requests_processing 2
         llamacpp:requests_deferred 1
-        llamacpp:request_success_total 17
+        # No cumulative request counter: a real llama.cpp server serves none,
+        # and spinloop reports no requests figure for an engine that exposes
+        # none.
 
   # An OpenAI-compatible route, so the node looks like a real endpoint if you
   # curl it while exploring.

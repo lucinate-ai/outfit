@@ -481,6 +481,12 @@ components:
           type: integer
         requests:
           type: integer
+          description: |
+            The engine's cumulative request counter, present only where the
+            engine exposes one — vLLM's request_success_total. Absent for an
+            engine family whose metrics carry no cumulative request count
+            (llama.cpp's, today): a missing figure is not a zero, it is a
+            counter the engine never produced.
 
     GpuStat:
       type: object

@@ -127,7 +127,8 @@ func TestStatusFromRemote(t *testing.T) {
 }
 
 func TestStatsFromRemote(t *testing.T) {
-	tokens := &metrics.TokenStats{Running: 2, PromptTokens: 5, GenerationTokens: 7, Requests: 3}
+	requests := 3
+	tokens := &metrics.TokenStats{Running: 2, PromptTokens: 5, GenerationTokens: 7, Requests: &requests}
 	cpuPct := 30.0
 	history := []metrics.HistorySample{{Time: 1, CPU: &cpuPct, GPUs: []metrics.HistoryGPU{{Index: 0, Util: 61, Mem: &cpuPct}}}}
 	got := statsFromRemote(remote.StatsResponse{
@@ -139,7 +140,7 @@ func TestStatsFromRemote(t *testing.T) {
 	if got.State != "running" || got.Runner != "llamacpp" || got.ModelID != "org/m" || got.UptimeSeconds != 10 {
 		t.Errorf("statsFromRemote = %+v", got)
 	}
-	if got.Tokens == nil || got.Tokens.Running != 2 || got.Tokens.Requests != 3 {
+	if got.Tokens == nil || got.Tokens.Running != 2 || got.Tokens.Requests == nil || *got.Tokens.Requests != 3 {
 		t.Errorf("token stats not carried over: %+v", got.Tokens)
 	}
 	if got.IdleSeconds != 5 || got.LastActiveAt == "" {
@@ -521,7 +522,7 @@ func TestRemoteNodeStartStopMetricsOverTheControlPlane(t *testing.T) {
 	if err != nil || stats.State != "running" || stats.ModelID != "org/m" {
 		t.Errorf("Metrics = %+v, %v", stats, err)
 	}
-	if stats.Tokens == nil || stats.Tokens.Running != 1 || stats.Tokens.Requests != 2 {
+	if stats.Tokens == nil || stats.Tokens.Running != 1 || stats.Tokens.Requests == nil || *stats.Tokens.Requests != 2 {
 		t.Errorf("metrics tokens not mapped: %+v", stats.Tokens)
 	}
 	stopped, err := node.Stop(ctx)

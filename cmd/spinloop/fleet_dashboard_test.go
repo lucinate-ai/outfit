@@ -81,7 +81,7 @@ func (f *fakeDashNode) Metrics(ctx context.Context) (metrics.Stats, error) {
 		s.UptimeSeconds = 60
 		s.CPU = &metrics.CpuStat{Utilization: 42}
 		s.GPUs = []metrics.GpuStat{{Index: 0, Name: "H100", Utilization: 10, MemoryUsed: 1, MemoryTotal: 10}}
-		s.Tokens = &metrics.TokenStats{Running: 1, PromptTokens: 100, GenerationTokens: 50, Requests: 3}
+		s.Tokens = &metrics.TokenStats{Running: 1, PromptTokens: 100, GenerationTokens: 50, Requests: ptrInt(3)}
 	}
 	return s, nil
 }
@@ -349,7 +349,7 @@ func TestDashTileRunningByteStable(t *testing.T) {
 			CPU:    &metrics.CpuStat{Utilization: 42},
 			Memory: &metrics.MemoryStat{Total: 1000, Used: 300},
 			GPUs:   []metrics.GpuStat{{Index: 0, Name: "H100", Utilization: 61, MemoryUsed: 80, MemoryTotal: 160}},
-			Tokens: &metrics.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: 17},
+			Tokens: &metrics.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: ptrInt(17)},
 		},
 	}
 	want := dashTileExpected([]string{
@@ -365,6 +365,41 @@ func TestDashTileRunningByteStable(t *testing.T) {
 		"  prompt tokens:    4096",
 		"  generation tokens: 1024",
 		"  requests:         17",
+	})
+	if got := dashTestTile("up", r, false, dashAction{}); got != want {
+		t.Errorf("tile mismatch:\ngot:\n%q\nwant:\n%q", got, want)
+	}
+}
+
+// A llamacpp node's statistics carry no request figure, and the tile draws no
+// line for it — the block keeps its height, and the space the line would have
+// taken stays blank.
+func TestDashTileRunningNoRequestCount(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.Ascii)
+	r := fleet.NodeResult{
+		Name: "up", Outcome: fleet.OutcomeOK,
+		Metrics: metrics.Stats{
+			State: "running", Runner: "llamacpp", ModelID: "org/qwen:q4",
+			UptimeSeconds: 7200, LastActiveAt: "2026-08-21T10:00:00Z", IdleSeconds: 12,
+			CPU:    &metrics.CpuStat{Utilization: 42},
+			Memory: &metrics.MemoryStat{Total: 1000, Used: 300},
+			GPUs:   []metrics.GpuStat{{Index: 0, Name: "H100", Utilization: 61, MemoryUsed: 80, MemoryTotal: 160}},
+			Tokens: &metrics.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024},
+		},
+	}
+	want := dashTileExpected([]string{
+		dashExpectedHeader("up  running  (up 2h 0m 0s)", dashHealthy),
+		"llamacpp  org/qwen:q4",
+		"  active    12s ago",
+		dashBar("CPU", 42),
+		dashBar("RAM", 30),
+		dashBar("GPU util", 61),
+		dashBar("GPU mem", 50),
+		"",
+		"  running:          2",
+		"  prompt tokens:    4096",
+		"  generation tokens: 1024",
+		"",
 	})
 	if got := dashTestTile("up", r, false, dashAction{}); got != want {
 		t.Errorf("tile mismatch:\ngot:\n%q\nwant:\n%q", got, want)
@@ -896,7 +931,7 @@ func TestDashTileTruncatesTallContent(t *testing.T) {
 			CPU:           &metrics.CpuStat{Utilization: 42},
 			Memory:        &metrics.MemoryStat{Total: 1000, Used: 300},
 			GPUs:          gpus,
-			Tokens:        &metrics.TokenStats{Running: 1, PromptTokens: 100, GenerationTokens: 50, Requests: 3},
+			Tokens:        &metrics.TokenStats{Running: 1, PromptTokens: 100, GenerationTokens: 50, Requests: ptrInt(3)},
 		},
 	}
 	lines := strings.Split(dashTestTile("many", r, false, dashAction{}), "\n")
@@ -3370,7 +3405,7 @@ func dashHistoryNode() fleet.NodeResult {
 			CPU:    &metrics.CpuStat{Utilization: 42},
 			Memory: &metrics.MemoryStat{Total: 1000, Used: 300},
 			GPUs:   []metrics.GpuStat{{Index: 0, Name: "H100", Utilization: 61, MemoryUsed: 80, MemoryTotal: 160}},
-			Tokens: &metrics.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: 17},
+			Tokens: &metrics.TokenStats{Running: 2, PromptTokens: 4096, GenerationTokens: 1024, Requests: ptrInt(17)},
 			History: []metrics.HistorySample{
 				{Time: 1786276800, CPU: ptrPct(10), Mem: ptrPct(20), GPUs: []metrics.HistoryGPU{{Index: 0, Util: 50, Mem: ptrPct(40)}}},
 				{Time: 1786276815, CPU: ptrPct(20), Mem: ptrPct(30), GPUs: []metrics.HistoryGPU{{Index: 0, Util: 61, Mem: ptrPct(50)}}},

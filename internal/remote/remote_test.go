@@ -1276,7 +1276,7 @@ func TestStats_Success(t *testing.T) {
 	if resp.RetainUntil != "2026-01-02T04:00:00Z" {
 		t.Errorf("retainUntil not decoded: %q", resp.RetainUntil)
 	}
-	if resp.Tokens == nil || resp.Tokens.Requests != 342 {
+	if resp.Tokens == nil || resp.Tokens.Requests == nil || *resp.Tokens.Requests != 342 {
 		t.Errorf("unexpected tokens: %+v", resp.Tokens)
 	}
 	if len(resp.GPUs) != 1 || resp.GPUs[0].Utilization != 85 {

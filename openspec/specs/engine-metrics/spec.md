@@ -18,10 +18,14 @@ shape is kept value-for-value compatible with what the existing
 
 The system SHALL collect token and request statistics from a running engine by
 querying the engine's own metrics endpoint over HTTP on the engine's serving
-address. The collected statistics SHALL include prompt and generated token
-counts and request counts as exposed by the engine. When the engine requires
-API-key authentication for its metrics endpoint, the collector SHALL
-authenticate with the key the engine was started with.
+address. The collected statistics SHALL include the prompt and generated token
+counts as the engine exposes them, and the engine's cumulative request count
+where the engine exposes one. A request count the engine's metrics do not
+expose SHALL be absent from the collected statistics rather than reported as
+zero: every stat is optional by design, and a figure no source produced is not
+a zero. When the engine requires API-key authentication for its metrics
+endpoint, the collector SHALL authenticate with the key the engine was
+started with.
 
 The serving address SHALL be the one the engine was actually told to bind:
 when the engine's command states a host or port, those SHALL determine where
@@ -41,8 +45,15 @@ back to a configured base URL, and failing that to the engine's default.
 
 - **WHEN** metrics are collected while a supervised engine is running and
   serving requests
-- **THEN** the result includes the engine's prompt token, generated token, and
-  request counts
+- **THEN** the result includes the engine's prompt token and generated token
+  counts, and its request count where the engine's metrics expose one
+
+#### Scenario: An engine without a request counter omits the figure
+
+- **WHEN** metrics are collected from an engine whose metrics expose no
+  cumulative request count
+- **THEN** the result omits the request count rather than reporting zero, and
+  the figures the engine does expose are present
 
 #### Scenario: The engine's own arguments locate it
 

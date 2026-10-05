@@ -155,14 +155,20 @@ func ParseVMStatMemory(memsize, vmStat string) *MemoryStat {
 }
 
 // engineSpec names the Prometheus metrics one engine family exposes: the
-// prefix on every metric, the gauges that count in-flight work, and the
-// cumulative counters. The names mirror the stats Lambda's runner-aware
-// scrape (remote/lambda/shared/idle.ts) exactly.
+// prefix on every metric, the gauges that count in-flight work, the
+// cumulative counters, and — where the family exposes one — the cumulative
+// counter that carries its request count. The names mirror the stats
+// Lambda's runner-aware scrape (remote/lambda/shared/idle.ts) exactly.
 type engineSpec struct {
 	prefix     string
 	running    map[string]bool
 	counters   map[string]bool
 	generation string
+	// requests is the family's cumulative request counter, or "" where the
+	// family's metrics carry none: llama.cpp's serve no request counter at
+	// all, so a family that named a shared one would read a metric no
+	// engine serves.
+	requests string
 }
 
 var engineSpecs = map[string]engineSpec{
@@ -171,6 +177,7 @@ var engineSpecs = map[string]engineSpec{
 		running:    map[string]bool{"num_requests_running": true, "num_requests_waiting": true},
 		counters:   map[string]bool{"prompt_tokens_total": true, "generation_tokens_total": true, "request_success_total": true},
 		generation: "generation_tokens_total",
+		requests:   "request_success_total",
 	},
 	"llamacpp": {
 		prefix:     "llamacpp",
@@ -219,13 +226,20 @@ func ParseTokenStats(out, engine string) *TokenStats {
 	if !matched {
 		return nil
 	}
-	return &TokenStats{
+	tokens := &TokenStats{
 		Running:          int(running),
 		Counter:          int(counter),
 		PromptTokens:     extractCounter(out, spec, "prompt_tokens_total"),
 		GenerationTokens: extractCounter(out, spec, spec.generation),
-		Requests:         extractCounter(out, spec, "request_success_total"),
 	}
+	// Set only where the family names a request counter: a missing figure
+	// is "the engine exposes none", distinct from the zero an engine that
+	// does expose one reports before it has served anything.
+	if spec.requests != "" {
+		requests := extractCounter(out, spec, spec.requests)
+		tokens.Requests = &requests
+	}
+	return tokens
 }
 
 // extractCounter pulls a single named counter out of the raw scrape, matching

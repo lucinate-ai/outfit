@@ -39,8 +39,9 @@ resources:
         llamacpp:requests_processing 2
         # HELP llamacpp:requests_deferred Number of deferred requests.
         llamacpp:requests_deferred 1
-        # HELP llamacpp:request_success_total Number of successful requests.
-        llamacpp:request_success_total 17
+        # No cumulative request counter: a real llama.cpp server serves none,
+        # and spinloop reports no requests figure for an engine that exposes
+        # none.
 
   - path: /v1/models
     method: GET

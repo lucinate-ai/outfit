@@ -72,7 +72,14 @@ type TokenStats struct {
 	Counter          int `json:"counter"`
 	PromptTokens     int `json:"promptTokens"`
 	GenerationTokens int `json:"generationTokens"`
-	Requests         int `json:"requests"`
+	// Requests is the engine's cumulative request counter, present only
+	// where the engine family's metrics expose one — vLLM's
+	// request_success_total, today. A family whose metrics carry no
+	// cumulative request count (llama.cpp's, today) leaves it nil, so a
+	// missing figure and a genuine zero stay distinguishable: a zero is a
+	// counter the engine served, a missing one is a figure no engine
+	// produced.
+	Requests *int `json:"requests,omitempty"`
 }
 
 // GpuStat holds per-GPU metrics from nvidia-smi.

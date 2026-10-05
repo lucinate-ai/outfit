@@ -446,6 +446,48 @@ while true; do sleep 0.05; done`)
 	}
 }
 
+// TestMetricsOmitsRequestCountWhereUnexposed covers the request figure's
+// absence through the daemon's own path: the sampler scrapes an engine whose
+// metrics expose no cumulative request counter, and the metrics reply carries
+// the token stats without the requests field — a missing figure, not a zero
+// the engine never produced.
+func TestMetricsOmitsRequestCountWhereUnexposed(t *testing.T) {
+	engineMetrics := &fakeEngine{counter: 100}
+	engine := httptest.NewServer(engineMetrics)
+	defer engine.Close()
+
+	d := testDaemon(t, `trap 'exit 0' TERM
+while true; do sleep 0.05; done`)
+	d.SetScrape(metrics.ScrapeTarget{BaseURL: engine.URL, Engine: "llamacpp"})
+	if err := d.Push(inference.DeployConfig{Runner: "llamacpp", ModelID: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.StartEngine(); err != nil {
+		t.Fatal(err)
+	}
+	waitForState(t, d.Sup, StateRunning)
+	defer d.Sup.Stop()
+	d.sampleOnce(context.Background())
+
+	stats := d.Metrics(context.Background())
+	if stats.Tokens == nil {
+		t.Fatal("metrics carried no token stats")
+	}
+	if stats.Tokens.Requests != nil {
+		t.Errorf("requests = %d, want absent: the engine exposes no cumulative request counter", *stats.Tokens.Requests)
+	}
+	body, err := json.Marshal(stats)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(body, []byte(`"requests"`)) {
+		t.Errorf("an absent request count still serialised: %s", body)
+	}
+	if !bytes.Contains(body, []byte(`"promptTokens"`)) {
+		t.Errorf("the token stats are missing from the reply: %s", body)
+	}
+}
+
 // TestMetricsReportsActivity covers what /v1/metrics now says about activity:
 // the same answer /v1/status gives, from the same record, including after the
 // engine has stopped and when there is nothing to report at all.
