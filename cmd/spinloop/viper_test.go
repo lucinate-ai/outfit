@@ -94,13 +94,14 @@ func TestViperRemoteEnvPrecedence(t *testing.T) {
 
 	const envValue = "https://env.example/wins"
 	legs := map[string]func(remote.Config) string{
-		"SPINLOOP_REMOTE_START_URL":  func(c remote.Config) string { return c.StartURL },
-		"SPINLOOP_REMOTE_STOP_URL":   func(c remote.Config) string { return c.StopURL },
-		"SPINLOOP_REMOTE_DEPLOY_URL": func(c remote.Config) string { return c.DeployURL },
-		"SPINLOOP_REMOTE_STATS_URL":  func(c remote.Config) string { return c.StatsURL },
-		"SPINLOOP_REMOTE_ENV_URL":    func(c remote.Config) string { return c.EnvURL },
-		"SPINLOOP_REMOTE_UPDATE_URL": func(c remote.Config) string { return c.UpdateURL },
-		"SPINLOOP_REMOTE_REGION":     func(c remote.Config) string { return c.Region },
+		"SPINLOOP_REMOTE_START_URL":    func(c remote.Config) string { return c.StartURL },
+		"SPINLOOP_REMOTE_STOP_URL":     func(c remote.Config) string { return c.StopURL },
+		"SPINLOOP_REMOTE_DEPLOY_URL":   func(c remote.Config) string { return c.DeployURL },
+		"SPINLOOP_REMOTE_STATS_URL":    func(c remote.Config) string { return c.StatsURL },
+		"SPINLOOP_REMOTE_ENV_URL":      func(c remote.Config) string { return c.EnvURL },
+		"SPINLOOP_REMOTE_UPDATE_URL":   func(c remote.Config) string { return c.UpdateURL },
+		"SPINLOOP_REMOTE_SCHEDULE_URL": func(c remote.Config) string { return c.ScheduleURL },
+		"SPINLOOP_REMOTE_REGION":       func(c remote.Config) string { return c.Region },
 	}
 
 	// Unset variables fall through to the file.

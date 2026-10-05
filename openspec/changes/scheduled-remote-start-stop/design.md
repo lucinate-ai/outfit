@@ -28,9 +28,9 @@ See proposal.md for why. The control plane (`remote/`) already runs one shared s
 
 **Targets and payload.** Each schedule's target is the start or stop Lambda with a fixed JSON input `{"source":"spinloop.schedule","action":"start|stop","environment":"<env>"}`. The start Lambda and stop Lambda each gain a branch for that source, ahead of the Function URL branch. Scheduler invokes Lambda asynchronously, so the 15-minute start is not cut short. The scheduled start calls the same start function as the URL path; the scheduled stop calls the same pause function, after reading the instance's `Retain-Until` tag.
 
-**Next run for status.** The status path in the schedule Lambda reads the schedules and computes the next firing of each action with a cron library in the Lambda, in the schedule's zone. Status is not read from Scheduler, so it is the same whether or not Scheduler has caught up.
+**Next runs.** There is no `remote status` command (`spinloop status` is a fleet-wide table with one row per node), so the next runs are shown by `schedule show` rather than a status line. The schedule Lambda computes the next firing of each action from the stored list, in each schedule's zone, with its own small cron evaluator in `lambda/shared/schedules.ts` (no cron library). The result is not read from Scheduler, so it is the same whether or not Scheduler has caught up. A time the clocks skip is not a firing; a time they repeat fires at the first occurrence.
 
-**Client.** `internal/remote` gains `SetSchedules`, `GetSchedules`, `ClearSchedules` calling a new `schedule_url` from the config, and `Status` gains the next-run fields. A missing `schedule_url` returns the "re-run bootstrap" error. The CLI group is `remote schedule {set,show,clear}`, built the way `keep` is.
+**Client.** `internal/remote` gains `SetSchedules`, `GetSchedules`, `ClearSchedules` calling a new `schedule_url` from the config. A missing `schedule_url` returns the "re-run bootstrap" error. The CLI group is `remote schedule {set,show,clear}`, built the way `keep` is.
 
 ## Risks / Trade-offs
 

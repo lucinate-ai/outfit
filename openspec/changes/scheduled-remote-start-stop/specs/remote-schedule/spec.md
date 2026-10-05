@@ -95,16 +95,21 @@ When a `stop` schedule fires, the control plane SHALL pause the environment's in
 - **WHEN** the deployment's configuration has no schedule endpoint
 - **THEN** the command fails with an error telling the user to re-run `spinloop remote bootstrap`
 
-### Requirement: Status reports the next scheduled runs
+### Requirement: Show reports the next scheduled runs
 
-When the environment has schedules, `spinloop remote status` SHALL report the next time a start fires and the next time a stop fires, as absolute times. When it has none, the status SHALL omit those lines.
+When the environment has schedules, `spinloop remote schedule show` (and `set`, which prints the same listing) SHALL report the next time a start fires and the next time a stop fires, as absolute UTC times, each on its own "next start" or "next stop" line. An action with no schedule, or whose schedule never fires again, SHALL have no line. When the environment has no schedules, the output SHALL say so and have no "next" line.
 
 #### Scenario: A scheduled environment shows its next runs
 
-- **WHEN** the user runs `spinloop remote status` for an environment with a start and a stop schedule
+- **WHEN** the user runs `spinloop remote schedule show` for an environment with a start and a stop schedule
 - **THEN** the output includes "next start" and "next stop" lines with absolute times
+
+#### Scenario: An action with no schedule has no line
+
+- **WHEN** the environment has only a start schedule
+- **THEN** the output has a "next start" line and no "next stop" line
 
 #### Scenario: An unscheduled environment omits the lines
 
-- **WHEN** the user runs `spinloop remote status` for an environment with no schedules
-- **THEN** the output has no "next start" or "next stop" line
+- **WHEN** the user runs `spinloop remote schedule show` for an environment with no schedules
+- **THEN** the output says there are no schedules and has no "next start" or "next stop" line

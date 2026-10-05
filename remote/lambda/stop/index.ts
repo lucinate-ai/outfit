@@ -19,6 +19,7 @@ import { DAEMON_STATUS_CMD, parseDaemonStatus } from '../shared/daemon';
 import { decideIdle, idleFromDaemonStatus, type MetricsResult } from '../shared/idle';
 import { jsonResponse } from '../shared/http';
 import { SEED_ID_TAG_KEY, SEED_TAG_VALUE } from '../shared/seed/identity';
+import { isScheduledRunEvent, type ScheduledRunEvent } from '../shared/schedules';
 import { decideSeedReap } from '../shared/seed/reap';
 import { latestStream, writeTerminalRecord } from '../shared/seed/status';
 
@@ -32,13 +33,23 @@ const SEED_STALL_MINUTES = Number(requireEnv('SEED_STALL_MINUTES'));
 const STOP_RETENTION_MINUTES = Number(requireEnv('STOP_RETENTION_MINUTES'));
 
 
-type StopEvent = ScheduledEvent | LambdaFunctionURLEvent;
+type StopEvent = ScheduledEvent | LambdaFunctionURLEvent | ScheduledRunEvent;
 
 export function isScheduledEvent(event: StopEvent): event is ScheduledEvent {
   return (event as ScheduledEvent).source === 'aws.events';
 }
 
 export async function handler(event: StopEvent): Promise<LambdaFunctionURLResult | void> {
+  if (isScheduledRunEvent(event)) {
+    // A user-defined schedule firing, not the sweep. Only `stop` schedules
+    // target this Lambda; anything else is ignored rather than acted on.
+    if (event.action === 'stop') {
+      await scheduledStop(event.environment);
+    } else {
+      console.log(JSON.stringify({ mode: 'scheduled', action: 'ignored', scheduledAction: event.action }));
+    }
+    return;
+  }
   if (isScheduledEvent(event)) {
     // Two passes over two disjoint populations, keyed on different tag values
     // and judged by different signals. A seed runs no spinloop daemon, so it must
@@ -101,6 +112,38 @@ async function manualStop(event: LambdaFunctionURLEvent): Promise<LambdaFunction
 }
 
 /**
+ * A `stop` schedule firing: pause the environment's instance, as a manual
+ * `pause` does. Nothing is done when there is no running instance, or when the
+ * instance's `Retain-Until` deadline has not passed; a skipped stop is not
+ * retried, the idle sweep still applies later.
+ */
+async function scheduledStop(env: string): Promise<void> {
+  const instance = await findManagedInstance(TAG_KEY, TAG_VALUE, [
+    { Name: `tag:${ENV_TAG_KEY}`, Values: [env] },
+  ]);
+  if (!instance || instance.state !== 'running') {
+    console.log(
+      JSON.stringify({ mode: 'scheduled', action: 'noop', environment: env, state: instance?.state ?? 'none' }),
+    );
+    return;
+  }
+  if (instance.retainUntil && instance.retainUntil.getTime() > Date.now()) {
+    console.log(
+      JSON.stringify({
+        mode: 'scheduled',
+        action: 'skip',
+        reason: 'retained',
+        environment: env,
+        instanceId: instance.instanceId,
+        retainUntil: instance.retainUntil.toISOString(),
+      }),
+    );
+    return;
+  }
+  await pauseInstance(instance, env, false, 'scheduled');
+}
+
+/**
  * Stop (never terminate) one environment's instance. Tagging before the stop
  * means a crash in between leaves a stopped instance with its stop time
  * recorded; a tagless already-stopped instance is self-healed the same way the
@@ -113,13 +156,14 @@ async function pauseInstance(
   instance: InstanceInfo,
   env: string,
   force: boolean,
+  mode: 'manual' | 'scheduled' = 'manual',
 ): Promise<LambdaFunctionURLResult> {
   if (instance.state === 'stopped') {
     if (!instance.stoppedAt) {
       await tagInstance(instance.instanceId, STOPPED_AT_TAG, new Date().toISOString());
     }
     console.log(
-      JSON.stringify({ mode: 'manual', action: 'noop', environment: env, instanceId: instance.instanceId }),
+      JSON.stringify({ mode, action: 'noop', environment: env, instanceId: instance.instanceId }),
     );
     return jsonResponse(200, { state: 'stopped', environment: env });
   }
@@ -130,7 +174,7 @@ async function pauseInstance(
   await stopInstance(instance.instanceId);
   console.log(
     JSON.stringify({
-      mode: 'manual',
+      mode,
       action: 'stop',
       environment: env,
       instanceId: instance.instanceId,

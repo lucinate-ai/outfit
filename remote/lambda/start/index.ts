@@ -38,6 +38,7 @@ import {
 } from '../shared/environments';
 import { DAEMON_STATUS_CMD, parseDaemonStatus } from '../shared/daemon';
 import { jsonResponse } from '../shared/http';
+import { isScheduledRunEvent, type ScheduledRunEvent } from '../shared/schedules';
 import { acquireWakeLock, releaseWakeLock, wakeLockHeld } from '../shared/wake-lock';
 import { weightsPresent } from '../shared/seed';
 import { findSeedInstances, seedAlive } from '../shared/seed/discovery';
@@ -133,9 +134,12 @@ function parseRetainUntil(raw: string | undefined): string | null {
 }
 
 export async function handler(
-  event: LambdaFunctionURLEvent,
+  event: LambdaFunctionURLEvent | ScheduledRunEvent,
   context: Context,
 ): Promise<LambdaFunctionURLResult> {
+  if (isScheduledRunEvent(event)) {
+    return scheduledStart(event, context);
+  }
   let env: string;
   try {
     env = environmentFrom(event.queryStringParameters);
@@ -162,6 +166,29 @@ async function startHoldsLock(env: string): Promise<boolean> {
     console.log(JSON.stringify({ phase: 'lock-read', environment: env, error: errorName(err) }));
     return false;
   }
+}
+
+/**
+ * A `start` schedule firing: the same wake as an on-demand start, with no
+ * retention deadline. A running instance is left as it is (the wake reports it
+ * ready), and the wake takes the environment's start lock like any other, so a
+ * schedule firing while someone starts the environment by hand launches one
+ * instance, not two. Nobody is waiting on the reply, so the outcome is logged,
+ * and a failure to launch is not retried before the next firing.
+ */
+async function scheduledStart(
+  event: ScheduledRunEvent,
+  context: Context,
+): Promise<LambdaFunctionURLResult> {
+  if (event.action !== 'start') {
+    console.log(JSON.stringify({ mode: 'scheduled', action: 'ignored', scheduledAction: event.action }));
+    return jsonResponse(200, { state: 'ignored', environment: event.environment });
+  }
+  const result = await wake(event.environment, context, null);
+  console.log(
+    JSON.stringify({ mode: 'scheduled', action: 'start', environment: event.environment, result }),
+  );
+  return result;
 }
 
 /** GET — report one environment's state without side effects. */

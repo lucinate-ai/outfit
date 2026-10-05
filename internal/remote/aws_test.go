@@ -23,6 +23,7 @@ func TestControlPlaneFromOutputs_MapsEveryStackOutput(t *testing.T) {
 		"StatsUrl":               "https://stats.example.aws/",
 		"EnvUrl":                 "https://env.example.aws/",
 		"UpdateUrl":              "https://update.example.aws/",
+		"ScheduleUrl":            "https://schedule.example.aws/",
 		"Region":                 "eu-west-1",
 		"WeightsBucket":          "weights-bucket",
 		"VpcId":                  "vpc-123", // not part of the config
@@ -45,6 +46,7 @@ func TestControlPlaneFromOutputs_MapsEveryStackOutput(t *testing.T) {
 		{"StatsURL", layer.Config.StatsURL, outputs["StatsUrl"]},
 		{"EnvURL", layer.Config.EnvURL, outputs["EnvUrl"]},
 		{"UpdateURL", layer.Config.UpdateURL, outputs["UpdateUrl"]},
+		{"ScheduleURL", layer.Config.ScheduleURL, outputs["ScheduleUrl"]},
 		{"Region", layer.Config.Region, outputs["Region"]},
 		{"WeightsBucket", layer.WeightsBucket, outputs["WeightsBucket"]},
 	}
