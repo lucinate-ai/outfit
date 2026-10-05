@@ -66,6 +66,13 @@ vi.mock('../lambda/shared/seed', () => ({
   weightsPresent: async () => true,
 }));
 
+// These tests are about the launch itself, so the environment's lock is always free.
+vi.mock('../lambda/shared/wake-lock', () => ({
+  acquireWakeLock: async () => true,
+  releaseWakeLock: async () => undefined,
+  wakeLockHeld: async () => false,
+}));
+
 let handler: (event: LambdaFunctionURLEvent, context: Context) => Promise<LambdaFunctionURLResult>;
 
 beforeAll(async () => {

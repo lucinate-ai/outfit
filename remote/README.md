@@ -512,6 +512,17 @@ deregister the AMIs, and delete their snapshots by hand to reclaim that storage.
   `spinloop remote deploy`.
 - **`start` returns `no-ami`**: no AMI is tagged for the engine you asked for.
   Run `pnpm bake <runner>` and wait for it to reach `AVAILABLE`.
+- **`start` returns `starting` with "another start … is in progress"**: a
+  start for that environment already holds its lock (the SSM parameter
+  `/cloud-vm-llm/<env>/wake-lock`), so this one launched nothing. It is
+  retryable and the CLI retries it. A start killed before it could release the
+  lock blocks the environment until the lock's expiry, at most the Lambda's
+  remaining time plus 30 seconds; deleting the parameter by hand clears it
+  sooner. The `start` Lambda's log shows `"phase":"lock-held"`,
+  `"lock-error"` (the lock could not be taken; nothing is launched) or
+  `"stopped-under-start"` (the instance was stopped while the start waited).
+  The start Lambda's role needs `ssm:DeleteParameter` on the lock, so a
+  control plane deployed before it needs `pnpm run deploy`.
 - **`start` returns `no-capacity`**: every configured AZ was out of g6e
   capacity at that moment. The start Lambda already tried them all; wait a few
   minutes and retry, or widen/adjust `availabilityZones`.

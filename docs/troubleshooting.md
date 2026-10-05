@@ -86,6 +86,12 @@ scaled; see [`spinloop serve`](commands/serve.md#parallelism).
   stderr; `--timeout` (default 15m) bounds the wait. `status` and `logs`
   answer while it boots and after it is gone — logs are readable even from a
   terminated instance.
+- **`start` says another start is in progress.** Another command, machine or
+  gateway is already starting that endpoint, and only one start works on an
+  endpoint at a time. `start` retries on its own and finishes when the other
+  one does. If nothing is really starting, the lock a crashed start left
+  behind expires within about fifteen minutes. `status` shows `starting`
+  meanwhile.
 - **Quota.** Bootstrap needs enough GPU vCPU quota for a later launch; a launch
   that can't get an instance reports the AWS error.
 
