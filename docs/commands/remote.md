@@ -15,6 +15,7 @@ spinloop logs --env <name>       # what did it say? (readable after it's gone)
 spinloop remote pause      # stop it now; a later start re-wakes it
 spinloop remote restart    # fresh engine, same address: stop it and wake it again
 spinloop remote keep 4h    # prevent the idle sweep from stopping it for 4 hours
+spinloop remote schedule   # start and stop it on cron schedules (set, show, clear)
 spinloop remote stop       # terminate it now, rather than waiting for the idle timer
 ```
 
@@ -95,7 +96,7 @@ spinloop remote stop --env qwen3.6-27b   # done for good: terminate it
 ```
 
 Every command that acts on an endpoint — `start`, `status`, `metrics`, `logs`,
-`pause`, `restart`, `keep`, `stop` — selects it with the same `--env <name>`
+`pause`, `restart`, `keep`, `schedule`, `stop` — selects it with the same `--env <name>`
 flag; with no flag they use the `default` environment. `start` prints its
 progress on stderr, and the export lines for `eval` only with `--print-env`, so
 a plain `start` leaves stdout empty for other uses.
@@ -307,6 +308,44 @@ see how long the instance is protected for.
 
 It requires a control plane with the update Lambda (bootstrap with a recent
 version, or re-bootstrap).
+
+## Starting and stopping on a schedule
+
+```sh
+spinloop remote schedule set --env dev \
+  --start "0 8 * * 1-5" --stop "0 18 * * 1-5" --timezone Europe/London
+spinloop remote schedule show --env dev    # the schedules, and when each action next runs
+spinloop remote schedule clear --env dev   # remove them all
+```
+
+A schedule is a five-field cron expression (minute, hour, day of month, month,
+day of week) with an action, `start` or `stop`. `set` takes one or more
+`--start` and `--stop` flags and a single `--timezone` (an IANA name such as
+`Europe/London`, default `UTC`) that applies to all of them. It replaces the
+environment's whole list, so what you pass is exactly what runs afterwards.
+Expressions are checked before anything changes: a bad one is refused, naming
+it, and the earlier schedules carry on. Day of month and day of week cannot
+both be set in one expression, and names such as `MON` are not accepted;
+use numbers (`0` or `7` is Sunday).
+
+The control plane stores and runs the schedules, so they fire whether or not
+any of your machines is on. Times follow the zone's clock, including daylight
+saving: `0 8 * * *` in `Europe/London` is 08:00 local all year.
+
+- A scheduled start does what `start` does, including the weights check. If the
+  instance is already running it is left alone. If it cannot start (no GPU
+  capacity, weights not seeded), the reason is in the start Lambda's log and
+  nothing retries until the next firing.
+- A scheduled stop pauses the instance, as `pause` does, so a later start
+  re-wakes it. If the instance is being kept (`keep`, `start --keep`) the stop
+  is skipped.
+- `show` prints one line per schedule, then `next start` and `next stop` as UTC
+  times. An action with no schedule has no line.
+
+It requires a control plane with the schedule Lambda: a deployment that predates
+it fails with a message to re-run `spinloop remote bootstrap`. The URL is the
+`schedule_url` in the environment's `remote.json`, or
+`SPINLOOP_REMOTE_SCHEDULE_URL`.
 
 ## Restarting the engine
 
