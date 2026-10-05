@@ -381,3 +381,16 @@ func TestBootstrap_NpmOverrideDrivesNpmCommands(t *testing.T) {
 		t.Errorf("commands = %v, want %v", got, want)
 	}
 }
+
+// Each bootstrap step runs with the CLI's version in its environment, which
+// the CDK app stamps onto the control plane.
+func TestExecStep_PassesTheControlPlaneVersion(t *testing.T) {
+	orig := version
+	t.Cleanup(func() { version = orig })
+	version = "1.30.0"
+
+	check := []string{"sh", "-c", `test "$` + controlPlaneVersionEnv + `" = "1.30.0"`}
+	if err := execStep(context.Background(), "check-env", check, t.TempDir()); err != nil {
+		t.Errorf("the step did not see %s=1.30.0: %v", controlPlaneVersionEnv, err)
+	}
+}

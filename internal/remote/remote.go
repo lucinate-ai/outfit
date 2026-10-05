@@ -592,6 +592,7 @@ func send(
 	if err != nil {
 		return 0, nil, err
 	}
+	checkControlPlaneVersion(resp.Header)
 	return resp.StatusCode, respBody, nil
 }
 
@@ -838,6 +839,7 @@ func callStats(ctx context.Context, cfg Config) (*StatsResponse, error) {
 	if err != nil {
 		return nil, err
 	}
+	checkControlPlaneVersion(resp.Header)
 	out := &StatsResponse{StatusCode: resp.StatusCode}
 	if err := json.Unmarshal(respBody, out); err != nil {
 		hint := ""

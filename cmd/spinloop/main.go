@@ -77,6 +77,7 @@ func main() {
 			os.Args = append(os.Args, "")
 		}
 	}
+	remote.SetCLIVersion(version)
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
