@@ -1,3 +1,10 @@
+## Purpose
+
+Let a remote environment start and stop itself on cron schedules, so a team that
+works set hours has the model up when it sits down and stops paying for it when
+it leaves. The control plane stores and runs the schedules, so they fire with no
+machine of the operator's switched on; the CLI sets, shows and clears them.
+
 ## ADDED Requirements
 
 ### Requirement: An environment holds a list of schedules
