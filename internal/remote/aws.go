@@ -209,14 +209,15 @@ func DiscoverControlPlane(ctx context.Context, cfg aws.Config, stackName string)
 func controlPlaneFromOutputs(stackName string, outputs map[string]string) (ControlPlane, error) {
 	layer := ControlPlane{
 		Config: Config{
-			StartURL:  outputs["StartUrl"],
-			StopURL:   outputs["StopUrl"],
-			DeployURL: outputs["DeployUrl"],
-			StatsURL:  outputs["StatsUrl"],
-			EnvURL:    outputs["EnvUrl"],
-			SeedURL:   outputs["SeedUrl"],
-			UpdateURL: outputs["UpdateUrl"],
-			Region:    outputs["Region"],
+			StartURL:    outputs["StartUrl"],
+			StopURL:     outputs["StopUrl"],
+			DeployURL:   outputs["DeployUrl"],
+			StatsURL:    outputs["StatsUrl"],
+			EnvURL:      outputs["EnvUrl"],
+			SeedURL:     outputs["SeedUrl"],
+			UpdateURL:   outputs["UpdateUrl"],
+			ScheduleURL: outputs["ScheduleUrl"],
+			Region:      outputs["Region"],
 		},
 		WeightsBucket: outputs["WeightsBucket"],
 	}

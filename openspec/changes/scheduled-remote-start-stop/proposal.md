@@ -9,7 +9,7 @@ A remote environment only starts when someone asks for it and is stopped by the 
 - A new schedule Lambda accepts a replacement list of schedules for one environment, returns the current list, and clears it.
 - A scheduled start runs the same start as `spinloop remote start`. A scheduled stop pauses the instance (stops it without terminating it), unless the instance has a `Retain-Until` deadline in the future, in which case the stop is skipped.
 - New CLI commands: `spinloop remote schedule set`, `show` and `clear`.
-- `spinloop remote status` reports the next scheduled start and stop when the environment has schedules.
+- `spinloop remote schedule show` (and `set`) report the next scheduled start and stop when the environment has schedules.
 
 ## Capabilities
 
@@ -24,6 +24,6 @@ None. The existing start, stop and keep behaviour is reused unchanged; a schedul
 ## Impact
 
 - `remote/`: new schedule Lambda and Function URL, an EventBridge Scheduler schedule group and a role the schedules assume, new handling in the start and stop Lambdas for a scheduled invocation, new stack output and `SpinloopRemoteConfig` field (`schedule_url`).
-- `internal/remote` and `cmd/spinloop/remote.go`: the client calls, the `schedule` command group, and the status lines.
+- `internal/remote` and `cmd/spinloop/remote.go`: the client calls and the `schedule` command group, which prints the next runs.
 - `docs/`: command reference, remote guide and the control plane's HTTP API.
 - The remote CLI user's IAM policy gains permission to invoke the schedule Lambda. Existing deployments need `spinloop remote bootstrap` re-run to get the feature; the CLI reports a clear error when `schedule_url` is missing.

@@ -135,10 +135,10 @@ describe('LlmStack (control plane)', () => {
     expect(groups[0].Properties.SecurityGroupIngress).toBeUndefined();
   });
 
-  it('creates the start, stop, deploy, stats, env, seed and update Lambdas with IAM-authenticated function URLs', () => {
-    template.resourceCountIs('AWS::Lambda::Function', 7);
+  it('creates the start, stop, deploy, stats, env, seed, update and schedule Lambdas with IAM-authenticated function URLs', () => {
+    template.resourceCountIs('AWS::Lambda::Function', 8);
     const urls = template.findResources('AWS::Lambda::Url');
-    expect(Object.keys(urls)).toHaveLength(7);
+    expect(Object.keys(urls)).toHaveLength(8);
     for (const url of Object.values(urls)) {
       expect(url.Properties.AuthType).toBe('AWS_IAM');
     }
@@ -153,7 +153,7 @@ describe('LlmStack (control plane)', () => {
     expect(cliStatements.length).toBeGreaterThan(0);
   });
 
-  it('grants the CLI user invoke-url permission on all seven control functions, and nothing else in lambda', () => {
+  it('grants the CLI user invoke-url permission on all eight control functions, and nothing else in lambda', () => {
     const actionsOf = (s: Statement): string[] => [s.Action].flat();
     // The invoke-url grant takes the form grantInvokeUrl renders —
     // lambda:InvokeFunctionUrl (AWS_IAM auth condition) plus
@@ -163,7 +163,7 @@ describe('LlmStack (control plane)', () => {
     const urlFunctionIds = new Set(
       Object.values(urls).map((u) => u.Properties.TargetFunctionArn['Fn::GetAtt'][0]),
     );
-    expect(urlFunctionIds).toHaveLength(7);
+    expect(urlFunctionIds).toHaveLength(8);
     // The grant names the functions' ARNs through each URL resource's
     // FunctionArn attribute; resolve that back to the backing function so the
     // assertion is on the functions, not the reference path.
@@ -329,11 +329,55 @@ describe('LlmStack (control plane)', () => {
       [s.Action].flat().includes('iam:PassRole'),
     );
     expect(passRole.length).toBeGreaterThan(0);
-    // A wildcard PassRole would let a caller hand EC2 any role in the account.
+    // A wildcard PassRole would let a caller hand EC2 (or Scheduler) any role in the account.
     for (const statement of passRole) {
       expect(JSON.stringify(statement.Resource)).not.toBe('"*"');
-      expect(JSON.stringify(statement.Condition)).toContain('ec2.amazonaws.com');
+      expect(JSON.stringify(statement.Condition)).toMatch(/ec2\.amazonaws\.com|scheduler\.amazonaws\.com/);
     }
+  });
+
+  it('runs schedules from a Scheduler group, as a role that can only invoke the start and stop Lambdas', () => {
+    template.resourceCountIs('AWS::Scheduler::ScheduleGroup', 1);
+    const roles = template.findResources('AWS::IAM::Role') as Record<string, any>;
+    const [roleId, role] = Object.entries(roles).find(([, r]) =>
+      JSON.stringify(r.Properties.AssumeRolePolicyDocument).includes('scheduler.amazonaws.com'),
+    )!;
+    expect(role).toBeDefined();
+    const policies = template.findResources('AWS::IAM::Policy') as Record<string, any>;
+    const granted = Object.values(policies)
+      .filter((p) => (p.Properties.Roles as { Ref: string }[]).some((r) => r.Ref === roleId))
+      .flatMap((p) => p.Properties.PolicyDocument.Statement as Statement[]);
+    // Only lambda:InvokeFunction (one statement per target function), and never on a wildcard.
+    expect(new Set(granted.flatMap((s) => [s.Action].flat()))).toEqual(new Set(['lambda:InvokeFunction']));
+    expect(granted.length).toBeGreaterThanOrEqual(2);
+    for (const s of granted) {
+      expect(JSON.stringify(s.Resource)).not.toContain('"*"');
+    }
+  });
+
+  it('gives the schedule Lambda its group, role and target functions, and scopes its Scheduler writes to the group', () => {
+    const fns = template.findResources('AWS::Lambda::Function') as Record<string, any>;
+    const schedule = Object.values(fns).find((f) =>
+      f.Properties.Environment?.Variables?.SCHEDULE_GROUP !== undefined,
+    );
+    expect(schedule).toBeDefined();
+    const vars = Object.keys(schedule.Properties.Environment.Variables).sort();
+    expect(vars).toEqual(['SCHEDULER_ROLE_ARN', 'SCHEDULE_GROUP', 'START_FN_ARN', 'STOP_FN_ARN'].sort());
+
+    const statements = allPolicyStatements(template);
+    const writes = statements.filter((s) => [s.Action].flat().includes('scheduler:CreateSchedule'));
+    expect(writes).toHaveLength(1);
+    expect([writes[0].Action].flat().sort()).toEqual([
+      'scheduler:CreateSchedule',
+      'scheduler:DeleteSchedule',
+      'scheduler:UpdateSchedule',
+    ]);
+    expect(JSON.stringify(writes[0].Resource)).not.toBe('"*"');
+    expect(JSON.stringify(writes[0].Resource)).toContain(':schedule/');
+  });
+
+  it('keeps the idle sweep as the only classic rule: user schedules live in Scheduler', () => {
+    template.resourceCountIs('AWS::Events::Rule', 1);
   });
 
   it('schedules the idle sweep every 5 minutes', () => {
@@ -523,7 +567,7 @@ describe('LlmStack (control plane)', () => {
     // The regression this guards: without an explicit log group, Lambda
     // auto-creates one with no retention policy at all — every invocation of
     // every control Lambda kept forever.
-    for (const name of ['start', 'stop', 'deploy', 'seed', 'stats', 'env', 'update']) {
+    for (const name of ['start', 'stop', 'deploy', 'seed', 'stats', 'env', 'update', 'schedule']) {
       template.hasResourceProperties('AWS::Logs::LogGroup', {
         LogGroupName: `/cloud-vm-llm/lambda/${name}`,
         RetentionInDays: 3,
@@ -535,8 +579,8 @@ describe('LlmStack (control plane)', () => {
     for (const fn of Object.values(fns)) {
       expect(fn.Properties.LoggingConfig?.LogGroup).toBeDefined();
     }
-    // 4 instance-facing groups (llamacpp, vllm, boot, seed) + 7 Lambda groups.
-    template.resourceCountIs('AWS::Logs::LogGroup', 11);
+    // 4 instance-facing groups (llamacpp, vllm, boot, seed) + 8 Lambda groups.
+    template.resourceCountIs('AWS::Logs::LogGroup', 12);
   });
 
   it('gives the seed Lambda its own function, cap and concurrency bound', () => {
@@ -636,6 +680,7 @@ describe('LlmStack (control plane)', () => {
       'DeployUrl',
       'StatsUrl',
       'EnvUrl',
+      'ScheduleUrl',
       'WeightsBucket',
       'VpcId',
       'SeedInstanceProfileArn',

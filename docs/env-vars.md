@@ -30,6 +30,7 @@ from the environment or a `.env` beside the Spinloop — never written into an
 | `SPINLOOP_REMOTE_STATS_URL` | Override the stats Lambda Function URL. |
 | `SPINLOOP_REMOTE_ENV_URL` | Override the env Lambda Function URL. |
 | `SPINLOOP_REMOTE_UPDATE_URL` | Override the update Lambda Function URL (drives `keep`). |
+| `SPINLOOP_REMOTE_SCHEDULE_URL` | Override the schedule Lambda Function URL (drives `schedule`). |
 | `SPINLOOP_REMOTE_REGION` | Override the AWS region (else `AWS_REGION`, else the region in the Function URL host). |
 | `SPINLOOP_REMOTE_PACKAGE_MANAGER` | Pin the package manager (`pnpm`/`npm`) `spinloop remote bootstrap` and `bake` use. |
 

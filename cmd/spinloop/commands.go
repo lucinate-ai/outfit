@@ -414,6 +414,7 @@ names a file — falling back to the default environment. Each subcommand's
 		remoteEnvCmd(),
 		remoteListCmd(),
 		remoteKeepCmd(),
+		remoteScheduleCmd(),
 	)
 	return remote
 }

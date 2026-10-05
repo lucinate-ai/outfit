@@ -9,6 +9,7 @@ import {
   aws_logs as logs,
   aws_s3 as s3,
   aws_s3_assets as s3assets,
+  aws_scheduler as scheduler,
   aws_secretsmanager as secretsmanager,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
@@ -693,6 +694,64 @@ export class LlmStack extends cdk.Stack {
 
     const updateUrl = updateFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
 
+    // Schedules — cron-driven start and stop per environment. The schedule
+    // Lambda keeps each environment's list in SSM and mirrors it into
+    // EventBridge Scheduler schedules in this group; Scheduler (not a classic
+    // rule) because it takes an IANA time zone and follows daylight saving.
+    const scheduleGroup = new scheduler.CfnScheduleGroup(this, 'ScheduleGroup');
+    const scheduleArnPattern = `arn:${cdk.Aws.PARTITION}:scheduler:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:schedule/${scheduleGroup.ref}/*`;
+    // What a schedule runs as: invoke the start or stop Lambda, nothing else.
+    const schedulerRole = new iam.Role(this, 'SchedulerRole', {
+      description: 'Assumed by EventBridge Scheduler to run scheduled starts and stops',
+      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com', {
+        conditions: { StringEquals: { 'aws:SourceAccount': cdk.Aws.ACCOUNT_ID } },
+      }),
+    });
+    startFn.grantInvoke(schedulerRole);
+    stopFn.grantInvoke(schedulerRole);
+
+    const scheduleFn = new nodejs.NodejsFunction(this, 'ScheduleFn', {
+      description: 'Sets, reads and clears an environment\'s cron start/stop schedules',
+      entry: path.join(__dirname, '..', 'lambda', 'schedule', 'index.ts'),
+      handler: 'handler',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: cdk.Duration.seconds(60),
+      memorySize: 256,
+      logGroup: lambdaLogGroup('ScheduleFnLogGroup', 'schedule'),
+      environment: {
+        SCHEDULE_GROUP: scheduleGroup.ref,
+        SCHEDULER_ROLE_ARN: schedulerRole.roleArn,
+        START_FN_ARN: startFn.functionArn,
+        STOP_FN_ARN: stopFn.functionArn,
+      },
+    });
+    scheduleFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameter', 'ssm:PutParameter', 'ssm:DeleteParameter'],
+        resources: [envParamArn],
+      }),
+    );
+    scheduleFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['scheduler:CreateSchedule', 'scheduler:UpdateSchedule', 'scheduler:DeleteSchedule'],
+        resources: [scheduleArnPattern],
+      }),
+    );
+    // ListSchedules has no resource-level scoping.
+    scheduleFn.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['scheduler:ListSchedules'], resources: ['*'] }),
+    );
+    scheduleFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['iam:PassRole'],
+        resources: [schedulerRole.roleArn],
+        conditions: { StringEquals: { 'iam:PassedToService': 'scheduler.amazonaws.com' } },
+      }),
+    );
+
+    const scheduleUrl = scheduleFn.addFunctionUrl({ authType: lambda.FunctionUrlAuthType.AWS_IAM });
+
     // The human-facing principal behind the CLI's long-lived credential:
     // `spinloop remote auth --store` creates an access key for this user and
     // keeps it in the operator's OS keystore, so day-to-day control calls
@@ -708,7 +767,7 @@ export class LlmStack extends cdk.Stack {
     // managed-policy limit is 6,144). The invoke-url grant takes the form
     // grantInvokeUrl renders — the two actions, the auth-type conditions, the
     // backing functions' ARNs — merged into one statement per action.
-    const controlFunctionArns = [startUrl, stopUrl, deployUrl, statsUrl, seedUrl, envUrl, updateUrl].map(
+    const controlFunctionArns = [startUrl, stopUrl, deployUrl, statsUrl, seedUrl, envUrl, updateUrl, scheduleUrl].map(
       (url) => url.functionArn,
     );
     const controlLogGroupArns = [
@@ -777,6 +836,7 @@ export class LlmStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'EnvUrl', { value: envUrl.url });
     new cdk.CfnOutput(this, 'SeedUrl', { value: seedUrl.url });
     new cdk.CfnOutput(this, 'UpdateUrl', { value: updateUrl.url });
+    new cdk.CfnOutput(this, 'ScheduleUrl', { value: scheduleUrl.url });
     new cdk.CfnOutput(this, 'Region', { value: this.region });
     new cdk.CfnOutput(this, 'WeightsBucket', { value: weightsBucket.bucketName });
     new cdk.CfnOutput(this, 'VpcId', { value: vpc.vpcId });
@@ -791,7 +851,7 @@ export class LlmStack extends cdk.Stack {
     // environment's address is its own EIP, allocated at `spinloop remote
     // deploy` and returned by it.
     new cdk.CfnOutput(this, 'SpinloopRemoteConfig', {
-      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","env_url":"${envUrl.url}","seed_url":"${seedUrl.url}","update_url":"${updateUrl.url}","region":"${this.region}"}`,
+      value: `{"start_url":"${startUrl.url}","stop_url":"${stopUrl.url}","deploy_url":"${deployUrl.url}","stats_url":"${statsUrl.url}","env_url":"${envUrl.url}","seed_url":"${seedUrl.url}","update_url":"${updateUrl.url}","schedule_url":"${scheduleUrl.url}","region":"${this.region}"}`,
     });
   }
 }

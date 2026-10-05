@@ -54,7 +54,12 @@ type Config struct {
 	// (currently: set-keep). Optional — configs predating the update Lambda
 	// still work for start/stop/deploy; Keep will fail with a clear message.
 	UpdateURL string `json:"update_url"`
-	Region    string `json:"region"`
+	// ScheduleURL is the Lambda that sets, reads and clears an environment's
+	// start/stop schedules. Optional in the same way as UpdateURL: a config
+	// written before it existed keeps working for every other subcommand, and
+	// the schedule subcommands fail naming the fix.
+	ScheduleURL string `json:"schedule_url"`
+	Region      string `json:"region"`
 	// BaseURL is the endpoint's own address (the environment's stable Elastic
 	// IP). It belongs to the deployment rather than to the Spinloop, so it is
 	// written here and `apply` reads it back for a Spinloop that states no
@@ -124,6 +129,9 @@ func finishConfig(cfg Config, getenv func(string) string, source string) (Config
 	}
 	if v := getenv("SPINLOOP_REMOTE_UPDATE_URL"); v != "" {
 		cfg.UpdateURL = v
+	}
+	if v := getenv("SPINLOOP_REMOTE_SCHEDULE_URL"); v != "" {
+		cfg.ScheduleURL = v
 	}
 	if v := getenv("SPINLOOP_REMOTE_REGION"); v != "" {
 		cfg.Region = v
