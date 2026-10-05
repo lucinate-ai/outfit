@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Context, LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import {
   RETAIN_UNTIL_TAG,
@@ -29,6 +30,7 @@ import {
   baseUrlFor,
   deployConfigParam,
   ENV_TAG_KEY,
+  type EnvEip,
   environmentFrom,
   findEnvEip,
   findEnvSecurityGroup,
@@ -36,6 +38,7 @@ import {
 } from '../shared/environments';
 import { DAEMON_STATUS_CMD, parseDaemonStatus } from '../shared/daemon';
 import { jsonResponse } from '../shared/http';
+import { acquireWakeLock, releaseWakeLock, wakeLockHeld } from '../shared/wake-lock';
 import { weightsPresent } from '../shared/seed';
 import { findSeedInstances, seedAlive } from '../shared/seed/discovery';
 import { seedIdFor } from '../shared/seed/identity';
@@ -75,6 +78,15 @@ const HEALTH_POLL_MS = 10_000;
 // now, so a wake must find the one it is trying to revive rather than fail on
 // it. Only states headed for the scrapyard end a wake.
 const TERMINAL_STATES = new Set(['shutting-down', 'terminated']);
+// Once a start has launched an instance or issued its start command, any of
+// these means a stop (or the sweep) got there first and the instance is not
+// coming up, so the start ends rather than polling it until the deadline.
+const GONE_STATES = new Set(['stopped', 'stopping', 'shutting-down', 'terminated']);
+
+// How long a refused start is told to wait, and how far past its own time
+// limit a lock stays valid.
+const LOCK_RETRY_SECONDS = 15;
+const LOCK_MARGIN_MS = 30_000;
 
 const HEALTH_COMMAND =
   `curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:${ENGINE_PORT}/health || true`;
@@ -139,19 +151,39 @@ export async function handler(
   return wake(env, context, retainUntil);
 }
 
+/**
+ * Whether a start holds the environment's lock. A lock that cannot be read is
+ * reported as no start in progress: a status read must not fail over it.
+ */
+async function startHoldsLock(env: string): Promise<boolean> {
+  try {
+    return await wakeLockHeld(env);
+  } catch (err) {
+    console.log(JSON.stringify({ phase: 'lock-read', environment: env, error: errorName(err) }));
+    return false;
+  }
+}
+
 /** GET — report one environment's state without side effects. */
 async function status(env: string): Promise<LambdaFunctionURLResult> {
   const eip = await findEnvEip(env);
   const baseUrl = eip ? baseUrlFor(eip.publicIp, ENGINE_PORT) : '';
   const instance = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
+  const starting = await startHoldsLock(env);
   if (!instance || instance.state !== 'running') {
     // No SSM call on this branch: reaching the daemon needs a running box, so
     // a stopped environment reports no activity rather than a made-up one.
+    // While a start holds the lock, an instance that is absent, stopped or
+    // still coming up is `starting`: the instance lookup alone cannot show a
+    // start another client began, because it lags a launch.
+    const instanceState = instance?.state ?? (eip ? 'stopped' : 'undeployed');
+    const comingUp = !instance || instance.state === 'stopped' || instance.state === 'pending';
     return jsonResponse(200, {
-      state: instance?.state ?? (eip ? 'stopped' : 'undeployed'),
+      state: starting && comingUp ? 'starting' : instanceState,
       environment: env,
       healthy: false,
       base_url: baseUrl,
+      start_in_progress: starting,
     });
   }
   if (!(await isSsmAgentOnline(instance.instanceId))) {
@@ -160,6 +192,7 @@ async function status(env: string): Promise<LambdaFunctionURLResult> {
       environment: env,
       healthy: false,
       base_url: baseUrl,
+      start_in_progress: starting,
     });
   }
   // Concurrently, not in sequence: status is what you type repeatedly while
@@ -176,6 +209,7 @@ async function status(env: string): Promise<LambdaFunctionURLResult> {
     environment: env,
     healthy,
     base_url: baseUrl,
+    start_in_progress: starting,
     ...deploy,
     ...activity,
   };
@@ -335,7 +369,64 @@ async function readDeployFacts(env: string): Promise<{
   }
 }
 
-/** POST — launch the environment's instance if needed and block until serving. */
+/**
+ * What a held lock, and a lock that could not be taken, are both answered
+ * with: a retryable "starting", so the CLI and gateway ask again and find the
+ * holder's instance. Nothing has been looked up or launched.
+ */
+function startInProgress(env: string, message: string): LambdaFunctionURLResult {
+  return jsonResponse(
+    503,
+    { state: 'starting', environment: env, message, retry_after_seconds: LOCK_RETRY_SECONDS },
+    { 'retry-after': String(LOCK_RETRY_SECONDS) },
+  );
+}
+
+/**
+ * The reply for a start whose instance was stopped or terminated under it.
+ * Retryable, so a client still waiting asks again and re-wakes the instance
+ * (or launches a fresh one); ending here is what releases the lock.
+ */
+function stoppedUnderStart(env: string, instanceId: string, state: string): LambdaFunctionURLResult {
+  console.log(JSON.stringify({ phase: 'stopped-under-start', environment: env, instanceId, state }));
+  return jsonResponse(
+    503,
+    {
+      state,
+      environment: env,
+      instance_id: instanceId,
+      message: `the instance was ${state === 'stopping' ? 'stopped' : state} while starting`,
+      retry_after_seconds: LOCK_RETRY_SECONDS,
+    },
+    { 'retry-after': String(LOCK_RETRY_SECONDS) },
+  );
+}
+
+/**
+ * Whether the instance this start is waiting on has been stopped or terminated,
+ * as the reply to end the start with, or null to keep waiting. A lookup that
+ * fails (the instance not yet visible, a transient error) keeps waiting: the
+ * poll loops have their own deadline.
+ */
+async function goneUnderStart(env: string, instanceId: string): Promise<LambdaFunctionURLResult | null> {
+  let state: string;
+  try {
+    state = (await getInstance(instanceId)).state;
+  } catch {
+    return null;
+  }
+  return GONE_STATES.has(state) ? stoppedUnderStart(env, instanceId, state) : null;
+}
+
+/**
+ * POST — launch the environment's instance if needed and block until serving.
+ *
+ * Only one start works on an environment at a time: the instance lookup that
+ * decides whether to launch is eventually consistent, so two starts close
+ * together could each launch one. The checks that only read (the deploy config,
+ * the environment's address and security group) come first and take no lock,
+ * so an environment that cannot start says so without contending for one.
+ */
 async function wake(
   env: string,
   context: Context,
@@ -376,6 +467,43 @@ async function wake(
   }
   const baseUrl = baseUrlFor(eip.publicIp, ENGINE_PORT);
 
+  // The lock lasts as long as this invocation can run, so a start killed
+  // before it could release the lock blocks the environment for no longer.
+  // A lock that cannot be taken for a reason other than being held is
+  // answered the same way as a held one: nothing is launched unlocked.
+  const owner = context.awsRequestId ?? randomUUID();
+  const expiresAt = new Date(Date.now() + context.getRemainingTimeInMillis() + LOCK_MARGIN_MS);
+  try {
+    if (!(await acquireWakeLock(env, owner, expiresAt))) {
+      console.log(JSON.stringify({ phase: 'lock-held', environment: env }));
+      return startInProgress(env, `another start for environment ${JSON.stringify(env)} is in progress`);
+    }
+  } catch (err) {
+    console.log(JSON.stringify({ phase: 'lock-error', environment: env, error: errorName(err) }));
+    return startInProgress(env, 'could not take the start lock; retrying');
+  }
+  try {
+    return await wakeLocked(env, deadline, retainUntil, deployConfig, eip, securityGroupId, baseUrl);
+  } finally {
+    try {
+      await releaseWakeLock(env, owner);
+    } catch (err) {
+      // The reply is already decided; the lock expires on its own.
+      console.log(JSON.stringify({ phase: 'lock-release', environment: env, error: errorName(err) }));
+    }
+  }
+}
+
+/** The body of a start, run while this invocation holds the environment's lock. */
+async function wakeLocked(
+  env: string,
+  deadline: number,
+  retainUntil: string | null,
+  deployConfig: DeployConfig,
+  eip: EnvEip,
+  securityGroupId: string,
+  baseUrl: string,
+): Promise<LambdaFunctionURLResult> {
   // Weights first: a launch against an incomplete prefix would boot the engine
   // on it, and a re-wake would keep an old one alive on nothing.
   const gate = await seedingGate(env, deployConfig);
@@ -386,6 +514,7 @@ async function wake(
   const existing = await findManagedInstance(TAG_KEY, TAG_VALUE, envFilter(env));
   let instanceId: string;
   let startIssued = false;
+  let launchedFresh = false;
   if (existing) {
     // Idempotent: this environment's instance already exists (up, coming up,
     // or stopped — the sweep stops idle ones now, so this is the normal
@@ -413,6 +542,7 @@ async function wake(
       return launched.error;
     }
     instanceId = launched.instanceId;
+    launchedFresh = true;
   }
 
   // Phase 1: EC2 state -> running (then pin the env's EIP so its URL resolves).
@@ -441,6 +571,12 @@ async function wake(
         { 'retry-after': '300' },
       );
     }
+    if ((state === 'stopped' || state === 'stopping') && (startIssued || launchedFresh)) {
+      // This start launched the instance or issued its start command, and it
+      // has since been stopped: it is not coming up, so end the wake and let
+      // the lock go rather than poll it until the deadline.
+      return stoppedUnderStart(env, instanceId, state);
+    }
     if (state === 'stopped' && !startIssued) {
       // A stop raced us between discovery and now; issue the re-wake here so
       // one wake owns at most one start call.
@@ -468,6 +604,10 @@ async function wake(
 
   // Phase 2: SSM agent online (registers 30-60 s after boot).
   while (Date.now() < deadline) {
+    const gone = await goneUnderStart(env, instanceId);
+    if (gone) {
+      return gone;
+    }
     if (await isSsmAgentOnline(instanceId)) {
       break;
     }
@@ -481,6 +621,10 @@ async function wake(
   // is no one to take a start, so this wait converts a lost start (and a
   // full-deadline health timeout) into a short pause.
   while (Date.now() < deadline) {
+    const gone = await goneUnderStart(env, instanceId);
+    if (gone) {
+      return gone;
+    }
     if (await daemonAnswers(instanceId)) {
       break;
     }
@@ -531,6 +675,10 @@ async function wake(
         }
       }
       return ready(env, baseUrl, retainUntil);
+    }
+    const gone = await goneUnderStart(env, instanceId);
+    if (gone) {
+      return gone;
     }
     await sleep(HEALTH_POLL_MS);
   }

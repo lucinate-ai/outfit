@@ -438,6 +438,32 @@ describe('LlmStack (control plane)', () => {
     expect(JSON.stringify(terminate!.Condition)).toContain('cloud-vm-llm');
   });
 
+  it('lets only the start Lambda delete SSM parameters, and only the start lock', () => {
+    const policies = template.findResources('AWS::IAM::Policy') as Record<string, any>;
+    const withDelete = Object.values(policies).filter((p) =>
+      (p.Properties.PolicyDocument.Statement as Statement[]).some((s) =>
+        [s.Action].flat().includes('ssm:DeleteParameter'),
+      ),
+    );
+    expect(withDelete).toHaveLength(1);
+
+    const statements = (withDelete[0].Properties.PolicyDocument.Statement as Statement[]).filter((s) =>
+      [s.Action].flat().includes('ssm:DeleteParameter'),
+    );
+    expect(statements).toHaveLength(1);
+    expect([statements[0].Action].flat()).toEqual(['ssm:DeleteParameter']);
+    const resources = JSON.stringify(statements[0].Resource);
+    expect(resources).toContain('parameter/cloud-vm-llm/*/wake-lock');
+    expect(resources).not.toContain('"*"');
+
+    // The role it is attached to belongs to the start Lambda, found by the
+    // AMI settings only that Lambda is given.
+    const roleId = (withDelete[0].Properties.Roles as { Ref: string }[])[0].Ref;
+    const fns = template.findResources('AWS::Lambda::Function') as Record<string, any>;
+    const owner = Object.values(fns).find((f) => f.Properties.Role['Fn::GetAtt'][0] === roleId);
+    expect(owner?.Properties.Environment.Variables.AMI_ROLE_TAG_KEY).toBeDefined();
+  });
+
   it('passes the AMI role tag, weights bucket and subnet list to the start Lambda', () => {
     const fns = template.findResources('AWS::Lambda::Function');
     const start = Object.values(fns).find((f) =>

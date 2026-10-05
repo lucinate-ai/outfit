@@ -254,6 +254,17 @@ output degrades rather than goes blank. `--format=table` is a key-value
 table, and `--format=json` is the raw reply. A stopped engine keeps its
 readings: the sparkline runs to the stop, ending at it.
 
+While a start is under way, `status` shows **`starting`** for the endpoint,
+whichever machine began the start, until the instance is running. Once it is
+running but still loading the model it reads `running` and not ready, as
+before. Two starts for one endpoint never launch two instances: the second is
+told "another start is in progress" and retries on its own, so running
+`start` twice, or from two machines, is safe. A start that is waiting for GPU
+capacity is between attempts, not in progress, and `status` does not show it.
+Stopping an endpoint during a start is always allowed; the start ends and
+reports that the instance was stopped, and a client that keeps retrying will
+wake it again.
+
 Both report **`active`** — how long since the endpoint's engine last did
 any work. It comes from the activity the on-instance daemon tracks, so it is
 one answer decided on the box rather than something each command re-derives

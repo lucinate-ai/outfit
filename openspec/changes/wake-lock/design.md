@@ -33,6 +33,10 @@ The Lambda's role already has `ssm:GetParameter` and `ssm:PutParameter` on `/clo
 
 **Retrying is the client's choice, and it can undo a deliberate stop.** The reply is retryable, so a `spinloop remote start` that is still waiting will ask again and re-wake the instance a user just paused. That matches what happens today once the deadline passes, only sooner. A non-retryable reply would honour the stop but would make a scheduled 18:00 stop that lands during a slow start fail the start with an error rather than being a hiccup. This change keeps the reply retryable and does not try to decide whose intent wins.
 
+**Showing a start in progress.** The GET status branch of the start Lambda reads the lock (`wakeLockHeld`: the parameter exists, parses, and has not expired) and adds `start_in_progress` to its reply. When the lock is held and the instance is absent, `stopped` or `pending`, `state` is `starting`, so `spinloop status`, which prints the state string as it is, shows it with no change to the Go client. When the instance is already `running` the state stays `running` with `healthy: false` and only the flag marks the start, so nothing that keys off `running` changes. A failure to read the lock is logged and treated as no start in progress, because a status read that fails over the lock is worse than one that omits it. Reads take no lock and write nothing.
+
+**What status does not show.** A start waiting for capacity holds no lock between attempts (it released the lock when it replied no-capacity), so an environment in that wait looks idle. Showing it would need a record of the last start result, which is a separate feature.
+
 **Failures other than "already exists".** Any other error creating the lock is logged and answered with a 503 `starting`, retryable, with nothing launched. A failure releasing the lock is logged and ignored: the reply to the caller is already decided, and the lock expires on its own.
 
 **IAM.** One statement on the start Lambda's role: `ssm:DeleteParameter` on `parameter/cloud-vm-llm/*/wake-lock`. Create and read use the existing grants.

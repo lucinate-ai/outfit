@@ -435,6 +435,17 @@ export class LlmStack extends cdk.Stack {
       }),
     );
     startFn.addToRolePolicy(envParamsStatement);
+    // The per-environment start lock is created with the grants above and
+    // removed here; deleting is limited to the lock parameter itself so the
+    // start cannot delete an environment's deploy-config.
+    startFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:DeleteParameter'],
+        resources: [
+          `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/cloud-vm-llm/*/wake-lock`,
+        ],
+      }),
+    );
     startFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['secretsmanager:GetSecretValue'],
