@@ -1,3 +1,11 @@
+## Purpose
+
+Fix the names the cloud GPU feature is addressed by: the `cloud` command group,
+the `cloud` fleet node kind, the `SPINLOOP_CLOUD_*` environment variables and
+the on-disk files. "remote" also means a Spinloop fetched over HTTP and a
+daemon on another machine, so the old `remote` name was ambiguous. The old
+names are removed rather than kept as aliases.
+
 ## ADDED Requirements
 
 ### Requirement: The cloud command group
