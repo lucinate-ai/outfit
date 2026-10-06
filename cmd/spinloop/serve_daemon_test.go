@@ -26,7 +26,12 @@ import (
 func stubEngineDaemon(t *testing.T, argsFile string) {
 	t.Helper()
 	script := filepath.Join(t.TempDir(), "llama-server")
-	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + "\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"
+	// The argv is written to a sibling file and renamed into place. A plain
+	// redirection creates and truncates the file before printf writes to it, so
+	// a test polling for the file could read it empty; a rename makes it appear
+	// complete.
+	body := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argsFile + ".tmp && mv " + argsFile + ".tmp " + argsFile +
+		"\ntrap 'exit 0' TERM\nwhile true; do sleep 0.05; done\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -91,18 +96,43 @@ func apiDo(t *testing.T, method, url, token, body string) (int, map[string]any) 
 	return resp.StatusCode, decoded
 }
 
-// waitForFile polls until the stub engine has written path.
+// waitForFile polls until path holds something and returns its contents.
 func waitForFile(t *testing.T, path string) string {
 	t.Helper()
+	return waitForFileContaining(t, path)
+}
+
+// waitForFileContaining polls until path holds something and every want is in
+// it, and returns the contents. A file existing is not the same as its having
+// been written: a shell redirection creates and truncates a file before it
+// writes, and the daemon opens the engine log before its first line, so a read
+// that only waits for the file can land in that gap and see it empty or
+// partial. Waiting for the text the caller goes on to assert on removes the
+// gap. On timeout it fails with what the file last held.
+func waitForFileContaining(t *testing.T, path string, wants ...string) string {
+	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
+	last := ""
 	for time.Now().Before(deadline) {
 		if data, err := os.ReadFile(path); err == nil {
-			return string(data)
+			last = string(data)
+			if last != "" && containsAll(last, wants) {
+				return last
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("%s never appeared", path)
+	t.Fatalf("%s never held %q; it last held:\n%s", path, wants, last)
 	return ""
+}
+
+func containsAll(s string, wants []string) bool {
+	for _, w := range wants {
+		if !strings.Contains(s, w) {
+			return false
+		}
+	}
+	return true
 }
 
 // interruptSelf delivers the signal serve's daemon modes shut down on.
@@ -375,7 +405,7 @@ func TestCmdDaemon_LifecycleFromItsAPI(t *testing.T) {
 	}
 
 	// The engine was started with its metrics endpoint on.
-	if args := waitForFile(t, argsFile); !strings.Contains(args, "--metrics") {
+	if args := waitForFileContaining(t, argsFile, "--metrics"); !strings.Contains(args, "--metrics") {
 		t.Errorf("engine argv missing --metrics:\n%s", args)
 	}
 
@@ -447,8 +477,9 @@ func TestCmdDaemon_StartCarriesDeployConfig(t *testing.T) {
 		body["model"] != "org/model" {
 		t.Fatalf("start with body = %d %v", code, body)
 	}
-	args := waitForFile(t, argsFile)
-	for _, want := range []string{"org/model:Q4_K_M", "friendly", "16384", "--ngl", "--metrics"} {
+	wantArgs := []string{"org/model:Q4_K_M", "friendly", "16384", "--ngl", "--metrics"}
+	args := waitForFileContaining(t, argsFile, wantArgs...)
+	for _, want := range wantArgs {
 		if !strings.Contains(args, want) {
 			t.Errorf("engine argv missing %q:\n%s", want, args)
 		}
@@ -562,13 +593,13 @@ func TestCmdServe_ViewRunCapturesEngineOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := waitForFile(t, filepath.Join(stateDir, "engine.log"))
+	log := waitForFileContaining(t, filepath.Join(stateDir, "engine.log"), "engine up", "engine down")
 	for _, want := range []string{"engine up", "engine down"} {
 		if !strings.Contains(log, want) {
 			t.Errorf("the engine log is missing %q:\n%s", want, log)
 		}
 	}
-	args := waitForFile(t, argsFile)
+	args := waitForFileContaining(t, argsFile, "--metrics")
 	if !strings.Contains(args, "--metrics") {
 		t.Errorf("the view run must switch the metrics endpoint on:\n%s", args)
 	}
@@ -653,7 +684,7 @@ func TestCmdServe_ViewQuitStopsTheEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log := waitForFile(t, filepath.Join(stateDir, "engine.log"))
+	log := waitForFileContaining(t, filepath.Join(stateDir, "engine.log"), "engine stopped on TERM")
 	if !strings.Contains(log, "engine stopped on TERM") {
 		t.Errorf("the engine must be stopped through the supervisor on q:\n%s", log)
 	}
