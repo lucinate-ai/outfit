@@ -60,6 +60,16 @@ vi.mock('../lambda/shared/environments', async (importOriginal) => ({
 
 vi.mock('../lambda/shared/seed', () => ({ weightsPresent: async () => true }));
 
+// A scheduled start takes the environment's start lock like any other start;
+// here the lock is a stub so each test can say whether another start holds it.
+const acquireWakeLock = vi.fn();
+const releaseWakeLock = vi.fn();
+vi.mock('../lambda/shared/wake-lock', () => ({
+  acquireWakeLock: (...args: unknown[]) => acquireWakeLock(...args),
+  releaseWakeLock: (...args: unknown[]) => releaseWakeLock(...args),
+  wakeLockHeld: async () => false,
+}));
+
 let handler: (event: ScheduledRunEvent, context: Context) => Promise<LambdaFunctionURLResult>;
 
 beforeAll(async () => {
@@ -79,6 +89,8 @@ function structured(result: LambdaFunctionURLResult): { statusCode: number; body
 
 beforeEach(() => {
   vi.clearAllMocks();
+  acquireWakeLock.mockResolvedValue(true);
+  releaseWakeLock.mockResolvedValue(undefined);
   readDeployConfig.mockResolvedValue({
     runner: 'llamacpp',
     modelId: 'org/model',
@@ -131,6 +143,32 @@ describe('a scheduled start', () => {
     expect(structured(result).statusCode).toBe(503);
     expect(runInstance).not.toHaveBeenCalled();
     expect(startInstance).not.toHaveBeenCalled();
+  });
+
+  it('takes the environment’s start lock and releases it afterwards', async () => {
+    findManagedInstance.mockResolvedValue({ instanceId: 'i-run', state: 'running' });
+    getInstance.mockResolvedValue({ instanceId: 'i-run', state: 'running', launchTime: new Date() });
+
+    await handler(runEvent('start'), context);
+
+    expect(acquireWakeLock).toHaveBeenCalledTimes(1);
+    expect(acquireWakeLock.mock.calls[0][0]).toBe('dev');
+    expect(releaseWakeLock).toHaveBeenCalledTimes(1);
+    expect(releaseWakeLock.mock.calls[0][0]).toBe('dev');
+  });
+
+  it('launches nothing while a manual start holds the lock', async () => {
+    acquireWakeLock.mockResolvedValue(false);
+    findManagedInstance.mockResolvedValue(null);
+
+    const result = await handler(runEvent('start'), context);
+
+    expect(structured(result).statusCode).toBe(503);
+    expect(JSON.parse(structured(result).body).state).toBe('starting');
+    expect(findManagedInstance).not.toHaveBeenCalled();
+    expect(runInstance).not.toHaveBeenCalled();
+    expect(startInstance).not.toHaveBeenCalled();
+    expect(releaseWakeLock).not.toHaveBeenCalled();
   });
 
   it('ignores an event whose action is not start', async () => {

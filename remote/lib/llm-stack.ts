@@ -730,7 +730,11 @@ export class LlmStack extends cdk.Stack {
     scheduleFn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ssm:GetParameter', 'ssm:PutParameter', 'ssm:DeleteParameter'],
-        resources: [envParamArn],
+        // Its own parameter only: it does not read the deploy-config or touch
+        // the start lock.
+        resources: [
+          `arn:${cdk.Aws.PARTITION}:ssm:${cdk.Aws.REGION}:${cdk.Aws.ACCOUNT_ID}:parameter/cloud-vm-llm/*/schedules`,
+        ],
       }),
     );
     scheduleFn.addToRolePolicy(

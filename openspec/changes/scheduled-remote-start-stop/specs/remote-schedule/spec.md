@@ -54,6 +54,11 @@ When a `start` schedule fires, the control plane SHALL start the environment's i
 - **WHEN** a `start` schedule fires and the instance is already running
 - **THEN** nothing is launched and the instance keeps running
 
+#### Scenario: A scheduled start and a manual start launch one instance
+
+- **WHEN** a `start` schedule fires while a start from a client for the same environment holds its start lock
+- **THEN** the scheduled start launches nothing and ends with a retryable reply, and only one instance exists afterwards
+
 ### Requirement: A scheduled stop pauses the environment
 
 When a `stop` schedule fires, the control plane SHALL pause the environment's instance: stop it without terminating it, as `spinloop remote pause` does, so it can be woken again. When the instance carries a `Retain-Until` deadline that has not passed, the scheduled stop SHALL be skipped and the skip recorded in the stop Lambda's log. When there is no running instance, the scheduled stop SHALL do nothing.
