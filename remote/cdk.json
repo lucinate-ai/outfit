@@ -1,7 +1,7 @@
 {
   "app": "npx tsx bin/app.ts",
   "context": {
-    "//": "Shared-layer overrides (all optional). Per-environment settings — model, runner, context size, allowed CIDR — are given to `spinloop remote deploy`, not here.",
+    "//": "Shared-layer overrides (all optional). Per-environment settings — model, runner, context size, allowed CIDR — are given to `spinloop cloud deploy`, not here.",
     "//examples": {
       "availabilityZones": "us-east-1b,us-east-1c,us-east-1d,us-east-1e",
       "builderInstanceType": "m5.xlarge",

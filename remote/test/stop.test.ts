@@ -51,7 +51,7 @@ beforeAll(async () => {
   ({ handler } = await import('../lambda/stop/index'));
 });
 
-/** The stop URL as `spinloop remote <verb>` calls it: one environment, an optional mode. */
+/** The stop URL as `spinloop cloud <verb>` calls it: one environment, an optional mode. */
 function stopEvent(action?: string, method: 'GET' | 'POST' = 'POST', force?: boolean) {
   const query: Record<string, string> = { env: 'dev' };
   if (action) {

@@ -76,12 +76,12 @@ command's arity SHALL offer nothing.
 
 #### Scenario: A nested command offers its subcommands
 
-- **WHEN** the user completes `spinloop remote <TAB>`
+- **WHEN** the user completes `spinloop cloud <TAB>`
 - **THEN** its subcommands are offered, with no file paths
 
 #### Scenario: After a subcommand, the Spinloop slot completes
 
-- **WHEN** the user completes `spinloop remote deploy <TAB>`
+- **WHEN** the user completes `spinloop cloud deploy <TAB>`
 - **THEN** registered alias names and paths are offered
 
 #### Scenario: Providers complete from the catalogue

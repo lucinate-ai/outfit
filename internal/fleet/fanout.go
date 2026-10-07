@@ -146,7 +146,7 @@ func (c *Config) FanOut(ctx context.Context, call Call) []NodeResult {
 // FanOutNodes runs call over an explicit set of nodes concurrently and returns
 // one result per node, in the order the set is given. It is the seam that lets an
 // observable be driven regardless of where its nodes come from — a fleet file's
-// daemon nodes, a remote environment, or a mix — through the one fan-out the rest
+// daemon nodes, a cloud environment, or a mix — through the one fan-out the rest
 // of the client already shares.
 //
 // As with Config.FanOut it never returns an error: a node that cannot be reached

@@ -434,7 +434,7 @@ while true; do sleep 0.05; done`)
 
 	// The activity pair crosses the wire, not just the Go call: this is the
 	// shape the stats Lambda curls, so a field that never serialised would
-	// leave `spinloop remote metrics` silently blank.
+	// leave `spinloop cloud metrics` silently blank.
 	_, metricsBody := do("GET", "/v1/metrics", "sekrit", "")
 	_, statusBody := do("GET", "/v1/status", "sekrit", "")
 	if metricsBody["lastActiveAt"] == nil {

@@ -1,11 +1,11 @@
 // The CLI layer's single Viper instance: the one place that reads the SPINLOOP_*
-// environment values the CLI owns (SPINLOOP_ALIAS and the SPINLOOP_REMOTE_*
+// environment values the CLI owns (SPINLOOP_ALIAS and the SPINLOOP_CLOUD_*
 // control-plane settings). Every SPINLOOP_* variable whose precedence is an
 // internal contract is deliberately NOT read here — SPINLOOP_PROVIDERS
 // (catalog), SPINLOOP_BASE_URL (the injected resolve closures), SPINLOOP_LOG_LEVEL
 // (daemon.ParseLevel), SPINLOOP_HARNESS (harness.Resolve, which also reports the
 // source of the choice), and the domain-owned SPINLOOP_API_TOKEN /
-// SPINLOOP_CONFIG_DIR / SPINLOOP_REMOTE_* of other packages. Reading one of those
+// SPINLOOP_CONFIG_DIR / SPINLOOP_CLOUD_* of other packages. Reading one of those
 // through Viper would create a second reader of the same variable — the exact
 // silent drift this migration removes. See the ownership table in
 // openspec/changes/migrate-cli-to-cobra-viper/design.md (D3).
@@ -21,7 +21,7 @@ import (
 
 // cliViper is built once per process. AutomaticEnv plus the SPINLOOP prefix means
 // cliViper.GetString("alias") resolves SPINLOOP_ALIAS and
-// cliViper.GetString("remote_start_url") resolves SPINLOOP_REMOTE_START_URL, and
+// cliViper.GetString("cloud_start_url") resolves SPINLOOP_CLOUD_START_URL, and
 // a dash in a key is read from the underscored variable.
 var cliViper = newCLIViper()
 
@@ -34,8 +34,8 @@ func newCLIViper() *viper.Viper {
 }
 
 // viperGetenv returns a Viper-backed os.Getenv for the SPINLOOP_* variables the
-// CLI owns. internal/remote keeps its func(string) string injection point for
-// the SPINLOOP_REMOTE_* config keys; the CLI hands it this closure so the lookup
+// CLI owns. internal/cloud keeps its func(string) string injection point for
+// the SPINLOOP_CLOUD_* config keys; the CLI hands it this closure so the lookup
 // runs through cliViper instead of a raw os.Getenv. A name without the SPINLOOP_
 // prefix is not a CLI-owned variable, so it falls through to the process
 // environment unchanged, which keeps the closure safe as a general getenv.
@@ -64,7 +64,7 @@ func viperGetenv() func(string) string {
 // at call time rather than capturing it, so its closures follow the swap.
 //
 // In the current surface no CLI-owned variable has a flag spelling —
-// SPINLOOP_ALIAS and the SPINLOOP_REMOTE_* settings have none — so every binding
+// SPINLOOP_ALIAS and the SPINLOOP_CLOUD_* settings have none — so every binding
 // today is a no-op that exists so the precedence stays one mechanism if a flag
 // ever names one of them. The flags that have env counterparts today
 // (--providers, --base-url, --log-level, --harness) are resolved by the

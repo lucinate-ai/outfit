@@ -196,7 +196,7 @@ func (f *fakeDashNode) Logs(ctx context.Context, offset int64, limit int) (daemo
 // door and runs it to completion.
 func startFastRound(t *testing.T, m *dashModel) (dashRefreshMsg, bool) {
 	t.Helper()
-	cmd := m.refreshRemoteGroup(false)
+	cmd := m.refreshCloudGroup(false)
 	if cmd == nil {
 		return dashRefreshMsg{}, false
 	}
@@ -441,7 +441,7 @@ func TestDashTileStoppedByteStable(t *testing.T) {
 	if got := dashTestTile("idle", r, false, dashAction{}); got != want {
 		t.Errorf("stopped tile mismatch:\n%q\nwant:\n%q", got, want)
 	}
-	// A remote environment with no instance at all reports undeployed and
+	// A cloud environment with no instance at all reports undeployed and
 	// keeps its deployment: the serving line rides on the same shape, and
 	// the dot is the faded one, not the green of a serving node.
 	u := fleet.NodeResult{
@@ -698,7 +698,7 @@ func TestDashTileStaleReadingShowsItsAgeAndRecovers(t *testing.T) {
 	r := fleet.NodeResult{Name: "dev-1", Outcome: fleet.OutcomeOK,
 		Metrics: metrics.Stats{State: "running", Ready: "ready"},
 		At:      now.Add(-4 * time.Minute)}
-	staleAfter := dashStaleAfter(fleet.KindRemote) // three minutes, on the minute cadence
+	staleAfter := dashStaleAfter(fleet.KindCloud) // three minutes, on the minute cadence
 	got := dashTile("dev-1", r, false, dashAction{}, now, staleAfter, false)
 	want := dashTileExpected([]string{
 		dashExpectedHeader("dev-1  running  · 4m 0s ago", dashUnknown),
@@ -1411,13 +1411,13 @@ func TestDashModelRefreshOrdersReadingsByTheirTime(t *testing.T) {
 	}
 }
 
-// A kind: remote environment refreshes on its own slower deadline: the round
+// A kind: cloud environment refreshes on its own slower deadline: the round
 // starts only when that time comes, starting it spends the deadline, and the
 // manual refresh brings it forward whatever the deadline says.
-func TestDashModelRemoteCadence(t *testing.T) {
-	orig := dashboardRemoteRefreshInterval
-	dashboardRemoteRefreshInterval = time.Minute
-	defer func() { dashboardRemoteRefreshInterval = orig }()
+func TestDashModelCloudCadence(t *testing.T) {
+	orig := dashboardCloudRefreshInterval
+	dashboardCloudRefreshInterval = time.Minute
+	defer func() { dashboardCloudRefreshInterval = orig }()
 
 	local := newFakeDashNode("running")
 	r1 := newFakeDashNode("running")
@@ -1425,8 +1425,8 @@ func TestDashModelRemoteCadence(t *testing.T) {
 	m := &dashModel{
 		entries: []dashEntry{
 			{name: "local", kind: fleet.KindDaemon, node: local},
-			{name: "r1", kind: fleet.KindRemote, node: r1},
-			{name: "r2", kind: fleet.KindRemote, node: r2},
+			{name: "r1", kind: fleet.KindCloud, node: r1},
+			{name: "r2", kind: fleet.KindCloud, node: r2},
 		},
 		results: make([]fleet.NodeResult, 3),
 		actions: make([]dashAction, 3),
@@ -1479,17 +1479,17 @@ func TestDashModelRemoteCadence(t *testing.T) {
 // kind, and returns to its own cadence once the action settles. Its
 // neighbours in the same group keep their own cadence throughout.
 func TestDashModelActedOnNodeIsReadMoreOften(t *testing.T) {
-	orig := dashboardRemoteRefreshInterval
-	dashboardRemoteRefreshInterval = time.Minute
-	defer func() { dashboardRemoteRefreshInterval = orig }()
+	orig := dashboardCloudRefreshInterval
+	dashboardCloudRefreshInterval = time.Minute
+	defer func() { dashboardCloudRefreshInterval = orig }()
 
 	r1, r2 := newFakeDashNode("stopped"), newFakeDashNode("running")
 	hold := make(chan struct{})
 	r1.hold = hold
 	m := &dashModel{
 		entries: []dashEntry{
-			{name: "r1", kind: fleet.KindRemote, node: r1},
-			{name: "r2", kind: fleet.KindRemote, node: r2},
+			{name: "r1", kind: fleet.KindCloud, node: r1},
+			{name: "r2", kind: fleet.KindCloud, node: r2},
 		},
 		results: make([]fleet.NodeResult, 2),
 		actions: make([]dashAction, 2),
@@ -1656,8 +1656,8 @@ func TestDashModelConcurrentStarts(t *testing.T) {
 	b := newFakeDashNode("stopped")
 	m := &dashModel{
 		entries: []dashEntry{
-			{name: "a", kind: fleet.KindRemote, node: a},
-			{name: "b", kind: fleet.KindRemote, node: b},
+			{name: "a", kind: fleet.KindCloud, node: a},
+			{name: "b", kind: fleet.KindCloud, node: b},
 		},
 		results: make([]fleet.NodeResult, 2),
 		actions: make([]dashAction, 2),
@@ -1734,7 +1734,7 @@ func TestDashModelLandedRoundShowsBesideInFlightAction(t *testing.T) {
 	dashFixNow(t, dashTestClock)
 	f := newFakeDashNode("stopped")
 	m := &dashModel{
-		entries: []dashEntry{{name: "a", kind: fleet.KindRemote, node: f}},
+		entries: []dashEntry{{name: "a", kind: fleet.KindCloud, node: f}},
 		results: make([]fleet.NodeResult, 1),
 		actions: make([]dashAction, 1),
 		width:   120, height: 40,
@@ -1750,7 +1750,7 @@ func TestDashModelLandedRoundShowsBesideInFlightAction(t *testing.T) {
 			Since: dashTestClock, RetryAt: dashTestClock.Add(time.Second)}})
 	m = next.(*dashModel)
 	// The cloud round lands while the start is in flight.
-	cmd := m.refreshRemoteGroup(true)
+	cmd := m.refreshCloudGroup(true)
 	if cmd == nil {
 		t.Fatal("the cloud round did not start")
 	}
@@ -1860,7 +1860,7 @@ func TestDashModelQuitDuringConfirmation(t *testing.T) {
 func TestDashModelLateRoundDoesNotOverwriteAPostActionReport(t *testing.T) {
 	node := newFakeDashNode("stopped")
 	m := &dashModel{
-		entries: []dashEntry{{name: "a", kind: fleet.KindRemote, node: node}},
+		entries: []dashEntry{{name: "a", kind: fleet.KindCloud, node: node}},
 		results: make([]fleet.NodeResult, 1),
 		actions: make([]dashAction, 1),
 		width:   120, height: 40,
@@ -1869,13 +1869,13 @@ func TestDashModelLateRoundDoesNotOverwriteAPostActionReport(t *testing.T) {
 	// The start finishes, and the report that follows it lands.
 	after := fleet.NodeResult{Name: "a", Outcome: fleet.OutcomeOK,
 		Metrics: metrics.Stats{State: "running"}, At: issued.Add(3 * time.Second)}
-	next, _ := m.Update(dashRefreshMsg{remote: true, idx: []int{0}, results: []fleet.NodeResult{after}})
+	next, _ := m.Update(dashRefreshMsg{cloud: true, idx: []int{0}, results: []fleet.NodeResult{after}})
 	m = next.(*dashModel)
 	// The round issued before the action finished now answers, carrying the
 	// node as it was then.
 	before := fleet.NodeResult{Name: "a", Outcome: fleet.OutcomeOK,
 		Metrics: metrics.Stats{State: "stopped"}, At: issued}
-	next, _ = m.Update(dashRefreshMsg{remote: true, idx: []int{0}, results: []fleet.NodeResult{before}})
+	next, _ = m.Update(dashRefreshMsg{cloud: true, idx: []int{0}, results: []fleet.NodeResult{before}})
 	m = next.(*dashModel)
 	if got := m.results[0].Metrics.State; got != "running" {
 		t.Errorf("the late round repainted the node's older report: state = %q, want running", got)
@@ -1887,14 +1887,14 @@ func TestDashModelLateRoundDoesNotOverwriteAPostActionReport(t *testing.T) {
 func TestDashModelSlowRoundInFlightGuard(t *testing.T) {
 	node := newFakeDashNode("running")
 	m := &dashModel{
-		entries: []dashEntry{{name: "a", kind: fleet.KindRemote, node: node}},
+		entries: []dashEntry{{name: "a", kind: fleet.KindCloud, node: node}},
 		results: make([]fleet.NodeResult, 1),
 		actions: make([]dashAction, 1),
 		width:   120, height: 40,
 	}
 	m.slowBusy = true
 	m.scheduleRead(0, time.Time{}) // the node is due
-	if cmd := m.refreshRemoteGroup(true); cmd != nil {
+	if cmd := m.refreshCloudGroup(true); cmd != nil {
 		t.Fatal("started a second slow round over one in flight")
 	}
 }
@@ -2005,7 +2005,7 @@ func TestDashModelAbortsAnInFlightStart(t *testing.T) {
 	f := newFakeDashNode("stopped")
 	f.hold = hold // the start stays in flight until released or cancelled
 	m := &dashModel{
-		entries: []dashEntry{{name: "a", kind: fleet.KindRemote, node: f}},
+		entries: []dashEntry{{name: "a", kind: fleet.KindCloud, node: f}},
 		results: []fleet.NodeResult{{Name: "a"}},
 		actions: make([]dashAction, 1),
 		width:   120, height: 40,
@@ -2095,7 +2095,7 @@ func TestDashModelAbortOnAnIdleNodeDrivesNothing(t *testing.T) {
 func TestDashModelRacingSuccessIsReportedAsSuccess(t *testing.T) {
 	node := newFakeDashNode("stopped")
 	m := &dashModel{
-		entries: []dashEntry{{name: "a", kind: fleet.KindRemote, node: node}},
+		entries: []dashEntry{{name: "a", kind: fleet.KindCloud, node: node}},
 		results: []fleet.NodeResult{{Name: "a"}},
 		actions: make([]dashAction, 1),
 		width:   120, height: 40,
@@ -2721,9 +2721,9 @@ func TestDashFooterNamesOnlyTheKeysTheNodeTakes(t *testing.T) {
 			"esc back   f follow",
 		},
 		{
-			"a stopped remote environment",
+			"a stopped cloud environment",
 			dashModel{
-				entries: []dashEntry{{name: "env", kind: fleet.KindRemote, node: kept}},
+				entries: []dashEntry{{name: "env", kind: fleet.KindCloud, node: kept}},
 				results: []fleet.NodeResult{read("stopped")},
 				actions: make([]dashAction, 1),
 			},
@@ -2731,9 +2731,9 @@ func TestDashFooterNamesOnlyTheKeysTheNodeTakes(t *testing.T) {
 			"esc back   s start   k keep   f follow",
 		},
 		{
-			"a running remote environment",
+			"a running cloud environment",
 			dashModel{
-				entries: []dashEntry{{name: "env", kind: fleet.KindRemote, node: kept}},
+				entries: []dashEntry{{name: "env", kind: fleet.KindCloud, node: kept}},
 				results: []fleet.NodeResult{read("running")},
 				actions: make([]dashAction, 1),
 			},

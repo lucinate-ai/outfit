@@ -340,7 +340,7 @@ func TestApply_ByAlias(t *testing.T) {
 	registerSpinloop(t, "PROVIDER llamacpp\nMODEL gemma\nALIAS q3\n")
 	t.Chdir(t.TempDir()) // somewhere else entirely
 
-	// The alias line goes to stderr, so `spinloop remote env` can be eval'd.
+	// The alias line goes to stderr, so `spinloop cloud env` can be eval'd.
 	var stdout string
 	stderr := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
@@ -538,7 +538,7 @@ func TestEnvAlias_SuppliesTheSpinloop(t *testing.T) {
 	t.Chdir(t.TempDir()) // no Spinloop here
 	t.Setenv("SPINLOOP_ALIAS", "q3")
 
-	// Like the alias-argument note, this belongs on stderr so `spinloop remote
+	// Like the alias-argument note, this belongs on stderr so `spinloop cloud
 	// env` stays eval-able.
 	var stdout string
 	stderr := captureStderr(t, func() {
@@ -803,13 +803,13 @@ func TestEnvAlias_ReachesServe(t *testing.T) {
 	}
 }
 
-// TestEnvAlias_ReachesRemote checks the case that first caught this out: a
-// `remote` subcommand with no argument only consults a Spinloop when one is
+// TestEnvAlias_ReachesCloud checks the case that first caught this out: a
+// `cloud` subcommand with no argument only consults a Spinloop when one is
 // there to consult, and SPINLOOP_ALIAS names one as surely as a ./Spinloop does
 // — here for its ENV instructions, which name the control plane. Without this
 // the command fell through to the per-user default config and reported the
 // endpoint as unconfigured.
-func TestEnvAlias_ReachesRemote(t *testing.T) {
+func TestEnvAlias_ReachesCloud(t *testing.T) {
 	isolateConfig(t)
 	stubAWSEnv(t)
 
@@ -821,8 +821,8 @@ func TestEnvAlias_ReachesRemote(t *testing.T) {
 	// behind.
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, spinloop.DefaultFile),
-		"PROVIDER openai-compatible\nALIAS q3\nENV SPINLOOP_REMOTE_START_URL="+server.URL+"\nENV SPINLOOP_REMOTE_STOP_URL="+server.URL+"\nENV SPINLOOP_REMOTE_REGION=eu-west-1\n")
-	unsetEnvOnCleanup(t, "SPINLOOP_REMOTE_START_URL", "SPINLOOP_REMOTE_STOP_URL", "SPINLOOP_REMOTE_REGION")
+		"PROVIDER openai-compatible\nALIAS q3\nENV SPINLOOP_CLOUD_START_URL="+server.URL+"\nENV SPINLOOP_CLOUD_STOP_URL="+server.URL+"\nENV SPINLOOP_CLOUD_REGION=eu-west-1\n")
+	unsetEnvOnCleanup(t, "SPINLOOP_CLOUD_START_URL", "SPINLOOP_CLOUD_STOP_URL", "SPINLOOP_CLOUD_REGION")
 	captureStdout(t, func() {
 		if err := cmdAlias([]string{dir}); err != nil {
 			t.Fatalf("cmdAlias: %v", err)
@@ -832,8 +832,8 @@ func TestEnvAlias_ReachesRemote(t *testing.T) {
 	t.Chdir(t.TempDir()) // no ./Spinloop, so only the variable can find it
 	t.Setenv("SPINLOOP_ALIAS", "q3")
 
-	if err := cmdRemoteStop([]string{"--env", "default"}); err != nil {
-		t.Fatalf("cmdRemoteStop with SPINLOOP_ALIAS: %v", err)
+	if err := cmdCloudStop([]string{"--env", "default"}); err != nil {
+		t.Fatalf("cmdCloudStop with SPINLOOP_ALIAS: %v", err)
 	}
 	select {
 	case name := <-hit:
@@ -879,14 +879,14 @@ func TestEnvAlias_RemoteFailsRatherThanFallingBack(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("SPINLOOP_ALIAS", "nope")
 
-	err := cmdRemoteStop([]string{"--env", "default"})
+	err := cmdCloudStop([]string{"--env", "default"})
 	if err == nil {
 		t.Fatal("expected an error for an unregistered SPINLOOP_ALIAS")
 	}
 	if !strings.Contains(err.Error(), "SPINLOOP_ALIAS") {
 		t.Errorf("error %q does not name the variable", err)
 	}
-	if strings.Contains(err.Error(), "remote is not configured") {
+	if strings.Contains(err.Error(), "cloud is not configured") {
 		t.Errorf("the variable was passed over for the default config: %v", err)
 	}
 }
@@ -903,11 +903,11 @@ func TestEnvAlias_RemoteFallsBackWithoutREMOTE(t *testing.T) {
 	t.Chdir(t.TempDir())
 	t.Setenv("SPINLOOP_ALIAS", "q3")
 
-	err := cmdRemoteStop([]string{"--env", "default"})
+	err := cmdCloudStop([]string{"--env", "default"})
 	if err == nil {
 		t.Fatal("expected an error: there is no default endpoint config either")
 	}
-	if !strings.Contains(err.Error(), "remote is not configured") {
+	if !strings.Contains(err.Error(), "cloud is not configured") {
 		t.Errorf("error = %q, want the default-config failure (the fallback still applies)", err)
 	}
 }

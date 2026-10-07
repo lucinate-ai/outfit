@@ -1,25 +1,25 @@
-# Remote Local Environment Specification
+# Cloud Local Environment Specification
 
 ## Purpose
 
-Define how the `remote` control commands load the local environment tied to a
+Define how the `cloud` control commands load the local environment tied to a
 resolved Spinloop — the adjacent `.env` file and the Spinloop's own `ENV`
 instructions — so that AWS credentials, region resolution, and
-`SPINLOOP_REMOTE_*` overrides see those values, while keeping them local to the
+`SPINLOOP_CLOUD_*` overrides see those values, while keeping them local to the
 device invoking `spinloop`.
 
 ## Requirements
 
-### Requirement: Remote commands load the Spinloop's local environment
+### Requirement: Cloud commands load the Spinloop's local environment
 
-The `remote` control commands that resolve a Spinloop — `deploy`, `start`,
+The `cloud` control commands that resolve a Spinloop — `deploy`, `start`,
 `stop`, `status`, `stats`, and the other subcommands that take one — SHALL,
 before performing any AWS or control-plane work, load environment variables
 into the process environment from two sources tied to the resolved Spinloop:
 the `.env` file beside that Spinloop, and the Spinloop's
 own `ENV` instructions. The loaded values SHALL be visible to everything the
 command does afterwards — the AWS credential chain, the region resolution, and
-the `SPINLOOP_REMOTE_*` overrides. The Spinloop is read for these local values
+the `SPINLOOP_CLOUD_*` overrides. The Spinloop is read for these local values
 only: which environment the command acts on is selected by the command's
 `--env` flag, with the `default` environment as the fallback, and the Spinloop
 itself names no environment. When a command resolves no Spinloop (no path
@@ -32,26 +32,26 @@ no-Spinloop-resolved case does.
 
 #### Scenario: A .env beside the Spinloop reaches the control calls
 
-- **WHEN** `spinloop remote status ./Spinloop` runs and a `.env` beside that Spinloop
-  sets `SPINLOOP_REMOTE_START_URL`, unset in the process environment
+- **WHEN** `spinloop cloud status ./Spinloop` runs and a `.env` beside that Spinloop
+  sets `SPINLOOP_CLOUD_START_URL`, unset in the process environment
 - **THEN** the command uses that value when it contacts the control endpoint
 
 #### Scenario: Every control command loads the local environment
 
-- **WHEN** any `remote` subcommand resolves a Spinloop
+- **WHEN** any `cloud` subcommand resolves a Spinloop
 - **THEN** that Spinloop's adjacent `.env` and its `ENV` instructions are loaded
   before the command performs any AWS or control-plane work
 
 #### Scenario: No Spinloop, nothing to load
 
-- **WHEN** a `remote` command runs with no Spinloop resolved and acts on the
+- **WHEN** a `cloud` command runs with no Spinloop resolved and acts on the
   `default` environment
 - **THEN** no adjacent `.env` is read and the command proceeds on the process
   environment alone
 
 #### Scenario: A URL-sourced Spinloop has no adjacent .env
 
-- **WHEN** a `remote` command resolves a Spinloop fetched from a URL
+- **WHEN** a `cloud` command resolves a Spinloop fetched from a URL
 - **THEN** no `.env` read is attempted, and only that Spinloop's own `ENV`
   instructions and the process environment are applied
 
@@ -91,6 +91,6 @@ the deployed instance.
 
 #### Scenario: Deploy does not forward ENV to the instance
 
-- **WHEN** `spinloop remote deploy` runs for a Spinloop that declares `ENV` variables
+- **WHEN** `spinloop cloud deploy` runs for a Spinloop that declares `ENV` variables
 - **THEN** the configuration sent to the deploy endpoint contains none of those
   variables — they shape only the local command's own environment

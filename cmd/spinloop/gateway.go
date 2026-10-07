@@ -154,8 +154,8 @@ func newGatewayServer(fleetPath, listen, apiToken, apiTokenFile string, maxReque
 		if _, err := cfg.Token(entry); err != nil {
 			return nil, nil, err
 		}
-		if entry.Kind == fleet.KindRemote {
-			if _, err := cfg.RemoteEngineToken(entry); err != nil {
+		if entry.Kind == fleet.KindCloud {
+			if _, err := cfg.CloudEngineToken(entry); err != nil {
 				return nil, nil, err
 			}
 		} else if _, err := cfg.EngineToken(entry); err != nil {

@@ -73,7 +73,7 @@ picker and a second gateway does not overwrite this one. See
 | Path | Meaning |
 | ---- | ------- |
 | `GET /health` | That the gateway is up. It touches no node on purpose — it is how you tell the gateway down from the fleet down. |
-| `GET /v1/models` | The OpenAI list of what a request can reach: what the running nodes report (the served name when a node reports one, else the model id), and, for a stopped node [waking can reach](#waking-a-node), the model it would start with — its own Spinloop source for a `kind: daemon` node, its own stats reply for a `kind: remote` one. Duplicates once. Nothing reachable is an empty list, not an error. |
+| `GET /v1/models` | The OpenAI list of what a request can reach: what the running nodes report (the served name when a node reports one, else the model id), and, for a stopped node [waking can reach](#waking-a-node), the model it would start with — its own Spinloop source for a `kind: daemon` node, its own stats reply for a `kind: cloud` one. Duplicates once. Nothing reachable is an empty list, not an error. |
 | `POST /v1/chat/completions` | Routed to the node serving the request's `model`, the way a launch routes. |
 | `POST /v1/completions` | The same, for the completions endpoint. |
 | `GET /v1/fleet` | The fleet's [topology](#the-fleets-topology) — what a [`spinloop orchestrator`](orchestrator.md) reads to work its backlog. |
@@ -83,7 +83,7 @@ not serve is refused with a `404` naming the ones it does.
 
 The list is what a request can reach, so it is bounded by what the gateway can
 start: a running node contributes only what it reports — a running engine is
-never displaced to make room. A deployed-but-stopped `kind: remote`
+never displaced to make room. A deployed-but-stopped `kind: cloud`
 environment contributes the model id its own stats reply reports — read
 directly from its stored deploy config, the way `spinloop metrics --env <name>`
 already reads it, since its status reply carries no such facts while
@@ -106,7 +106,7 @@ The request's body goes out unmodified and streamed replies are flushed as
 they are produced, so a `stream: true` request streams through. The caller's
 authorisation never travels past the gateway: the engine is reached with the
 key its fleet entry names (`engineTokenEnv`, or the fleet-wide `apiKeyEnv` for
-a `kind: remote` node), and an ungated engine is reached with none. The reply
+a `kind: cloud` node), and an ungated engine is reached with none. The reply
 the engine gives is the reply the caller gets — the gateway never retries
 another node, and an upstream failure reaches the caller as an error naming
 the node.
@@ -140,21 +140,21 @@ one whose stored config already matches is tried first:
 
 - A **`kind: daemon`** node is started with the config its own Spinloop
   source resolves to.
-- A **deployed-but-stopped `kind: remote`** node is booted as it is: its own
-  stored deploy config — set by `spinloop remote deploy`, not by this wake —
+- A **deployed-but-stopped `kind: cloud`** node is booted as it is: its own
+  stored deploy config — set by `spinloop cloud deploy`, not by this wake —
   decides what it serves, and the gateway pushes nothing new. An
   **undeployed** environment is never a candidate: it has nothing to serve
-  yet, and choosing what to deploy is `spinloop remote deploy`'s call, not a
+  yet, and choosing what to deploy is `spinloop cloud deploy`'s call, not a
   request's.
 
 The wait is bounded by `--wake-timeout` (default 5m); a timeout fails the
 request saying so and leaves the engine running, so a slow load — or, for a
-remote node, a slow boot — is not thrown away. Concurrent requests for the
+cloud node, a slow boot — is not thrown away. Concurrent requests for the
 same model wake at most one engine: the gateway coalesces two requests
 racing to wake the same node into a single start, so a request that arrives
 mid-wake joins the one already under way rather than starting a second
 engine of its own — a daemon node's control API would refuse the second
-start anyway, but a remote environment's control plane does not, so this is
+start anyway, but a cloud environment's control plane does not, so this is
 what keeps a burst of requests from booting (and billing for) more than one
 instance.
 

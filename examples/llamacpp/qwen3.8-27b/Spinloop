@@ -1,4 +1,4 @@
-# Qwen3.8-27B served locally by llama.cpp, or on a cloud GPU via spinloop remote.
+# Qwen3.8-27B served locally by llama.cpp, or on a cloud GPU via spinloop cloud.
 # ALIAS names the model in opencode and selects the preset section below.
 PROVIDER llamacpp
 ALIAS    qwen3.8-27b

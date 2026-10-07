@@ -173,7 +173,7 @@ Status SHALL also report the daemon's spinloop version as a string, set from the
 
 ### Requirement: Deploy config push
 
-The API SHALL accept a deploy config in the same shape `spinloop remote deploy`
+The API SHALL accept a deploy config in the same shape `spinloop cloud deploy`
 derives from a Spinloop and its preset (runner, model, context, alias, serve
 args — the preset already resolved by the pusher). The daemon SHALL validate
 that the runner names an engine it can serve, persist the config, and use it

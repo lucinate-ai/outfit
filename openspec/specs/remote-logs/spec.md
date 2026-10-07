@@ -1,7 +1,7 @@
 # remote-logs Specification
 
 ## Purpose
-Define how an operator reads the logs a remote environment's instances have
+Define how an operator reads the logs a cloud environment's instances have
 shipped: which environment and which of the two sources (the inference engine's
 output and the boot output) are read, how much is fetched and in what order,
 following output as it arrives, and the failures that are named so they can be
@@ -30,9 +30,9 @@ the same `--env` always speak about the same environment.
 - **WHEN** the operator runs `spinloop logs --env dev-2`
 - **THEN** `dev-2`'s logs are printed rather than any other environment's
 
-#### Scenario: The remote spelling names its replacement
+#### Scenario: The cloud spelling names its replacement
 
-- **WHEN** the operator runs `spinloop remote logs`
+- **WHEN** the operator runs `spinloop cloud logs`
 - **THEN** it fails naming `spinloop logs --env <name>` as the command that
   replaced it
 

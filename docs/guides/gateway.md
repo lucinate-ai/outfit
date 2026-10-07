@@ -1,6 +1,6 @@
 # Serve the fleet as a gateway
 
-A fleet of [daemons](daemon.md) and [environments](remote.md) is many
+A fleet of [daemons](daemon.md) and [environments](cloud.md) is many
 addresses. `spinloop gateway` puts one in front of them: an
 OpenAI-compatible endpoint where each request is answered by the fleet's own
 selector, and a stopped node is started — or the request refused — the way the

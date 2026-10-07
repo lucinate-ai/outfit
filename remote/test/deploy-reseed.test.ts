@@ -82,7 +82,7 @@ describe('deploy --reseed', () => {
     expect(reply.seedId).toBe('llamacpp--m');
   });
 
-  it('takes the same force path as `spinloop remote seed start --force`', async () => {
+  it('takes the same force path as `spinloop cloud seed start --force`', async () => {
     // One behaviour, one implementation: --reseed must escape the launch
     // idempotency token exactly as a forced seed does, or it would be handed
     // back the attempt it is replacing.

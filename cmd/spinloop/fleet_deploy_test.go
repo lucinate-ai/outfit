@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/config"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 // fleetDeployServer answers every environment's deploy call with a
@@ -34,15 +34,15 @@ func fleetDeployServer(t *testing.T) *httptest.Server {
 // --overwrite) unless overridden by the caller after this returns.
 func stubFleetDeploySeams(t *testing.T, server *httptest.Server) {
 	t.Helper()
-	origDiscover, origStatus, origDetect := deployDiscoverFn, remoteStatusFn, detectPublicCIDRFn
-	t.Cleanup(func() { deployDiscoverFn, remoteStatusFn, detectPublicCIDRFn = origDiscover, origStatus, origDetect })
-	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.ControlPlane, error) {
-		return remote.ControlPlane{Config: remote.Config{
+	origDiscover, origStatus, origDetect := deployDiscoverFn, cloudStatusFn, detectPublicCIDRFn
+	t.Cleanup(func() { deployDiscoverFn, cloudStatusFn, detectPublicCIDRFn = origDiscover, origStatus, origDetect })
+	deployDiscoverFn = func(context.Context, aws.Config, string) (cloud.ControlPlane, error) {
+		return cloud.ControlPlane{Config: cloud.Config{
 			StartURL: server.URL, StopURL: server.URL, DeployURL: server.URL, Region: "us-east-1",
 		}}, nil
 	}
-	remoteStatusFn = func(context.Context, remote.Config) (*remote.Response, error) {
-		return &remote.Response{StatusCode: 200, State: "undeployed"}, nil
+	cloudStatusFn = func(context.Context, cloud.Config) (*cloud.Response, error) {
+		return &cloud.Response{StatusCode: 200, State: "undeployed"}, nil
 	}
 	detectPublicCIDRFn = func(context.Context) (string, error) { return "203.0.113.7/32", nil }
 }
@@ -58,17 +58,17 @@ func writeFleetDeploySetup(t *testing.T) string {
 	dir := writeFleetFile(t, `
 nodes:
   - name: gpu-a
-    kind: remote
+    kind: cloud
     file: ./gpu-a.Spinloop
   - name: gpu-b
-    kind: remote
+    kind: cloud
     file: ./gpu-b.Spinloop
   - name: aliased
-    kind: remote
+    kind: cloud
   - name: subdir-env
-    kind: remote
+    kind: cloud
   - name: no-source
-    kind: remote
+    kind: cloud
   - name: studio
     host: studio.local
 `)
@@ -154,7 +154,7 @@ func TestCmdFleetDeployNoTargetIsAnError(t *testing.T) {
 	}
 	for _, want := range []string{"gpu-a", "gpu-b", "aliased"} {
 		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q should list the remote nodes, missing %q", err, want)
+			t.Errorf("error %q should list the cloud nodes, missing %q", err, want)
 		}
 	}
 	// studio (kind: daemon) must not be offered as a deploy target.
@@ -229,8 +229,8 @@ func TestCmdFleetDeployResolvedButUndeployableSpinloopFailsOnlyThatNode(t *testi
 
 	// gpu-a's own file, with a REMOTE line — readSpinloop rejects it, but
 	// resolveNodeSpinloop has already succeeded by the time it does.
-	staleRemote := filepath.Join(dir, "gpu-a.Spinloop")
-	if err := os.WriteFile(staleRemote, []byte("PROVIDER llamacpp\nMODEL org/m:Q4\nCONTEXT 8192\nREMOTE gpu-a\n"), 0o600); err != nil {
+	staleCloud := filepath.Join(dir, "gpu-a.Spinloop")
+	if err := os.WriteFile(staleCloud, []byte("PROVIDER llamacpp\nMODEL org/m:Q4\nCONTEXT 8192\nREMOTE gpu-a\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -291,7 +291,7 @@ func TestCmdFleetDeployGuardDoesNotBlockSiblings(t *testing.T) {
 	server := fleetDeployServer(t)
 	stubFleetDeploySeams(t, server)
 
-	if err := remote.SaveEnvironment("gpu-a", remote.Config{StartURL: "https://s", StopURL: "https://x", Region: "us-east-1"}); err != nil {
+	if err := cloud.SaveEnvironment("gpu-a", cloud.Config{StartURL: "https://s", StopURL: "https://x", Region: "us-east-1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -313,9 +313,9 @@ func TestCmdFleetDeployDryRunTouchesNothing(t *testing.T) {
 	called := false
 	origDiscover := deployDiscoverFn
 	t.Cleanup(func() { deployDiscoverFn = origDiscover })
-	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.ControlPlane, error) {
+	deployDiscoverFn = func(context.Context, aws.Config, string) (cloud.ControlPlane, error) {
 		called = true
-		return remote.ControlPlane{}, fmt.Errorf("must not be called")
+		return cloud.ControlPlane{}, fmt.Errorf("must not be called")
 	}
 
 	out := captureStdout(t, func() {
@@ -342,11 +342,11 @@ func TestCmdFleetDeployInstanceTypePerNode(t *testing.T) {
 	dir := writeFleetFile(t, `
 nodes:
   - name: typed
-    kind: remote
+    kind: cloud
     file: ./typed.Spinloop
     instance-type: g6e.2xlarge
   - name: untyped
-    kind: remote
+    kind: cloud
     file: ./untyped.Spinloop
 `)
 	writeSpinloop := func(name string) {
@@ -359,10 +359,10 @@ nodes:
 	writeSpinloop("typed.Spinloop")
 	writeSpinloop("untyped.Spinloop")
 
-	deployDiscoverFn = func(context.Context, aws.Config, string) (remote.ControlPlane, error) {
-		return remote.ControlPlane{}, fmt.Errorf("must not be called")
+	deployDiscoverFn = func(context.Context, aws.Config, string) (cloud.ControlPlane, error) {
+		return cloud.ControlPlane{}, fmt.Errorf("must not be called")
 	}
-	t.Cleanup(func() { deployDiscoverFn = remote.DiscoverControlPlane })
+	t.Cleanup(func() { deployDiscoverFn = cloud.DiscoverControlPlane })
 
 	// --dry-run touches nothing, so no deploy seams need stubbing.
 	outTyped := captureStdout(t, func() {
@@ -388,7 +388,7 @@ nodes:
 // registered, under the isolated config dir this test's HOME points at.
 func mustEnvConfigPath(t *testing.T, env string) string {
 	t.Helper()
-	path, err := remote.EnvConfigPath(env)
+	path, err := cloud.EnvConfigPath(env)
 	if err != nil {
 		t.Fatal(err)
 	}

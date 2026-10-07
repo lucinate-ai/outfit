@@ -1,7 +1,7 @@
 // Routing a launch through the fleet: choosing the node the agent talks to. It
-// sits beside the remote path in main.go — both answer "where does this agent
+// sits beside the cloud path in main.go — both answer "where does this agent
 // send its requests", one by asking a control plane and one by choosing a
-// machine — and it runs before the apply for the same reason the remote fetch
+// machine — and it runs before the apply for the same reason the cloud fetch
 // does: a failed route must leave the harness config alone.
 
 package main

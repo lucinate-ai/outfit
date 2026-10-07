@@ -62,7 +62,7 @@ nav:
     - Open your coding agent: guides/harness.md
     - From a Hugging Face model: guides/hugging-face.md
     - Run a daemon node: guides/daemon.md
-    - Deploy to a cloud GPU: guides/remote.md
+    - Deploy to a cloud GPU: guides/cloud.md
     - Run a fleet: guides/fleet.md
     - Serve the fleet as a gateway: guides/gateway.md
     - Work a backlog: guides/work-items.md
@@ -81,7 +81,7 @@ nav:
       - spinloop hf: commands/hf.md
       - spinloop alias: commands/alias.md
       - spinloop unalias: commands/unalias.md
-      - spinloop remote: commands/remote.md
+      - spinloop cloud: commands/cloud.md
       - spinloop fleet: commands/fleet.md
       - spinloop gateway: commands/gateway.md
       - spinloop orchestrator: commands/orchestrator.md

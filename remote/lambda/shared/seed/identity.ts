@@ -6,7 +6,7 @@
  * remembers an identifier, and the same model always resolves to the same seed.
  *
  * The id is a slug rather than a digest on purpose. It is typed into
- * `spinloop remote seed stop`, read in `spinloop remote seed ls`, and recognised in
+ * `spinloop cloud seed stop`, read in `spinloop cloud seed ls`, and recognised in
  * the CloudWatch console; `vllm--Qwen-Qwen3-32B` serves all three and a sha256
  * serves none of them.
  */

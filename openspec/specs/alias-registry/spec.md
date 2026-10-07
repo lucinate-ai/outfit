@@ -4,7 +4,7 @@
 
 Define the alias registry: naming a Spinloop once with `spinloop alias` so the
 name stands in for its path in every command that takes one (`apply`,
-`unapply`, `serve`, `harness`, and the `remote` control commands `deploy`,
+`unapply`, `serve`, `harness`, and the `cloud` control commands `deploy`,
 `start`, `stop`, `status`, `stats`), and the rules that keep aliases from ever
 changing what an already-working command does.
 
@@ -75,7 +75,7 @@ fetched. When an alias decides the path, the command SHALL say so.
 
 That report SHALL go to stderr. It is prose about how the command was resolved
 rather than the command's result, and the same resolution serves
-`spinloop remote env`, whose stdout is meant to be evaluated by a shell.
+`spinloop cloud env`, whose stdout is meant to be evaluated by a shell.
 
 #### Scenario: Alias used from anywhere
 
@@ -86,7 +86,7 @@ rather than the command's result, and the same resolution serves
 #### Scenario: The alias note stays out of stdout
 
 - **WHEN** an alias resolves the Spinloop for a command whose stdout is consumed
-  by a shell, such as `spinloop remote env`
+  by a shell, such as `spinloop cloud env`
 - **THEN** the note naming the alias is written to stderr and stdout carries
   only the command's own output
 
@@ -131,14 +131,14 @@ When `SPINLOOP_ALIAS` decides the Spinloop, the command SHALL say so on stderr,
 naming the variable, the alias and the resolved path.
 
 A command that consults a Spinloop only when there is one to consult — the
-`remote` subcommands, which otherwise act on the `default` environment, and
+`cloud` subcommands, which otherwise act on the `default` environment, and
 `daemon`, which otherwise starts idle — SHALL count `SPINLOOP_ALIAS` as naming
 one. A set variable SHALL NOT be passed over in favour of that fallback.
 
 #### Scenario: The variable counts as having a Spinloop
 
 - **WHEN** `SPINLOOP_ALIAS` names a Spinloop whose `ENV` instructions set
-  `AWS_PROFILE` and the user runs `spinloop remote status` in a directory with
+  `AWS_PROFILE` and the user runs `spinloop cloud status` in a directory with
   no `Spinloop`
 - **THEN** that Spinloop's `ENV` instructions are applied to the process
   environment before the control call, rather than being skipped because no

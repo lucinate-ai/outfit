@@ -3,7 +3,7 @@
 Every machine you run serves engines from a [`spinloop daemon`](daemon.md); a
 `fleet.yaml` names those machines, and `spinloop` observes and drives all of
 them from one place — status, metrics, an interactive dashboard, starts and
-stops, and logs. A fleet can also hold [remote environments](remote.md) as
+stops, and logs. A fleet can also hold [cloud environments](cloud.md) as
 nodes, beside daemons, in the same rows.
 
 ```sh
@@ -38,10 +38,10 @@ nodes:
     tokenEnv: GPU_BOX_TOKEN # the *name* of the variable, never the token
 
   - name: qwen              # a cloud environment, beside the daemons
-    kind: remote
+    kind: cloud
 ```
 
-A `kind: remote` node is a registered [remote environment](remote.md): its
+A `kind: cloud` node is a registered [cloud environment](cloud.md): its
 `name` is the registered one, no `host` is needed, and it is reached through
 its control plane. The file is found the way a `Spinloop` is — `./fleet.yaml`
 in the working directory, or `--fleet <path>`.
@@ -85,7 +85,7 @@ Two settings shape the choice, in the fleet file:
 - **[`wake`](../fleet-file.md#waking)** (`on`, the default) decides whether
   routing may start an engine on a node that is not running one. Set it `off`
   where machines are not to be started on demand; a node may declare its own
-  `wake` to override the file — most useful for a remote node, whose wake
+  `wake` to override the file — most useful for a cloud node, whose wake
   boots a billed cloud instance.
 - **[`prefer`](../fleet-file.md#spreading-or-consolidating)** ranks nodes that
   could all serve you: `idle` (the default) takes the machine quietest

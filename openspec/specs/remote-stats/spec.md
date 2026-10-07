@@ -1,14 +1,14 @@
-# Remote Stats Specification
+# Cloud Stats Specification
 
 ## Purpose
 
-Define the `spinloop metrics` command's reading of a remote environment's
+Define the `spinloop metrics` command's reading of a cloud environment's
 instance: token usage, resource consumption, and GPU information from a
-running remote inference instance.
+running cloud inference instance.
 ## Requirements
 ### Requirement: An environment's metrics are reported
 
-The system SHALL provide a `metrics` command (`spinloop metrics --env <name>`) that reports the current state of a remote inference instance. It SHALL select which environment it reports on using the same `--env <name>` flag every other read verb uses. A Spinloop given as an argument is read only for its `ENV` instructions and adjacent `.env`, never to select the environment. When the instance is running, the report SHALL include the spinloop version from the daemon, carried by the stats Lambda reply.
+The system SHALL provide a `metrics` command (`spinloop metrics --env <name>`) that reports the current state of a cloud inference instance. It SHALL select which environment it reports on using the same `--env <name>` flag every other read verb uses. A Spinloop given as an argument is read only for its `ENV` instructions and adjacent `.env`, never to select the environment. When the instance is running, the report SHALL include the spinloop version from the daemon, carried by the stats Lambda reply.
 
 #### Scenario: Stats with a running instance
 
@@ -30,9 +30,9 @@ The system SHALL provide a `metrics` command (`spinloop metrics --env <name>`) t
 - **WHEN** the user runs `spinloop metrics --env <name>` with a running instance
 - **THEN** the output includes the spinloop version
 
-#### Scenario: The remote spelling names its replacement
+#### Scenario: The cloud spelling names its replacement
 
-- **WHEN** the operator runs `spinloop remote metrics`
+- **WHEN** the operator runs `spinloop cloud metrics`
 - **THEN** it fails naming `spinloop metrics --env <name>` as the command that
   replaced it
 
@@ -202,8 +202,8 @@ every reader of the reply treats an absent deadline as "no active retention"
 rather than as a failure.
 
 The client SHALL map the deadline onto the shared stats shape every fleet and
-remote stats surface reads from, so a dashboard panel, a one-shot fleet report,
-and a one-shot remote report cannot word the same read differently.
+cloud stats surface reads from, so a dashboard panel, a one-shot fleet report,
+and a one-shot cloud report cannot word the same read differently.
 
 The deadline SHALL be reported on the report's active-figure line — rendered by
 the client as a relative remaining time, e.g. `keep for 2h`, not the absolute

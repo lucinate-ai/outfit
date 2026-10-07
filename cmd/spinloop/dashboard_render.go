@@ -238,8 +238,8 @@ const dashStaleThreshold = 3
 // dashStaleAfter is how old a reading of a node of this kind may be before the
 // panel says so.
 func dashStaleAfter(kind string) time.Duration {
-	if kind == fleet.KindRemote {
-		return dashStaleThreshold * dashboardRemoteRefreshInterval
+	if kind == fleet.KindCloud {
+		return dashStaleThreshold * dashboardCloudRefreshInterval
 	}
 	return dashStaleThreshold * dashboardRefreshInterval
 }
@@ -332,7 +332,7 @@ func dashReadingAge(r fleet.NodeResult, now time.Time, staleAfter time.Duration)
 // weights; then an answer that carries no state at all is unknown; then a node
 // that answered with nothing serving is not serving, a faded dot rather than
 // the green of a node that is up and serving — idle, the daemon with nothing
-// started; stopped, a daemon engine that was stopped; undeployed, a remote
+// started; stopped, a daemon engine that was stopped; undeployed, a cloud
 // environment with no instance at all; anything else, including a running
 // engine the daemon reports no readiness for at all (an older daemon, or a
 // runner with no known health check), is healthy, so this degrades to the
@@ -420,7 +420,7 @@ func dashTileReportBody(w io.Writer, m metrics.Stats, resources bool, gauge bool
 	if line := dashTileServingLine(m); line != "" {
 		fmt.Fprintln(w, line)
 	}
-	// The active figure and, for a kept remote environment, the relative keep
+	// The active figure and, for a kept cloud environment, the relative keep
 	// after it — one line, from the same read, whatever the engine's state. A
 	// read without either — a local node, an unkept or lapsed environment —
 	// draws nothing.

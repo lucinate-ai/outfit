@@ -1,7 +1,7 @@
 # remote-schedule Specification
 
 ## Purpose
-Let a remote environment start and stop itself on cron schedules, so a team that
+Let a cloud environment start and stop itself on cron schedules, so a team that
 works set hours has the model up when it sits down and stops paying for it when
 it leaves. The control plane stores and runs the schedules, so they fire with no
 machine of the operator's switched on; the CLI sets, shows and clears them.
@@ -62,7 +62,7 @@ When a `start` schedule fires, the control plane SHALL start the environment's i
 
 ### Requirement: A scheduled stop pauses the environment
 
-When a `stop` schedule fires, the control plane SHALL pause the environment's instance: stop it without terminating it, as `spinloop remote pause` does, so it can be woken again. When the instance carries a `Retain-Until` deadline that has not passed, the scheduled stop SHALL be skipped and the skip recorded in the stop Lambda's log. When there is no running instance, the scheduled stop SHALL do nothing.
+When a `stop` schedule fires, the control plane SHALL pause the environment's instance: stop it without terminating it, as `spinloop cloud pause` does, so it can be woken again. When the instance carries a `Retain-Until` deadline that has not passed, the scheduled stop SHALL be skipped and the skip recorded in the stop Lambda's log. When there is no running instance, the scheduled stop SHALL do nothing.
 
 #### Scenario: A running environment is paused on schedule
 
@@ -81,40 +81,40 @@ When a `stop` schedule fires, the control plane SHALL pause the environment's in
 
 ### Requirement: The schedule command sets, shows and clears schedules
 
-`spinloop remote schedule set` SHALL accept one or more `--start CRON` and `--stop CRON` flags and an optional `--timezone ZONE`, and SHALL replace the environment's schedules with them. `spinloop remote schedule show` SHALL print the environment's schedules, one per line, giving the action, expression and time zone, and SHALL print that there are none when the list is empty. `spinloop remote schedule clear` SHALL remove every schedule. The commands SHALL select the environment as the other `remote` subcommands do: `--env <name>` or the per-user default. `set` with neither `--start` nor `--stop` SHALL fail and say to use `clear` to remove schedules. When the deployment's control plane has no schedule endpoint, the commands SHALL fail with an error naming the fix (re-run `spinloop remote bootstrap`).
+`spinloop cloud schedule set` SHALL accept one or more `--start CRON` and `--stop CRON` flags and an optional `--timezone ZONE`, and SHALL replace the environment's schedules with them. `spinloop cloud schedule show` SHALL print the environment's schedules, one per line, giving the action, expression and time zone, and SHALL print that there are none when the list is empty. `spinloop cloud schedule clear` SHALL remove every schedule. The commands SHALL select the environment as the other `cloud` subcommands do: `--env <name>` or the per-user default. `set` with neither `--start` nor `--stop` SHALL fail and say to use `clear` to remove schedules. When the deployment's control plane has no schedule endpoint, the commands SHALL fail with an error naming the fix (re-run `spinloop cloud bootstrap`).
 
 #### Scenario: Setting two schedules from the command line
 
-- **WHEN** the user runs `spinloop remote schedule set --start "0 8 * * 1-5" --stop "0 18 * * 1-5" --timezone Europe/London`
+- **WHEN** the user runs `spinloop cloud schedule set --start "0 8 * * 1-5" --stop "0 18 * * 1-5" --timezone Europe/London`
 - **THEN** the environment has those two schedules and the command prints them
 
 #### Scenario: Showing no schedules
 
-- **WHEN** the user runs `spinloop remote schedule show` for an environment with none
+- **WHEN** the user runs `spinloop cloud schedule show` for an environment with none
 - **THEN** the output says there are no schedules and the command succeeds
 
 #### Scenario: Clearing
 
-- **WHEN** the user runs `spinloop remote schedule clear`
+- **WHEN** the user runs `spinloop cloud schedule clear`
 - **THEN** the environment has no schedules and none fires afterwards
 
 #### Scenario: Set with nothing to set
 
-- **WHEN** the user runs `spinloop remote schedule set` with no `--start` or `--stop`
+- **WHEN** the user runs `spinloop cloud schedule set` with no `--start` or `--stop`
 - **THEN** the command fails and tells the user to use `clear` to remove schedules
 
 #### Scenario: An older control plane
 
 - **WHEN** the deployment's configuration has no schedule endpoint
-- **THEN** the command fails with an error telling the user to re-run `spinloop remote bootstrap`
+- **THEN** the command fails with an error telling the user to re-run `spinloop cloud bootstrap`
 
 ### Requirement: Show reports the next scheduled runs
 
-When the environment has schedules, `spinloop remote schedule show` (and `set`, which prints the same listing) SHALL report the next time a start fires and the next time a stop fires, as absolute UTC times, each on its own "next start" or "next stop" line. An action with no schedule, or whose schedule never fires again, SHALL have no line. When the environment has no schedules, the output SHALL say so and have no "next" line.
+When the environment has schedules, `spinloop cloud schedule show` (and `set`, which prints the same listing) SHALL report the next time a start fires and the next time a stop fires, as absolute UTC times, each on its own "next start" or "next stop" line. An action with no schedule, or whose schedule never fires again, SHALL have no line. When the environment has no schedules, the output SHALL say so and have no "next" line.
 
 #### Scenario: A scheduled environment shows its next runs
 
-- **WHEN** the user runs `spinloop remote schedule show` for an environment with a start and a stop schedule
+- **WHEN** the user runs `spinloop cloud schedule show` for an environment with a start and a stop schedule
 - **THEN** the output includes "next start" and "next stop" lines with absolute times
 
 #### Scenario: An action with no schedule has no line
@@ -124,5 +124,5 @@ When the environment has schedules, `spinloop remote schedule show` (and `set`, 
 
 #### Scenario: An unscheduled environment omits the lines
 
-- **WHEN** the user runs `spinloop remote schedule show` for an environment with no schedules
+- **WHEN** the user runs `spinloop cloud schedule show` for an environment with no schedules
 - **THEN** the output says there are no schedules and has no "next start" or "next stop" line

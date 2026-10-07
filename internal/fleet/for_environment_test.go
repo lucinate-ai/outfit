@@ -13,8 +13,8 @@ import (
 // cloud node the same name in a fleet file would build.
 func TestForEnvironmentBuildsAFleetOfOne(t *testing.T) {
 	stubAWSCreds(t)
-	up := remoteControlServer(t, `{"state":"running","healthy":true}`, http.StatusOK)
-	registerRemoteEnv(t, "prod", up.URL, up.URL)
+	up := cloudControlServer(t, `{"state":"running","healthy":true}`, http.StatusOK)
+	registerCloudEnv(t, "prod", up.URL, up.URL)
 
 	cfg, err := ForEnvironment("prod")
 	if err != nil {
@@ -26,8 +26,8 @@ func TestForEnvironmentBuildsAFleetOfOne(t *testing.T) {
 	if cfg.Nodes[0].Name != "prod" {
 		t.Errorf("name = %q, want prod", cfg.Nodes[0].Name)
 	}
-	if cfg.Nodes[0].Kind != KindRemote {
-		t.Errorf("kind = %q, want %q", cfg.Nodes[0].Kind, KindRemote)
+	if cfg.Nodes[0].Kind != KindCloud {
+		t.Errorf("kind = %q, want %q", cfg.Nodes[0].Kind, KindCloud)
 	}
 	// The node builds and answers, which is the whole claim: the fan-out and
 	// the renderers need nothing special for a fleet assembled this way.
@@ -45,10 +45,10 @@ func TestForEnvironmentBuildsAFleetOfOne(t *testing.T) {
 // environment was named.
 func TestForEnvironmentMatchesTheSameNodeInAFile(t *testing.T) {
 	stubAWSCreds(t)
-	up := remoteControlServer(t, `{"state":"running","healthy":true}`, http.StatusOK)
-	registerRemoteEnv(t, "prod", up.URL, up.URL)
+	up := cloudControlServer(t, `{"state":"running","healthy":true}`, http.StatusOK)
+	registerCloudEnv(t, "prod", up.URL, up.URL)
 
-	path := writeFleet(t, "nodes:\n  - name: prod\n    kind: remote\n", "")
+	path := writeFleet(t, "nodes:\n  - name: prod\n    kind: cloud\n", "")
 	fromFile, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -79,11 +79,11 @@ func TestForEnvironmentRejects(t *testing.T) {
 		env  string
 		want string
 	}{
-		{"a path", "./remote.json", "plain identifier"},
+		{"a path", "./cloud.json", "plain identifier"},
 		{"a nested path", "envs/prod", "plain identifier"},
 		{"a json file", "prod.json", "plain identifier"},
 		{"empty", "", "plain identifier"},
-		{"unregistered", "nope", "remotes/nope/remote.json"},
+		{"unregistered", "nope", "clouds/nope/cloud.json"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -106,7 +106,7 @@ func TestForEnvironmentUnregisteredNamesTheFix(t *testing.T) {
 	if err == nil {
 		t.Fatal("want an error")
 	}
-	if !strings.Contains(err.Error(), "remotes/nope/remote.json") {
+	if !strings.Contains(err.Error(), "clouds/nope/cloud.json") {
 		t.Errorf("error %q does not name the environment's registry path", err)
 	}
 }
@@ -116,8 +116,8 @@ func TestForEnvironmentUnregisteredNamesTheFix(t *testing.T) {
 // than inherited from anywhere.
 func TestForEnvironmentCarriesNoFileOrFleetWideSettings(t *testing.T) {
 	stubAWSCreds(t)
-	up := remoteControlServer(t, `{"state":"running"}`, http.StatusOK)
-	registerRemoteEnv(t, "prod", up.URL, up.URL)
+	up := cloudControlServer(t, `{"state":"running"}`, http.StatusOK)
+	registerCloudEnv(t, "prod", up.URL, up.URL)
 
 	cfg, err := ForEnvironment("prod")
 	if err != nil {
@@ -156,8 +156,8 @@ func TestForEnvironmentCarriesNoFileOrFleetWideSettings(t *testing.T) {
 // the target is the environment, and the file is not consulted.
 func TestForEnvironmentIgnoresADirectoryFleetFile(t *testing.T) {
 	stubAWSCreds(t)
-	up := remoteControlServer(t, `{"state":"running"}`, http.StatusOK)
-	registerRemoteEnv(t, "prod", up.URL, up.URL)
+	up := cloudControlServer(t, `{"state":"running"}`, http.StatusOK)
+	registerCloudEnv(t, "prod", up.URL, up.URL)
 
 	dir := t.TempDir()
 	body := "prefer: active\nnodes:\n  - name: other\n    host: elsewhere\n"
@@ -182,8 +182,8 @@ func TestForEnvironmentIgnoresADirectoryFleetFile(t *testing.T) {
 // never looks for a .env — which is what lets it carry no directory at all.
 func TestForEnvironmentReadsNoAdjacentEnvFile(t *testing.T) {
 	stubAWSCreds(t)
-	up := remoteControlServer(t, `{"state":"running"}`, http.StatusOK)
-	registerRemoteEnv(t, "prod", up.URL, up.URL)
+	up := cloudControlServer(t, `{"state":"running"}`, http.StatusOK)
+	registerCloudEnv(t, "prod", up.URL, up.URL)
 
 	dir := t.TempDir()
 	// A .env that would be read if the lookup ever ran, holding a value no

@@ -14,7 +14,7 @@ suggests.
 
 ### Requirement: Post-start TCP probe
 
-After `spinloop remote start` reports the endpoint is ready, the CLI SHALL perform a TCP connection probe to the inference endpoint's host and port. The probe SHALL use the `base_url` from the start response to derive the target address. If the probe succeeds (connection established), no output is produced and the command exits normally.
+After `spinloop cloud start` reports the endpoint is ready, the CLI SHALL perform a TCP connection probe to the inference endpoint's host and port. The probe SHALL use the `base_url` from the start response to derive the target address. If the probe succeeds (connection established), no output is produced and the command exits normally.
 
 The probe SHALL use a short timeout (default 5 seconds) so it does not materially extend the command's runtime. The timeout SHALL be configurable via a package-level variable for testing.
 
@@ -30,7 +30,7 @@ The probe SHALL use a short timeout (default 5 seconds) so it does not materiall
 
 ### Requirement: Reachability warning message
 
-When the probe fails, the warning SHALL state that the endpoint is ready but not reachable from the current network, and SHALL provide a remediation command using `spinloop remote deploy --overwrite --allowed-cidr`. The command SHALL include the caller's public IP as a /32 CIDR, detected by calling `checkip.amazonaws.com`. If IP detection fails, the warning SHALL use a placeholder value instead of failing the command.
+When the probe fails, the warning SHALL state that the endpoint is ready but not reachable from the current network, and SHALL provide a remediation command using `spinloop cloud deploy --overwrite --allowed-cidr`. The command SHALL include the caller's public IP as a /32 CIDR, detected by calling `checkip.amazonaws.com`. If IP detection fails, the warning SHALL use a placeholder value instead of failing the command.
 
 The warning SHALL NOT cause the command to exit with a non-zero status. The command SHALL still print exports (if `--env` is set) and exit 0.
 
@@ -50,5 +50,5 @@ The TCP probe SHALL only run on the interactive `start` success path. It SHALL N
 
 #### Scenario: Status does not probe
 
-- **WHEN** the user runs `spinloop remote status`
+- **WHEN** the user runs `spinloop cloud status`
 - **THEN** no TCP probe is performed and no reachability warning is printed

@@ -3,9 +3,9 @@ package main
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/fleet"
 	"github.com/spinloop-ai/spinloop/internal/harness"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 	"github.com/spinloop-ai/spinloop/internal/spinloop"
 )
 
@@ -67,16 +67,16 @@ func openLaunchCmd(use, short, long string) *cobra.Command {
 			// A .env beside the applied Spinloop is where its keys live, so the
 			// launched agent is given the same ones. Without a Spinloop there is
 			// no such file and only the environment (plus any provider key
-			// spinloop resolves) is passed on. remoteResp carries the live key of
-			// a remote endpoint, fetched while applying so the config is
+			// spinloop resolves) is passed on. cloudResp carries the live key of
+			// a cloud endpoint, fetched while applying so the config is
 			// written knowing it will be there.
 			var envDir string
 			var sel spinloop.Selection
-			var remoteResp *remote.Response
+			var cloudResp *cloud.Response
 			var choice *fleet.Choice
 			if spinloopPath.set {
 				var err error
-				sel, envDir, remoteResp, choice, err = applyBeforeLaunch(spinloopPath, providers, h, rest, route)
+				sel, envDir, cloudResp, choice, err = applyBeforeLaunch(spinloopPath, providers, h, rest, route)
 				if err != nil {
 					return err
 				}
@@ -86,7 +86,7 @@ func openLaunchCmd(use, short, long string) *cobra.Command {
 				// actually deployed there instead of doing nothing with the
 				// flag.
 				var err error
-				sel, envDir, remoteResp, choice, err = applyFromEnvironment(providers, h, route)
+				sel, envDir, cloudResp, choice, err = applyFromEnvironment(providers, h, route)
 				if err != nil {
 					return err
 				}
@@ -96,12 +96,12 @@ func openLaunchCmd(use, short, long string) *cobra.Command {
 				// Spinloop; a fleet that does not still does, and this says
 				// so.
 				var err error
-				sel, envDir, remoteResp, choice, err = applyFromGateway(providers, h, route)
+				sel, envDir, cloudResp, choice, err = applyFromGateway(providers, h, route)
 				if err != nil {
 					return err
 				}
 			}
-			return launchAgent(h, rest, providers, envDir, remoteResp, sel, spinloopPath.set, choice)
+			return launchAgent(h, rest, providers, envDir, cloudResp, sel, spinloopPath.set, choice)
 		},
 	}
 	fs := c.Flags()

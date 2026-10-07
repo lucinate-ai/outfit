@@ -4,7 +4,7 @@
  * stack owns. It lives in an SSM parameter that the start Lambda reads at each
  * wake, so switching model/runner/context is a parameter write, not a redeploy.
  *
- * CDK writes the initial value from config; `spinloop remote deploy` overwrites
+ * CDK writes the initial value from config; `spinloop cloud deploy` overwrites
  * it later. There is deliberately NO default runner — one of the two must be
  * chosen, and an absent/invalid config fails the wake loudly rather than
  * silently picking one.
@@ -71,7 +71,7 @@ export const LATEST_SPINLOOP = 'latest';
 /**
  * The placeholder CDK creates the deploy-config parameter with. It is a
  * constant, so a later `cdk deploy` never reasserts (clobbers) a real config
- * that `spinloop remote deploy` or a manual edit wrote — the parameter is
+ * that `spinloop cloud deploy` or a manual edit wrote — the parameter is
  * spinloop/manual-owned. A wake reading this fails loudly; `pnpm run deploy` seeds a
  * real config over it, but only while it is still this placeholder.
  */
@@ -165,7 +165,7 @@ export interface DeployConfig {
 export function parseDeployConfig(raw: string | undefined): DeployConfig {
   if (!raw || !raw.trim() || raw.trim() === UNCONFIGURED_DEPLOY_CONFIG) {
     throw new Error(
-      'deploy-config is not set — run `pnpm run deploy` (seeds the initial config) or `spinloop remote deploy`',
+      'deploy-config is not set — run `pnpm run deploy` (seeds the initial config) or `spinloop cloud deploy`',
     );
   }
   let obj: Record<string, unknown>;

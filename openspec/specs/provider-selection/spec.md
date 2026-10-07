@@ -56,7 +56,7 @@ provider's declared prefix SHALL be rejected. Secrets SHALL never be written int
 a Spinloop file.
 
 This precedence — process environment over `.env` — matches the rule the
-`remote` commands follow, so the whole tool resolves local variables the same
+`cloud` commands follow, so the whole tool resolves local variables the same
 way.
 
 The file sits beside the Spinloop for the same reason `PRESET` does: a

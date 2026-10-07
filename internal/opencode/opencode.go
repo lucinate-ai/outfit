@@ -21,7 +21,7 @@ import (
 // project's own `.env`.
 //
 // The process environment wins so an exported variable always beats the `.env`,
-// which only fills a gap — the same precedence the remote commands follow, so
+// which only fills a gap — the same precedence the cloud commands follow, so
 // the whole tool resolves local variables the same way.
 //
 // The file sits beside the Spinloop rather than beside the binary because that is

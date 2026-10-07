@@ -67,9 +67,9 @@ config SHALL be written.
 - **THEN** the managed connection's `defaultModel` is updated and no second
   connection for that provider appears
 
-#### Scenario: A remote selection keeps its display name
+#### Scenario: A cloud selection keeps its display name
 
-- **WHEN** a selection carrying a display name (a remote endpoint) is applied
+- **WHEN** a selection carrying a display name (a cloud endpoint) is applied
 - **THEN** the managed connection's `name` is that display name
 
 #### Scenario: A selection with no resolvable base URL fails

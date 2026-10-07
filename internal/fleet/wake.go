@@ -33,7 +33,7 @@ var wakePoll = 2 * time.Second
 // fleet file into one actual start. Two requests racing to wake the same
 // node is the ordinary shape of two agents starting near enough together,
 // and a daemon node's own 409 already turns the loser into a joiner — but a
-// remote environment's control plane has no equivalent guard: its instance
+// cloud environment's control plane has no equivalent guard: its instance
 // lookup is eventually consistent right after a launch, so two wakes that
 // race within that window can each miss the other's not-yet-visible
 // instance and each launch one, doubling the bill for what should have been
@@ -269,7 +269,7 @@ func (c *Config) WaitLoading(ctx context.Context, w Want, results []NodeResult, 
 //
 // A daemon that reports its own readiness reading — the engine has answered
 // its health check — is taken on that word; it checked from the same machine
-// the engine runs on, and a remote node's reading is the control plane's own
+// the engine runs on, and a cloud node's reading is the control plane's own
 // equivalent check. A ReadyNo reading is taken on its word too: the engine's
 // port can accept a connection well before the engine can answer a request
 // — llama.cpp and vLLM both open it early and answer their own health check

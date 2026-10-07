@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spinloop-ai/spinloop/internal/remote"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 )
 
 // TestViperSpinloopAliasPrecedence pins the SPINLOOP_ALIAS resolution through the
@@ -61,16 +61,16 @@ func TestViperDefaultSpinloopNamed(t *testing.T) {
 	}
 }
 
-// TestViperRemoteEnvPrecedence pins, for every SPINLOOP_REMOTE_* variable, the
+// TestViperCloudEnvPrecedence pins, for every SPINLOOP_CLOUD_* variable, the
 // resolution the CLI's Viper gives: an exported variable beats the same key in
-// the remote config file, and an unset variable falls through to the file. No
+// the cloud config file, and an unset variable falls through to the file. No
 // control call is made — only the Config the commands would take is asserted.
-func TestViperRemoteEnvPrecedence(t *testing.T) {
+func TestViperCloudEnvPrecedence(t *testing.T) {
 	isolateConfig(t)
 	t.Chdir(t.TempDir()) // no ./Spinloop, so the per-user file is consulted
 	stubAWSEnv(t)
 
-	file := remote.Config{
+	file := cloud.Config{
 		StartURL:    "https://file.example/start",
 		StopURL:     "https://file.example/stop",
 		DeployURL:   "https://file.example/deploy",
@@ -80,7 +80,7 @@ func TestViperRemoteEnvPrecedence(t *testing.T) {
 		Region:      "us-east-1",
 		Environment: "default",
 	}
-	path := must1(remote.EnvConfigPath("default"))
+	path := must1(cloud.EnvConfigPath("default"))
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -93,21 +93,21 @@ func TestViperRemoteEnvPrecedence(t *testing.T) {
 	}
 
 	const envValue = "https://env.example/wins"
-	legs := map[string]func(remote.Config) string{
-		"SPINLOOP_REMOTE_START_URL":    func(c remote.Config) string { return c.StartURL },
-		"SPINLOOP_REMOTE_STOP_URL":     func(c remote.Config) string { return c.StopURL },
-		"SPINLOOP_REMOTE_DEPLOY_URL":   func(c remote.Config) string { return c.DeployURL },
-		"SPINLOOP_REMOTE_STATS_URL":    func(c remote.Config) string { return c.StatsURL },
-		"SPINLOOP_REMOTE_ENV_URL":      func(c remote.Config) string { return c.EnvURL },
-		"SPINLOOP_REMOTE_UPDATE_URL":   func(c remote.Config) string { return c.UpdateURL },
-		"SPINLOOP_REMOTE_SCHEDULE_URL": func(c remote.Config) string { return c.ScheduleURL },
-		"SPINLOOP_REMOTE_REGION":       func(c remote.Config) string { return c.Region },
+	legs := map[string]func(cloud.Config) string{
+		"SPINLOOP_CLOUD_START_URL":    func(c cloud.Config) string { return c.StartURL },
+		"SPINLOOP_CLOUD_STOP_URL":     func(c cloud.Config) string { return c.StopURL },
+		"SPINLOOP_CLOUD_DEPLOY_URL":   func(c cloud.Config) string { return c.DeployURL },
+		"SPINLOOP_CLOUD_STATS_URL":    func(c cloud.Config) string { return c.StatsURL },
+		"SPINLOOP_CLOUD_ENV_URL":      func(c cloud.Config) string { return c.EnvURL },
+		"SPINLOOP_CLOUD_UPDATE_URL":   func(c cloud.Config) string { return c.UpdateURL },
+		"SPINLOOP_CLOUD_SCHEDULE_URL": func(c cloud.Config) string { return c.ScheduleURL },
+		"SPINLOOP_CLOUD_REGION":       func(c cloud.Config) string { return c.Region },
 	}
 
 	// Unset variables fall through to the file.
-	cfg, err := resolveRemoteConfig("default", "")
+	cfg, err := resolveCloudConfig("default", "")
 	if err != nil {
-		t.Fatalf("resolveRemoteConfig: %v", err)
+		t.Fatalf("resolveCloudConfig: %v", err)
 	}
 	for name, get := range legs {
 		if got := get(cfg); got != get(file) {
@@ -118,7 +118,7 @@ func TestViperRemoteEnvPrecedence(t *testing.T) {
 	// Each exported variable wins over the file, one at a time.
 	for name, get := range legs {
 		t.Setenv(name, envValue)
-		cfg, err := resolveRemoteConfig("default", "")
+		cfg, err := resolveCloudConfig("default", "")
 		if err != nil {
 			t.Fatalf("%s set: %v", name, err)
 		}

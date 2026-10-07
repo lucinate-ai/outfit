@@ -2,49 +2,49 @@
 
 ## Purpose
 
-Define how the account-level AWS control plane for remote inference
-endpoints is provisioned through `spinloop remote bootstrap`.
+Define how the account-level AWS control plane for cloud inference
+endpoints is provisioned through `spinloop cloud bootstrap`.
 
 ## Requirements
 
 ### Requirement: Bootstrap deploys the control plane
 
-The system SHALL provide `spinloop remote bootstrap`, which deploys the
-account-level control plane that every remote environment reuses — the EC2
+The system SHALL provide `spinloop cloud bootstrap`, which deploys the
+account-level control plane that every cloud environment reuses — the EC2
 Image Builder pipelines, the environment-aware lifecycle Lambdas and their IAM,
 and the shared S3 weights bucket, IAM roles and VPC, and the IAM user that
-holds the long-lived control-plane credential (see the Remote Auth
+holds the long-lived control-plane credential (see the Cloud Auth
 specification) together with its policy — by obtaining the CDK project shipped
 in `remote/` and driving its deploy of the control-plane stack. Bootstrap SHALL
 NOT start any AMI bake; the bake is a separate
-`spinloop remote bake` step. Bootstrap SHALL NOT create any Elastic IP or EC2
+`spinloop cloud bake` step. Bootstrap SHALL NOT create any Elastic IP or EC2
 instance, and SHALL NOT register an environment; those belong to
-`spinloop remote deploy`. Bootstrap SHALL NOT reimplement the infrastructure;
+`spinloop cloud deploy`. Bootstrap SHALL NOT reimplement the infrastructure;
 it SHALL orchestrate the existing CDK project. On success, bootstrap SHALL
-signpost `spinloop remote bake` as the next step, ahead of
-`spinloop remote deploy`.
+signpost `spinloop cloud bake` as the next step, ahead of
+`spinloop cloud deploy`.
 
 #### Scenario: A successful bootstrap yields the control plane
 
-- **WHEN** `spinloop remote bootstrap` completes
+- **WHEN** `spinloop cloud bootstrap` completes
 - **THEN** the control-plane stack is deployed — Image Builder pipelines, the
   lifecycle Lambdas, and the shared bucket/roles/VPC — with no Elastic IP or
   instance created and no AMI bake started
 
 #### Scenario: The control-plane credential user is deployed
 
-- **WHEN** `spinloop remote bootstrap` completes
+- **WHEN** `spinloop cloud bootstrap` completes
 - **THEN** the control-plane IAM user exists with a policy covering the
-  day-to-day remote commands only — invoking the control URLs, reading the
+  day-to-day cloud commands only — invoking the control URLs, reading the
   control-plane log groups, describing the control-plane stack, and managing
   its own access keys — and no permission to deploy, bake, or otherwise
   provision AWS resources
 
 #### Scenario: Bootstrap signposts the bake
 
-- **WHEN** `spinloop remote bootstrap` completes
-- **THEN** its output names `spinloop remote bake` as the next step, ahead of
-  `spinloop remote deploy`
+- **WHEN** `spinloop cloud bootstrap` completes
+- **THEN** its output names `spinloop cloud bake` as the next step, ahead of
+  `spinloop cloud deploy`
 
 #### Scenario: Orchestration stops on a failed step
 
@@ -54,7 +54,7 @@ signpost `spinloop remote bake` as the next step, ahead of
 ### Requirement: The control plane is discoverable
 
 The control-plane stack SHALL publish, as CloudFormation stack outputs under a
-well-known stack name, the values a later `spinloop remote deploy` needs to create
+well-known stack name, the values a later `spinloop cloud deploy` needs to create
 and drive environments: the lifecycle Lambda URLs, the weights bucket, the shared
 roles, and the region. Discovery SHALL be from those outputs rather than a file
 bootstrap writes, so it reflects what is actually deployed and works from any
@@ -62,7 +62,7 @@ machine with account access.
 
 #### Scenario: Deploy can discover the control plane
 
-- **WHEN** the control-plane stack is deployed and `spinloop remote deploy` runs later
+- **WHEN** the control-plane stack is deployed and `spinloop cloud deploy` runs later
 - **THEN** it reads the Lambda URLs, bucket, roles and region from the stack's
   outputs, without a local file having to carry them
 
@@ -78,13 +78,13 @@ other than an explicit yes as a decline that makes no changes.
 
 #### Scenario: The plan is shown before anything is deployed
 
-- **WHEN** the user runs `spinloop remote bootstrap`
+- **WHEN** the user runs `spinloop cloud bootstrap`
 - **THEN** the account, region, control-plane resources, cost caveat, and commands are
   printed before any AWS-mutating command runs
 
 #### Scenario: Dry run changes nothing
 
-- **WHEN** the user runs `spinloop remote bootstrap --dry-run`
+- **WHEN** the user runs `spinloop cloud bootstrap --dry-run`
 - **THEN** the plan is printed and no package-manager, `cdk`, or AWS-mutating
   command runs
 
@@ -95,7 +95,7 @@ other than an explicit yes as a decline that makes no changes.
 
 ### Requirement: Version-matched CDK sources
 
-Bootstrap and `spinloop remote bake` SHALL obtain the CDK project by
+Bootstrap and `spinloop cloud bake` SHALL obtain the CDK project by
 downloading the `remote/` tree from the project repository at a reference
 matching the running binary's version, so the infrastructure matches the CLI
 driving it. A `--ref` flag SHALL override the reference, and a `--dir` flag
@@ -165,11 +165,11 @@ be confirmed, without attempting to raise it.
 
 ### Requirement: A Node package manager is selected, overridable, and logged
 
-Bootstrap and `spinloop remote bake` SHALL select the Node package manager they
+Bootstrap and `spinloop cloud bake` SHALL select the Node package manager they
 drive the CDK project with. Absent an explicit choice, they SHALL auto-detect by
 PATH lookup, preferring `pnpm` and falling back to `npm` when `pnpm` is not on
 the path. The user MAY override
-the selection with a `--package-manager` flag or an `SPINLOOP_REMOTE_PACKAGE_MANAGER`
+the selection with a `--package-manager` flag or an `SPINLOOP_CLOUD_PACKAGE_MANAGER`
 environment variable, whose only accepted values are `pnpm` and `npm`; the flag
 SHALL take precedence over the environment variable, which SHALL take precedence
 over auto-detection. An unrecognised override value SHALL be rejected with an
@@ -196,7 +196,7 @@ yet runs correctly under either manager.
 #### Scenario: An explicit override is honoured
 
 - **WHEN** the user passes `--package-manager npm` (or sets
-  `SPINLOOP_REMOTE_PACKAGE_MANAGER=npm`) while `pnpm` is also present
+  `SPINLOOP_CLOUD_PACKAGE_MANAGER=npm`) while `pnpm` is also present
 - **THEN** bootstrap uses `npm` regardless of auto-detection, and the flag wins
   if both the flag and the environment variable are set
 
@@ -208,26 +208,26 @@ yet runs correctly under either manager.
 
 ### Requirement: AMI bake is a separate command
 
-The system SHALL provide `spinloop remote bake`, which starts an AMI bake for
+The system SHALL provide `spinloop cloud bake`, which starts an AMI bake for
 each runner named as a positional argument — `llamacpp` and `vllm` — defaulting
 to both when none are named. It SHALL drive the same CDK project that
 bootstrap orchestrates, with the same version-matched source download into the
 same ref-keyed default location, the same package-manager selection and
 override, and `--ref` and `--dir` flags matching bootstrap's. Bake SHALL NOT
 deploy any stack; when the control-plane stack is not deployed, it SHALL fail
-before starting any bake, naming `spinloop remote bootstrap` as the step to run
+before starting any bake, naming `spinloop cloud bootstrap` as the step to run
 first. Bake SHALL block until every requested runner's AMI is available; a
 `--no-wait` flag SHALL return as soon as the bakes are queued, reporting how to
 check on them, rather than blocking for the bake duration.
 
 #### Scenario: Default bake covers both runners
 
-- **WHEN** the user runs `spinloop remote bake` with no arguments
+- **WHEN** the user runs `spinloop cloud bake` with no arguments
 - **THEN** a bake is started for both `llamacpp` and `vllm`
 
 #### Scenario: A single runner is baked
 
-- **WHEN** the user runs `spinloop remote bake llamacpp`
+- **WHEN** the user runs `spinloop cloud bake llamacpp`
 - **THEN** only the `llamacpp` AMI bake is started
 
 #### Scenario: An unknown runner is rejected
@@ -239,11 +239,11 @@ check on them, rather than blocking for the bake duration.
 
 - **WHEN** the control-plane stack is not deployed and bake runs
 - **THEN** it fails before starting any bake, saying to run
-  `spinloop remote bootstrap` first
+  `spinloop cloud bootstrap` first
 
 #### Scenario: Bake waits by default
 
-- **WHEN** the user runs `spinloop remote bake` without `--no-wait`
+- **WHEN** the user runs `spinloop cloud bake` without `--no-wait`
 - **THEN** the command blocks until the requested runners' AMIs are available
   before finishing
 
@@ -273,31 +273,31 @@ Bootstrap SHALL collect the one control-plane setting the CDK has no default
 for and write it where the CDK reads it: an optional Hugging Face token for
 the shared secret used when seeding gated weights. Which runner AMIs to bake
 is not a bootstrap setting — the engine is a per-environment choice made at
-`deploy`, and the runners are named by `spinloop remote bake` itself. The
+`deploy`, and the runners are named by `spinloop cloud bake` itself. The
 allowed ingress CIDR is also per-environment and belongs to `deploy`, not here.
 
 #### Scenario: Runners are not a bootstrap setting
 
 - **WHEN** the user runs bootstrap
 - **THEN** no runner selection is requested or written, since the runners are
-  named at `spinloop remote bake`
+  named at `spinloop cloud bake`
 
 #### Scenario: The allowed CIDR is not a bootstrap setting
 
 - **WHEN** the user runs bootstrap
 - **THEN** no ingress CIDR is requested or written, since it is scoped per
-  environment at `spinloop remote deploy`
+  environment at `spinloop cloud deploy`
 
 ### Requirement: Bootstrap records the deploying CLI's version
 
-`spinloop remote bootstrap` SHALL pass the running binary's version to the control plane deploy, so every control plane Lambda reports it in the `x-spinloop-control-plane-version` response header. A binary built without a version SHALL record `dev`.
+`spinloop cloud bootstrap` SHALL pass the running binary's version to the control plane deploy, so every control plane Lambda reports it in the `x-spinloop-control-plane-version` response header. A binary built without a version SHALL record `dev`.
 
 #### Scenario: A release build bootstraps
 
-- **WHEN** a CLI at version `1.30.0` runs `spinloop remote bootstrap`
+- **WHEN** a CLI at version `1.30.0` runs `spinloop cloud bootstrap`
 - **THEN** the deployed Lambdas report `1.30.0` as the control plane version
 
 #### Scenario: A development build bootstraps
 
-- **WHEN** a CLI built without a version override runs `spinloop remote bootstrap`
+- **WHEN** a CLI built without a version override runs `spinloop cloud bootstrap`
 - **THEN** the deployed Lambdas report `dev`

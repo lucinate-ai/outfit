@@ -29,7 +29,7 @@ func TestPflagParseForms(t *testing.T) {
 			"apply":         func() error { return cmdApply([]string{"--nope"}) },
 			"serve":         func() error { return cmdServe([]string{"--nope"}) },
 			"fleet metrics": func() error { return cmdMetrics([]string{"--nope"}) },
-			"remote start":  func() error { return cmdRemoteStart([]string{"--env", "default", "--nope"}) },
+			"cloud start":   func() error { return cmdCloudStart([]string{"--env", "default", "--nope"}) },
 			"daemon":        func() error { return cmdDaemon([]string{"--nope"}) },
 		} {
 			if err := call(); err == nil || !strings.Contains(err.Error(), "unknown flag: --nope") {
@@ -51,7 +51,7 @@ func TestPflagParseForms(t *testing.T) {
 		// the proof that parsing continued past it.
 		for name, call := range map[string]func() error{
 			"fleet metrics": func() error { return cmdMetrics([]string{"someNode", "--nope"}) },
-			"remote env":    func() error { return cmdRemoteEnv([]string{"--env", "default", "somePath", "--nope"}) },
+			"cloud env":     func() error { return cmdCloudEnv([]string{"--env", "default", "somePath", "--nope"}) },
 		} {
 			if err := call(); err == nil || !strings.Contains(err.Error(), "unknown flag: --nope") {
 				t.Errorf("%s <positional> --nope = %v, want unknown-flag error", name, err)

@@ -79,7 +79,7 @@ not then be repaired by setting the variable.
 - **THEN** the entry's `apiKey` is the `$ENV_VAR` reference, so the remote
   endpoint is authenticated
 
-#### Scenario: An optional key at a remote endpoint keeps its reference
+#### Scenario: An optional key at a cloud endpoint keeps its reference
 
 - **WHEN** a provider whose key is optional is applied to Pi against a non-local
   base URL, with its key variable unset
@@ -107,7 +107,7 @@ apply to both harnesses, not only opencode: it states where the user's server
 is, which is not a property of the config format being written.
 
 Because the resolved endpoint decides whether a keyless local server is being
-addressed, dropping that variable would also mis-classify a remote endpoint as
+addressed, dropping that variable would also mis-classify a cloud endpoint as
 local and write the keyless placeholder in place of the key reference.
 
 #### Scenario: Bedrock is opencode-only

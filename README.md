@@ -86,20 +86,20 @@ Start the whole fleet with `spinloop up` or just one with `spinloop fleet start 
 
 ### 3. On a cloud GPU, for as long as you need one
 
-Nothing on your desk with a big enough card? `spinloop remote` drives a
+Nothing on your desk with a big enough card? `spinloop cloud` drives a
 scale-to-zero instance in your own AWS account: it boots when you ask, loads the
 model, and stops itself once you stop using it.
 
 ```sh
-spinloop remote start     # boot, wait for the model to load, print the endpoint
-spinloop remote keep 4h   # hold it against the idle sweep while you work
-spinloop remote stop      # terminate now, rather than waiting for the idle timer
+spinloop cloud start     # boot, wait for the model to load, print the endpoint
+spinloop cloud keep 4h   # hold it against the idle sweep while you work
+spinloop cloud stop      # terminate now, rather than waiting for the idle timer
 ```
 
-A remote is also just another node: give it `kind: remote` in `fleet.yaml` and it
+A cloud environment is also just another node: give it `kind: cloud` in `fleet.yaml` and it
 sits on the same board as the machines you own. That is `vllm-1` in the picture
 above — configured, no instance running, costing nothing until someone presses
-`s`. → [Remote inference instance](#remote-inference-instance)
+`s`. → [Cloud inference instance](#cloud-inference-instance)
 
 ### Then point your agent at it
 
@@ -302,8 +302,8 @@ spinloop harness open [<spinloop>] [-H <name>] [--spinloop[=<path>]] [args...]
                                           # launch the harness (a leading Spinloop or alias is
                                           #   applied first)
 spinloop completion <shell>                # tab completion (bash, zsh, powershell)
-spinloop remote <bootstrap|bake|start|pause|stop|restart|status|metrics|logs|deploy|env|ls|keep|schedule|seed> [path]
-                                         # control the remote GPU inference instance
+spinloop cloud <bootstrap|bake|start|pause|stop|restart|status|metrics|logs|deploy|env|ls|keep|schedule|seed> [path]
+                                         # control the cloud GPU inference instance
                                          #   (bootstrap does the once-per-account setup;
                                          #    bake bakes the runner AMI(s) it launches from;
                                          #    deploy sets what it serves, from the Spinloop;
@@ -532,7 +532,7 @@ nodes:
     engine:
       port: 18080         # only when the daemon cannot report the engine's address
   - name: qwen
-    kind: remote          # a `spinloop remote` environment, driven as a fleet node
+    kind: cloud          # a `spinloop cloud` environment, driven as a fleet node
 ```
 
 A node's `host`/`port` are the **daemon's**, not the model server's — those are
@@ -616,14 +616,14 @@ Writing a client? [`docs/openapi.yaml`](docs/openapi.yaml) is the full
 contract, and it ships with every release. See
 [`docs/http-api.md`](docs/http-api.md) for the endpoints in prose.
 
-## Remote inference instance
+## Cloud inference instance
 
 Running a model on your own cloud GPU box? [`remote/`](remote/) deploys one.
-`spinloop remote` drives its scale-to-zero lifecycle: the instance only exists
+`spinloop cloud` drives its scale-to-zero lifecycle: the instance only exists
 while you are using it, and stops itself after a period of idleness.
 
 ```sh
-spinloop remote start --env dev-2 --print-env   # boot the instance, wait for the
+spinloop cloud start --env dev-2 --print-env   # boot the instance, wait for the
                           # model to load, then print OPENAI_BASE_URL /
                           # OPENAI_API_KEY exports for eval
 spinloop status --env <name> --env dev-2              # instance state, endpoint health,
@@ -632,29 +632,29 @@ spinloop metrics --env <name> --env dev-2             # tokens, GPU, CPU and RAM
                           # the same last-active
 spinloop logs --env <name> --env dev-2                # what the engine (or the boot)
                           # said, even after it's gone
-spinloop remote pause --env dev-2               # stop now, but keep it re-wakeable
-spinloop remote restart --env dev-2             # fresh engine, same address: stop
+spinloop cloud pause --env dev-2               # stop now, but keep it re-wakeable
+spinloop cloud restart --env dev-2             # fresh engine, same address: stop
                           # it, then wake it
-spinloop remote keep 4h --env dev-2             # hold it against the idle sweep
+spinloop cloud keep 4h --env dev-2             # hold it against the idle sweep
                           # for 4 hours (start --keep does the same at wake time)
-spinloop remote schedule set --env dev-2 --start "0 8 * * 1-5" --stop "0 18 * * 1-5"
+spinloop cloud schedule set --env dev-2 --start "0 8 * * 1-5" --stop "0 18 * * 1-5"
                           # start it at 08:00 and pause it at 18:00, Monday to Friday
-spinloop remote stop --env dev-2                # terminate now instead of waiting
+spinloop cloud stop --env dev-2                # terminate now instead of waiting
                           # for the idle timer
 ```
 
-Instances ship their engine and boot output to CloudWatch, so `spinloop remote
+Instances ship their engine and boot output to CloudWatch, so `spinloop cloud
 logs` still works once the instance has terminated — including for a start that
 failed before the engine came up (`--source boot`). See
-[docs/commands/remote.md](docs/commands/remote.md#reading-the-logs).
+[docs/commands/cloud.md](docs/commands/cloud.md#reading-the-logs).
 
-Configuration lives in a `remote.json` per **environment**, named with the
+Configuration lives in a `cloud.json` per **environment**, named with the
 `--env` flag on every command above (`--env dev-2` selects the file at
-`remotes/dev-2/remote.json` under spinloop's config directory,
+`clouds/dev-2/cloud.json` under spinloop's config directory,
 `${SPINLOOP_CONFIG_DIR:-${XDG_CONFIG_HOME:-~/.config}/spinloop}`); with no
 `--env`, the `default` environment is used. The Spinloop itself says only what
 the environment serves — the name is a machine-local choice, so it stays out of
-the file. `spinloop remote deploy --env dev-2` writes the file for you when it
+the file. `spinloop cloud deploy --env dev-2` writes the file for you when it
 registers the environment; deploying [`remote/`](remote/) yourself prints the
 same values:
 
@@ -672,21 +672,21 @@ machine? `spinloop harness open --env dev-2` on its own — no Spinloop at all �
 configures the harness straight from what is deployed there:
 
 ```sh
-spinloop remote deploy path/to/Spinloop --env dev-2   # from wherever you deployed it
+spinloop cloud deploy path/to/Spinloop --env dev-2   # from wherever you deployed it
 spinloop harness open --env dev-2 --prompt "..."     # from anywhere with dev-2 registered
 ```
 
 Every URL and the region can be overridden with the matching
-[`SPINLOOP_REMOTE_*`](docs/env-vars.md) environment variable. The commands
+[`SPINLOOP_CLOUD_*`](docs/env-vars.md) environment variable. The commands
 sign with an AWS credential resolved per region: explicit environment
 credentials or a named profile first, then the stored control-plane credential
-from [`spinloop remote auth --store`](docs/commands/remote.md#credentials),
+from [`spinloop cloud auth --store`](docs/commands/cloud.md#credentials),
 then the standard chain (config files, SSO sessions, instance metadata). The
 credential needs `lambda:InvokeFunctionUrl` allowed. A cold `start` takes a
 few minutes while the instance boots and loads the model; `--timeout`
 (default 15m) caps the wait.
 
-The AWS credentials, region and `SPINLOOP_REMOTE_*` overrides can all travel
+The AWS credentials, region and `SPINLOOP_CLOUD_*` overrides can all travel
 with the Spinloop, in the `.env` beside it. A value already set in your shell wins over the `.env`. To pin a value
 in the Spinloop itself, add an `ENV` line (`ENV AWS_PROFILE=prod`) — it may repeat
 and overrides both the `.env` and your shell. `ENV` applies only on your
@@ -703,7 +703,7 @@ Bedrock authenticates through your AWS credentials.
 
 `spinloop harness open` carries that same local environment to the agent it launches:
 the whole `.env` beside the active Spinloop fills gaps, and the Spinloop's `ENV` lines
-override both your shell and the `.env` — the same precedence the `spinloop remote`
+override both your shell and the `.env` — the same precedence the `spinloop cloud`
 commands use. These variables shape only the launched agent; `spinloop` never
 changes its own environment.
 

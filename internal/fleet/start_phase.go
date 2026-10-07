@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spinloop-ai/spinloop/internal/remote"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 )
 
 // StartPhaseKind identifies what a start is currently doing. Exactly one value
@@ -66,7 +66,7 @@ const (
 
 // RenderPhase is the phase's line at time now. A wait counts down towards
 // RetryAt and a boot counts up from Since, so nothing here is fixed when the
-// phase is built. The dashboard tile and `spinloop remote start` both draw
+// phase is built. The dashboard tile and `spinloop cloud start` both draw
 // their line from this, so the two cannot word one phase differently.
 func RenderPhase(p StartPhase, now time.Time) string {
 	switch p.Kind {
@@ -126,15 +126,15 @@ func formatPhaseDuration(d time.Duration) string {
 	}
 }
 
-// StartPhases adapts remote.Start's progress and onState callbacks onto a
-// stream of phases: it returns the pair to hand remote.Start, and calls report
+// StartPhases adapts cloud.Start's progress and onState callbacks onto a
+// stream of phases: it returns the pair to hand cloud.Start, and calls report
 // once per transition. The two callbacks are separate and neither carries a
 // phase on its own — onState carries the state of a reply, and the progress
 // line that follows a 503 carries that reply's retry-after — so the mapping
 // holds the state between them.
 //
-// It is here rather than in either caller because both `spinloop remote start`
-// and the dashboard drive remote.Start and render the result.
+// It is here rather than in either caller because both `spinloop cloud start`
+// and the dashboard drive cloud.Start and render the result.
 func StartPhases(report func(StartPhase)) (progress func(string), onState func(string)) {
 	t := &startPhases{report: report, now: time.Now}
 	return t.progress, t.state
@@ -168,7 +168,7 @@ func (t *startPhases) enter(kind StartPhaseKind, detail string) {
 // state maps one reply's state onto a phase.
 func (t *startPhases) state(s string) {
 	switch {
-	case s == remote.StateInFlight:
+	case s == cloud.StateInFlight:
 		// A fresh attempt supersedes a capacity wait and a dropped
 		// connection: each described the attempt before it. It does not
 		// supersede a boot — once a reply has reported the instance coming
@@ -185,7 +185,7 @@ func (t *startPhases) state(s string) {
 		// that is over before it can be read.
 	case s == stateNoCapacity:
 		// The reply's retry-after reaches this caller only on the progress
-		// line remote.Start writes next, so the wait carries no due time
+		// line cloud.Start writes next, so the wait carries no due time
 		// until that line arrives.
 		t.enter(PhaseWaitingCapacity, s)
 	case s == stateSeeding:
@@ -198,11 +198,11 @@ func (t *startPhases) state(s string) {
 	}
 }
 
-// droppedPrefix is how remote.Start opens the line it writes when an attempt's
+// droppedPrefix is how cloud.Start opens the line it writes when an attempt's
 // connection drops mid-request.
 const droppedPrefix = "connection dropped"
 
-// progress maps one of remote.Start's status lines onto a phase. The lines are
+// progress maps one of cloud.Start's status lines onto a phase. The lines are
 // the only place the 503's retry-after and a transport error reach this
 // caller; which state a retry line refers to came through onState immediately
 // before it, so only the delay is read off the line itself.
@@ -222,12 +222,12 @@ func (t *startPhases) progress(line string) {
 	}
 }
 
-// retryInMarker precedes the delay in every line remote.Start writes before a
+// retryInMarker precedes the delay in every line cloud.Start writes before a
 // wait.
 const retryInMarker = "retrying in "
 
 // parseRetryIn reads the delay a status line names, in either of the forms
-// remote.Start writes it — a whole number of seconds from the reply's
+// cloud.Start writes it — a whole number of seconds from the reply's
 // retry-after, or a Go duration for the fixed wait after a dropped connection.
 // A line naming no delay reports false, and the phase then carries no due time
 // rather than a wrong one.

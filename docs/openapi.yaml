@@ -351,7 +351,7 @@ components:
         useless to anyone else, and it cannot know the name a client reaches
         this host by — a LAN name, a tailscale name, a published container
         port. The caller composes these against the host it already has. A node
-        that does know that name — a remote environment, whose control plane
+        that does know that name — a cloud environment, whose control plane
         publishes the instance's address — reports it in `host`.
       required: [port]
       properties:
@@ -359,7 +359,7 @@ components:
           type: string
           description: |
             The name or address a client reaches the engine by, when the node
-            knows it. A daemon leaves it absent; a remote environment's status
+            knows it. A daemon leaves it absent; a cloud environment's status
             fills it with the instance's published address.
         port:
           type: integer
@@ -461,7 +461,7 @@ components:
             The environment's retention deadline, RFC 3339: the idle sweep
             will not terminate the instance before it. A property of the cloud
             instance, not the engine, so it is absent for local daemon nodes
-            and for remote environments without an update URL. The stats reply
+            and for cloud environments without an update URL. The stats reply
             carries it only while it is a time in the future — a passed
             deadline keeps nothing, so it is dropped there and on this read.
 
@@ -569,7 +569,7 @@ components:
     DeployConfig:
       type: object
       description: |
-        What to serve, in the same shape `spinloop remote deploy` derives from an
+        What to serve, in the same shape `spinloop cloud deploy` derives from an
         Spinloop. Mirrors Go's remote.DeployConfig. There is no default runner: an
         unset or invalid one fails loudly rather than guessing.
       required: [runner]

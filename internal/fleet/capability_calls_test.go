@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 	"github.com/spinloop-ai/spinloop/internal/daemon"
 	"github.com/spinloop-ai/spinloop/internal/inference"
 	"github.com/spinloop-ai/spinloop/internal/metrics"
-	"github.com/spinloop-ai/spinloop/internal/remote"
 )
 
 // stubNode is a node that answers whatever the test gives it and implements
@@ -151,11 +151,11 @@ func TestQueriedLogsCall(t *testing.T) {
 	}
 }
 
-// A remote environment's queried read reaches its log store with the window
+// A cloud environment's queried read reaches its log store with the window
 // the caller named. The store is CloudWatch, reached through the AWS SDK
 // rather than the control plane's HTTP endpoints, so this substitutes the
 // FetchLogsFn variable rather than an httptest server.
-func TestRemoteNodeLogsMatching(t *testing.T) {
+func TestCloudNodeLogsMatching(t *testing.T) {
 	registerStatsEnv(t, "prod", "http://unused.invalid")
 	cfg, err := ForEnvironment("prod")
 	if err != nil {
@@ -172,10 +172,10 @@ func TestRemoteNodeLogsMatching(t *testing.T) {
 
 	restore := FetchLogsFn
 	t.Cleanup(func() { FetchLogsFn = restore })
-	var got remote.LogQuery
-	FetchLogsFn = func(_ context.Context, _ remote.Config, q remote.LogQuery) (remote.LogResult, error) {
+	var got cloud.LogQuery
+	FetchLogsFn = func(_ context.Context, _ cloud.Config, q cloud.LogQuery) (cloud.LogResult, error) {
 		got = q
-		return remote.LogResult{Events: []remote.LogEvent{{Message: "boot line"}}}, nil
+		return cloud.LogResult{Events: []cloud.LogEvent{{Message: "boot line"}}}, nil
 	}
 
 	resp, err := s.LogsMatching(context.Background(), LogQuery{Source: "boot", Limit: 10, Instance: "i-1"})

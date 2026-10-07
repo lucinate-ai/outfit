@@ -59,7 +59,7 @@ real network:
   llama.cpp's default is what the preset uses. You need a block when the daemon
   cannot know: a container publishing the engine elsewhere, or a proxy.
 - **Loopback engine is fine here.** llama.cpp binds `127.0.0.1` unless told
-  otherwise, and this node *is* loopback. On a remote node that same engine
+  otherwise, and this node *is* loopback. On a cloud node that same engine
   would be unreachable, and routing says so rather than handing you an address
   that refuses connections.
 

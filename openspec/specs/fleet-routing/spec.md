@@ -337,7 +337,7 @@ of each node it considered.
 Routing SHALL resolve the engine key from the variable the node's fleet entry
 names, supply it to the node when it wakes one, and place it in the launched
 agent's environment as `OPENAI_API_KEY` — and, for a harness that reads the key
-under its own name, under that name too, as the remote path already does. A key
+under its own name, under that name too, as the cloud path already does. A key
 already set in spinloop's environment SHALL win.
 
 The client is therefore the one party that holds the key: it decides what the
@@ -345,13 +345,13 @@ engine it starts is gated with, and it knows what to give the agent because it
 set it. A daemon node whose fleet entry names no key SHALL wake an ungated
 engine, which is correct for a node reached over loopback.
 
-For a remote node the resolution is the same with a fleet-wide default: the key
+For a cloud node the resolution is the same with a fleet-wide default: the key
 is the node's own `engineTokenEnv` when it names one, otherwise the fleet file's
-`apiKeyEnv`. A remote's engine is always gated by its API key, so a remote that
+`apiKeyEnv`. A cloud node's engine is always gated by its API key, so a cloud node that
 is selected — running or woken — SHALL be reached with a key. When neither the
 node nor the fleet names a variable, or the variable it names is set nowhere,
 routing SHALL fail before the agent launches, naming the node and what to set: a
-remote is never reached ungated.
+a cloud node is never reached ungated.
 
 Routing SHALL NOT ask the daemon for a key, and the daemon SHALL NOT return one:
 saying a key is required is a fact a router needs, and handing the key out is
@@ -376,23 +376,23 @@ authenticate is worse than a message that says so.
 - **THEN** the engine starts ungated and the agent launches with no key injected
   for it
 
-#### Scenario: A remote node takes the fleet-wide key
+#### Scenario: A cloud node takes the fleet-wide key
 
-- **WHEN** routing selects a remote node whose entry names no `engineTokenEnv`,
+- **WHEN** routing selects a cloud node whose entry names no `engineTokenEnv`,
   and the fleet file declares an `apiKeyEnv` that is set
 - **THEN** the launched agent's environment carries that value as
   `OPENAI_API_KEY`
 
-#### Scenario: A remote node's own key overrides the fleet-wide one
+#### Scenario: A cloud node's own key overrides the fleet-wide one
 
-- **WHEN** routing selects a remote node that names its own `engineTokenEnv`
+- **WHEN** routing selects a cloud node that names its own `engineTokenEnv`
   and the fleet file also declares an `apiKeyEnv`
 - **THEN** the node's own variable is the key the agent is given, not the
   fleet-wide one
 
-#### Scenario: A remote node with no key fails early
+#### Scenario: A cloud node with no key fails early
 
-- **WHEN** routing selects a remote node whose entry names no `engineTokenEnv`
+- **WHEN** routing selects a cloud node whose entry names no `engineTokenEnv`
   and the fleet file declares no `apiKeyEnv`
 - **THEN** the command fails naming the node and what to set, and no agent is
   launched
@@ -494,7 +494,7 @@ address is written, and SHALL also be placed in the launched agent's
 environment as `OPENAI_BASE_URL`.
 
 A variable already set in spinloop's environment SHALL win, as it does on the
-remote path — routing fills what is unset, it does not override an explicit
+cloud path — routing fills what is unset, it does not override an explicit
 choice.
 
 A Spinloop that pins a `BASEURL` SHALL NOT be routed: the pinned address wins
@@ -612,7 +612,7 @@ choose from instead of an empty one. A failure to complete that query (the
 gateway unreachable, timed out, or answering something unusable) SHALL NOT fail
 the launch: it SHALL warn and configure the harness with an empty model list,
 on the same terms a launch already warns and carries on when it cannot refresh
-a remote endpoint's key. This model-list population is a capability of
+a cloud endpoint's key. This model-list population is a capability of
 harnesses whose config format holds more than one model per provider; a harness
 with no such concept is configured with no model or alias.
 
@@ -621,7 +621,7 @@ not by the catalogue's shared generic id: its display name SHALL lead with
 "Gateway" — not the catalogue engine's own generic label — followed by the
 gateway's `name` where the fleet file's `gateway` section gives one, or its
 address otherwise (e.g. "Gateway (dev-2)" or "Gateway (localhost:4000)"), the
-same "<label> (<qualifier>)" shape a remote environment already reads as (e.g.
+same "<label> (<qualifier>)" shape a cloud environment already reads as (e.g.
 "llama.cpp (dev-2)"). This keeps a second gateway from overwriting the first's
 configured block, and — since the word a user actually searches a model picker
 for is "gateway" — lets them find it at all.

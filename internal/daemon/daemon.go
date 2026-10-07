@@ -320,13 +320,13 @@ type StatusResponse struct {
 // binds 127.0.0.1:8080, which is useless to anyone else, and it cannot know
 // the name a client reaches this host by — a LAN name, a tailscale name, a
 // published container port. The caller composes these against the host it
-// already has. A node that does know that name — a remote environment, whose
+// already has. A node that does know that name — a cloud environment, whose
 // control plane publishes the instance's address — reports it in Host, and the
 // caller uses it in place of the host it would otherwise supply.
 type EngineEndpoint struct {
 	// Host is the name or address a client reaches the engine by, when the
 	// node knows it. A daemon leaves it empty — it cannot know a client-facing
-	// name — but a remote environment's status fills it with the instance's
+	// name — but a cloud environment's status fills it with the instance's
 	// published address, which is all a caller needs.
 	Host string `json:"host,omitempty"`
 	// Port is the port the engine listens on — the engine's, never the

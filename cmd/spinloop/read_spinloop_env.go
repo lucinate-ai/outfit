@@ -2,10 +2,10 @@
 // from --env or --fleet — and is read only for the environment it carries: its
 // ENV instructions and the .env beside it, applied before any control-plane or
 // daemon work. That is what lets AWS credentials, a profile, or the
-// SPINLOOP_REMOTE_* overrides live in a project's Spinloop rather than in the
+// SPINLOOP_CLOUD_* overrides live in a project's Spinloop rather than in the
 // shell that happens to be running the command.
 //
-// The `remote` subcommands this replaces also consulted ./Spinloop when none
+// The `cloud` subcommands this replaces also consulted ./Spinloop when none
 // was named. The verbs do not: a file sitting in the working directory should
 // not silently set environment variables for a command that reads a fleet, and
 // naming it is one flag. Nothing else about the rule changes.

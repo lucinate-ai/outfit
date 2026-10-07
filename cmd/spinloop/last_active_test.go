@@ -9,15 +9,15 @@ import (
 	"testing"
 )
 
-// The last-active figure appears in four places — `remote metrics` in bar,
-// table and json, `remote status`, and `fleet metrics` — and every one of them
+// The last-active figure appears in four places — `cloud metrics` in bar,
+// table and json, `cloud status`, and `fleet metrics` — and every one of them
 // gates on the timestamp rather than the seconds. These tests hold that line,
 // because gating on the seconds hides the busiest engine there is: the daemon
 // omits idleSeconds at zero, so an engine working this instant sends a
 // timestamp and nothing else.
 
 // statsServer stands in for the stats Lambda, replying with whatever the test
-// wants `spinloop remote metrics` to render.
+// wants `spinloop cloud metrics` to render.
 func statsServer(t *testing.T, body string) {
 	t.Helper()
 	isolateConfig(t)
@@ -27,8 +27,8 @@ func statsServer(t *testing.T, body string) {
 		fmt.Fprint(w, body)
 	}))
 	t.Cleanup(server.Close)
-	writeRemoteConfig(t, server.URL)
-	t.Setenv("SPINLOOP_REMOTE_STATS_URL", server.URL)
+	writeCloudConfig(t, server.URL)
+	t.Setenv("SPINLOOP_CLOUD_STATS_URL", server.URL)
 }
 
 const runningWithActivity = `{
@@ -44,7 +44,7 @@ const runningWithActivity = `{
 	"idleSeconds": 125
 }`
 
-func TestRemoteMetricsBarShowsLastActive(t *testing.T) {
+func TestCloudMetricsBarShowsLastActive(t *testing.T) {
 	statsServer(t, runningWithActivity)
 
 	out := captureStdout(t, func() {
@@ -65,7 +65,7 @@ func TestRemoteMetricsBarShowsLastActive(t *testing.T) {
 	}
 }
 
-func TestRemoteMetricsTableShowsLastActive(t *testing.T) {
+func TestCloudMetricsTableShowsLastActive(t *testing.T) {
 	statsServer(t, runningWithActivity)
 
 	out := captureStdout(t, func() {
@@ -82,7 +82,7 @@ func TestRemoteMetricsTableShowsLastActive(t *testing.T) {
 	}
 }
 
-func TestRemoteMetricsJSONCarriesLastActive(t *testing.T) {
+func TestCloudMetricsJSONCarriesLastActive(t *testing.T) {
 	statsServer(t, runningWithActivity)
 
 	out := captureStdout(t, func() {
@@ -114,7 +114,7 @@ func TestRemoteMetricsJSONCarriesLastActive(t *testing.T) {
 
 // A stopped endpoint draws no bars and no token block, but when it last did
 // work is exactly what a stopped endpoint is worth asking about.
-func TestRemoteMetricsStoppedStillShowsLastActive(t *testing.T) {
+func TestCloudMetricsStoppedStillShowsLastActive(t *testing.T) {
 	statsServer(t, `{
 		"environment": "dev",
 		"state": "stopped",
@@ -200,7 +200,7 @@ func TestLastActiveOmittedWithoutATimestamp(t *testing.T) {
 }
 
 // statusServer stands in for the start Lambda's GET branch, which is what
-// `spinloop remote status` calls.
+// `spinloop cloud status` calls.
 func statusServer(t *testing.T, body string) {
 	t.Helper()
 	isolateConfig(t)
@@ -210,10 +210,10 @@ func statusServer(t *testing.T, body string) {
 		fmt.Fprint(w, body)
 	}))
 	t.Cleanup(server.Close)
-	writeRemoteConfig(t, server.URL)
+	writeCloudConfig(t, server.URL)
 }
 
-func TestRemoteStatusShowsLastActive(t *testing.T) {
+func TestCloudStatusShowsLastActive(t *testing.T) {
 	statusServer(t, `{
 		"state": "running",
 		"healthy": true,
@@ -243,7 +243,7 @@ func TestRemoteStatusShowsLastActive(t *testing.T) {
 	}
 }
 
-func TestRemoteStatusZeroIdleStillRenders(t *testing.T) {
+func TestCloudStatusZeroIdleStillRenders(t *testing.T) {
 	statusServer(t, `{"state": "running", "healthy": true, "lastActiveAt": "2026-08-10T10:00:00Z"}`)
 
 	out := captureStdout(t, func() {
@@ -258,7 +258,7 @@ func TestRemoteStatusZeroIdleStillRenders(t *testing.T) {
 
 // A stopped instance cannot be asked — reaching the daemon needs a running
 // box — so the control plane sends nothing and the command claims nothing.
-func TestRemoteStatusOmitsLastActiveWhenAbsent(t *testing.T) {
+func TestCloudStatusOmitsLastActiveWhenAbsent(t *testing.T) {
 	statusServer(t, `{"state": "stopped", "healthy": false}`)
 
 	out := captureStdout(t, func() {

@@ -34,7 +34,7 @@ fi
 
 if [[ -z "${instance_id}" || "${instance_id}" == "None" ]]; then
   echo "Error: no running cloud-vm-llm instance found in ${REGION}." >&2
-  echo "Start it first (e.g. 'spinloop remote start'), then retry." >&2
+  echo "Start it first (e.g. 'spinloop cloud start'), then retry." >&2
   exit 1
 fi
 

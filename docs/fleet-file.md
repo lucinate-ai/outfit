@@ -13,7 +13,7 @@ written in the file.
 # fleet.yaml — the machines, and how to reach each
 prefer: idle               # optional; idle (default) or active
 wake: on                   # optional; on (default) or off
-apiKeyEnv: REMOTE_KEY      # optional; the default engine key for kind: remote nodes
+apiKeyEnv: REMOTE_KEY      # optional; the default engine key for kind: cloud nodes
 
 nodes:
   - name: studio           # required, unique; what you type at `fleet start <node>`
@@ -27,8 +27,8 @@ nodes:
       port: 18080
       path: /v1
 
-  - name: qwen             # for a kind: remote node, the registered environment's name
-    kind: remote
+  - name: qwen             # for a kind: cloud node, the registered environment's name
+    kind: cloud
     instance-type: g6e.2xlarge          # optional; the EC2 type its environment launches as
 
 gateway:                       # optional; where a spinloop gateway serves this fleet
@@ -53,22 +53,22 @@ and how to create one.
 | `prefer`    | no        | `idle` (default) or `active` — how routing ranks several nodes that could all serve; see [Spreading or consolidating](#spreading-or-consolidating) |
 | `wake`      | no        | `on` (default) or `off` — whether routing may start an engine on a node that is not running one; see [Waking](#waking) |
 | `concurrency` | no      | The most work the fleet may have in flight at once, for the [`spinloop orchestrator`](commands/orchestrator.md); see [Concurrency](#concurrency) |
-| `apiKeyEnv` | no        | The variable holding the key the fleet's `kind: remote` nodes share; see [Tokens](#tokens)                 |
+| `apiKeyEnv` | no        | The variable holding the key the fleet's `kind: cloud` nodes share; see [Tokens](#tokens)                 |
 | `gateway`   | no        | The address a [`spinloop gateway`](commands/gateway.md) serves the fleet under; see [Gateway](#gateway)    |
 
 ### A node
 
 | Field            | Required?            | Meaning                                                                                                                        |
 | ---------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `name`           | yes                  | Unique in the file; what you type at `fleet start <node>`. For a `kind: remote` node, the registered environment it drives    |
+| `name`           | yes                  | Unique in the file; what you type at `fleet start <node>`. For a `kind: cloud` node, the registered environment it drives    |
 | `host`           | for `kind: daemon`   | Where the daemon answers — a LAN name, a tailscale name, or an address                                                          |
 | `port`           | no                   | The daemon's control API port; 4242 when omitted                                                                                 |
-| `kind`           | no                   | `daemon` (default) or `remote`; see [Remote environments](#remote-environments)                                                  |
+| `kind`           | no                   | `daemon` (default) or `cloud`; see [Cloud environments](#cloud-environments)                                                  |
 | `tokenEnv`       | no                   | The variable holding this daemon's bearer token; none means no authentication (a loopback-only daemon)                           |
 | `engineTokenEnv` | no                   | The variable holding the key this node's *engine* is gated with; see [Tokens](#tokens)                                           |
 | `engine`         | no                   | An override of where the engine serves — `host`, `port`, `path`, each optional; see [Where a node's engine answers](#where-a-nodes-engine-answers) |
 | `file`           | no                   | The [Spinloop](spinloop-file.md) that describes what this node runs; see [A node's Spinloop source](#a-nodes-spinloop-source)  |
-| `instance-type`  | no, `kind: remote` only | The EC2 instance type the environment launches as, e.g. `g6e.xlarge`; see [Remote environments](#remote-environments)          |
+| `instance-type`  | no, `kind: cloud` only | The EC2 instance type the environment launches as, e.g. `g6e.xlarge`; see [Cloud environments](#cloud-environments)          |
 | `tags`           | no                   | Key/value pairs naming the kind of work the node takes on; only the [`spinloop orchestrator`](commands/orchestrator.md) reads them; see [Tags](#tags) |
 
 ### The `gateway` section
@@ -108,10 +108,10 @@ elsewhere fails with that explanation rather than a bare connection refused —
 bind the engine to a reachable address (llama.cpp's `--host 0.0.0.0`), or
 declare an `engine` block, which is you taking responsibility for reachability.
 
-## Remote environments
+## Cloud environments
 
 `kind` (defaulted to `daemon`) says how the fleet reaches a node. A node can
-also be an [`spinloop remote`](commands/remote.md) environment rather than a
+also be an [`spinloop cloud`](commands/cloud.md) environment rather than a
 machine: its `name` is the registered environment it drives — no `host` needed
 — and it is reached through its control plane, which signs each call with your
 AWS credentials, so it needs no bearer token:
@@ -119,27 +119,27 @@ AWS credentials, so it needs no bearer token:
 ```yaml
 nodes:
   - name: qwen          # the registered environment, and what you type at `fleet start <node>`
-    kind: remote
+    kind: cloud
 ```
 
-The environment's control URLs live in its `remote.json` (under
-`~/.config/spinloop/remotes/<name>/`), written by `spinloop remote deploy` — or
-by [`spinloop fleet deploy`](commands/fleet.md#deploying-remote-nodes), which
+The environment's control URLs live in its `cloud.json` (under
+`~/.config/spinloop/clouds/<name>/`), written by `spinloop cloud deploy` — or
+by [`spinloop fleet deploy`](commands/fleet.md#deploying-cloud-nodes), which
 creates it from the fleet file itself — and never stored in the fleet file. So a
 daemon and an environment sit side by side as the same kind of row, and an
 environment that has not been deployed yet shows as `config-error` on its row
 rather than blanking the fleet. See
-[`examples/fleet-remote`](https://github.com/spinloop-ai/spinloop/blob/main/examples/fleet-remote/README.md) and
+[`examples/fleet-cloud`](https://github.com/spinloop-ai/spinloop/blob/main/examples/fleet-cloud/README.md) and
 [`examples/fleet-mixed`](https://github.com/spinloop-ai/spinloop/blob/main/examples/fleet-mixed/README.md).
 
-A `kind: remote` node may also name the EC2 instance type its environment
+A `kind: cloud` node may also name the EC2 instance type its environment
 launches as, with `instance-type` (a family and size separated by a dot, e.g.
 `g6e.xlarge`):
 
 ```yaml
 nodes:
   - name: qwen
-    kind: remote
+    kind: cloud
     instance-type: g6e.2xlarge
 ```
 
@@ -148,14 +148,14 @@ It is a property of the cloud environment, not of the fleet's view of it:
 **fresh** launch uses it. A re-wake of a stopped instance keeps the type it was
 launched with — EC2 cannot resize a running or stopped box — so a changed value
 takes effect only after the instance is terminated (an idle sweep or
-`spinloop remote stop`) and launched again. Omitted, the environment launches as
+`spinloop cloud stop`) and launched again. Omitted, the environment launches as
 its control plane's default type. Naming `instance-type` on a `kind: daemon`
 node is a configuration error: a daemon's hardware is the operator's to choose,
 not the fleet file's.
 
 ## A node's Spinloop source
 
-Both `fleet deploy` (for a `kind: remote` node's environment) and `fleet start`
+Both `fleet deploy` (for a `kind: cloud` node's environment) and `fleet start`
 (for a `kind: daemon` node's engine) need to know what Spinloop file describes
 what a node runs. A node names it with `file`, resolved relative to the fleet
 file:
@@ -163,7 +163,7 @@ file:
 ```yaml
 nodes:
   - name: qwen
-    kind: remote
+    kind: cloud
     file: ./envs/qwen.Spinloop
 ```
 
@@ -171,7 +171,7 @@ nodes:
 key. When it is absent, resolution tries, in order:
 
 1. `name` registered as a `spinloop alias` (`spinloop alias add qwen
-   ./envs/qwen.Spinloop`) — the same lookup `spinloop remote deploy` performs
+   ./envs/qwen.Spinloop`) — the same lookup `spinloop cloud deploy` performs
    for a Spinloop argument;
 2. a subdirectory named after the node, beside the fleet file — `qwen/Spinloop`
    next to `fleet.yaml` for a node named `qwen`, no fields needed on either side.
@@ -189,7 +189,7 @@ Nothing resolving is a per-node error naming all three ways a source could have
 been given. For `fleet deploy` that always fails the node (there is nothing to
 create an environment from); for `fleet start` on a `kind: daemon` node it
 likewise fails that node's start — there is no fallback to a plain, config-less
-start once this field exists. A `kind: remote` node's `start` is unaffected by
+start once this field exists. A `kind: cloud` node's `start` is unaffected by
 any of this: what it serves is fixed at deploy time, not pushed at start time.
 
 This does not apply to `spinloop dashboard`'s `s` key, which still starts
@@ -248,13 +248,13 @@ nodes:
   - name: gpu-box
     host: 198.51.100.7
   - name: prod
-    kind: remote
+    kind: cloud
     wake: off   # this one node stays asleep even though the fleet wakes
 ```
 
-This matters most for a `kind: remote` node, whose wake boots a billed cloud
+This matters most for a `kind: cloud` node, whose wake boots a billed cloud
 instance rather than starting a process on a machine you already run — so you
-can leave the fleet's daemons on `wake: on` while deciding a given remote
+can leave the fleet's daemons on `wake: on` while deciding a given cloud
 environment's waking separately, in either direction: `wake: off` on one node
 under a fleet that otherwise wakes, or `wake: on` on one node under a fleet
 that otherwise does not.
@@ -335,7 +335,7 @@ When a launch through the gateway has no model of its own to route by (see
 way to label the provider it configures — otherwise every gateway a fleet might
 name would collide under the same generic id. `name` supplies that label
 directly; with none given, the section's address's host stands in (e.g.
-`localhost:4000`). Either way opencode and Pi show it the way a remote
+`localhost:4000`). Either way opencode and Pi show it the way a cloud
 environment is shown — `Gateway (remote-llms)` rather than a bare
 `OpenAI-compatible`, the same pattern as `llama.cpp (dev-2)`.
 
@@ -362,10 +362,10 @@ There are three references, all resolved the same way:
   authorises using its engine — and a node may need either, both, or neither.
   The daemon never hands its engine's key out: it says only that one is
   required.
-- **`apiKeyEnv`** (top level) — the default key for every `kind: remote` node.
-  A remote environment is always keyed, so a node that names no
+- **`apiKeyEnv`** (top level) — the default key for every `kind: cloud` node.
+  A cloud environment is always keyed, so a node that names no
   `engineTokenEnv` of its own takes the fleet-wide reference. A node's own
-  `engineTokenEnv` overrides it, so one remote may carry a distinct key while
+  `engineTokenEnv` overrides it, so one cloud node may carry a distinct key while
   the rest of the fleet shares one. A `kind: daemon` node never takes the
   fleet-wide reference: it is gated only by its own `engineTokenEnv`.
 
@@ -376,15 +376,15 @@ There are three references, all resolved the same way:
     engineTokenEnv: GATED_ENGINE_KEY  # to talk to its engine
 ```
 
-A `kind: remote` environment is always keyed, so it needs an engine key too —
+A `kind: cloud` environment is always keyed, so it needs an engine key too —
 its `engineTokenEnv` works as above, and a fleet-wide `apiKeyEnv` is the
-default for every remote node that does not name one of its own:
+default for every cloud node that does not name one of its own:
 
 ```yaml
-apiKeyEnv: REMOTE_ENGINE_KEY   # the default for every kind: remote node
+apiKeyEnv: REMOTE_ENGINE_KEY   # the default for every kind: cloud node
 nodes:
   - name: qwen
-    kind: remote
+    kind: cloud
     engineTokenEnv: OTHER_KEY  # overrides it for this node
 ```
 
@@ -402,8 +402,8 @@ the reason named:
 - no `nodes` — list at least one;
 - a node with no `name`, or two nodes with the same name;
 - a `kind: daemon` node with no `host`;
-- an unknown `kind` — only `daemon` and `remote` are supported;
-- a `kind: remote` node whose `name` is not shaped like a registered
+- an unknown `kind` — only `daemon` and `cloud` are supported;
+- a `kind: cloud` node whose `name` is not shaped like a registered
   environment name (no `/`, no trailing `.json`) — the name is the key of the
   environment it drives;
 - an `instance-type` that is not shaped like an EC2 instance type (a family and
@@ -424,7 +424,7 @@ Fleet files, each with a walkthrough:
 - [`examples/fleet-local/`](https://github.com/spinloop-ai/spinloop/tree/main/examples/fleet-local) — a fleet of one, on your own machine
 - [`examples/fleet/`](https://github.com/spinloop-ai/spinloop/tree/main/examples/fleet) — a small LAN fleet, all defaults
 - [`examples/fleet-docker/`](https://github.com/spinloop-ai/spinloop/tree/main/examples/fleet-docker) — a runnable multi-node fleet in containers
-- [`examples/fleet-remote/`](https://github.com/spinloop-ai/spinloop/tree/main/examples/fleet-remote) — a fleet of cloud environments
+- [`examples/fleet-cloud/`](https://github.com/spinloop-ai/spinloop/tree/main/examples/fleet-cloud) — a fleet of cloud environments
 - [`examples/fleet-mixed/`](https://github.com/spinloop-ai/spinloop/tree/main/examples/fleet-mixed) — daemons and environments side by side
 - [`examples/gateway-docker/`](https://github.com/spinloop-ai/spinloop/tree/main/examples/gateway-docker) — a fleet behind its gateway
 

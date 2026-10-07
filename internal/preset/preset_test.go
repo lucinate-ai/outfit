@@ -251,7 +251,7 @@ func TestDialectOMLXHasNoBareBooleans(t *testing.T) {
 }
 
 // TestPackageFlagsStillLlamaCpp guards the callers that predate dialects: the
-// package-level helpers, and remote.go's CanonicalKey, must keep rendering
+// package-level helpers, and cloud.go's CanonicalKey, must keep rendering
 // llama.cpp.
 func TestPackageFlagsStillLlamaCpp(t *testing.T) {
 	got := strings.Join(Flags([]Param{{Key: "hf", Value: "org/m"}, {Key: "mmap", Value: "1"}}), " ")

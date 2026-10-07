@@ -66,7 +66,7 @@ func Resolve(base, ref string) (string, error) {
 const fetchTimeout = 15 * time.Second
 
 // maxFetchSize caps how much of a response body Fetch reads. Every reference
-// this package fetches — a Spinloop, a preset .ini, a remote.json — is a small,
+// this package fetches — a Spinloop, a preset .ini, a cloud.json — is a small,
 // hand-editable text file, so this is generous headroom, not a tight limit.
 const maxFetchSize = 1 << 20 // 1 MiB
 

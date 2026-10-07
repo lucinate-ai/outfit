@@ -2,7 +2,7 @@
 
 Run Unsloth's GGUF build of Qwen3.8-27B locally with `llama-server`, then point
 opencode at it with the [`Spinloop`](Spinloop) in this directory. The same file also
-deploys it to a GPU in AWS with [`spinloop remote`](#running-it-on-aws) — no
+deploys it to a GPU in AWS with [`spinloop cloud`](#running-it-on-aws) — no
 infrastructure to hand-write, just this Spinloop and one extra line.
 
 Qwen3.8-27B is a dense 27B model built on Qwen's hybrid attention architecture
@@ -185,12 +185,12 @@ over to a local/`llama.cpp` deployment, and what doesn't:
   GGUF quants here come from the community (Unsloth, bartowski, ggml-org).
   It's a good fit for a single-GPU box with opencode, which is what this
   Spinloop is for; for serious throughput, `spinloop`'s `vllm` provider and
-  `spinloop remote`'s vLLM runner are the closer match to Qwen's guidance.
+  `spinloop cloud`'s vLLM runner are the closer match to Qwen's guidance.
 
 ## Running it on AWS
 
 The same Spinloop and preset run this model on a GPU in the cloud — provisioned
-by [`spinloop remote`](../../../docs/commands/remote.md) — rather than the
+by [`spinloop cloud`](../../../docs/commands/cloud.md) — rather than the
 machine in front of you, and terminate themselves once you stop using them.
 This is real, billed AWS infrastructure (an EC2 GPU instance, an Elastic IP,
 image-builder pipelines), so each step below shows you a plan and asks for
@@ -199,8 +199,8 @@ confirmation before it creates anything.
 ### Once per AWS account: bootstrap the control plane
 
 ```sh
-spinloop remote bootstrap                     # shows a plan, then deploys
-spinloop remote bootstrap --dry-run           # see the plan without deploying
+spinloop cloud bootstrap                     # shows a plan, then deploys
+spinloop cloud bootstrap --dry-run           # see the plan without deploying
 ```
 
 This deploys the shared control plane — the AMI-baking pipelines for
@@ -211,30 +211,30 @@ vCPU quota in the target region. It creates no instance and no Elastic IP.
 ### Deploy this Spinloop as an environment
 
 ```sh
-spinloop remote deploy --env qwen3.8-27b    # from this directory
-spinloop remote deploy --env qwen3.8-27b --dry-run   # see what would be sent first
+spinloop cloud deploy --env qwen3.8-27b    # from this directory
+spinloop cloud deploy --env qwen3.8-27b --dry-run   # see what would be sent first
 ```
 
-The `--env` name is the environment `spinloop remote` creates and registers.
+The `--env` name is the environment `spinloop cloud` creates and registers.
 
 `deploy` reads `PROVIDER`, `ALIAS`, `CONTEXT` and `PRESET` from the Spinloop — the
 same values [`spinloop serve`](../../../docs/commands/serve.md) uses locally —
 provisions the environment's Elastic IP, API key, ingress rule (defaulting to
 your own public IP) and state, and registers it at
-`~/.config/spinloop/remotes/qwen3.8-27b/remote.json`. If the shared bucket
+`~/.config/spinloop/clouds/qwen3.8-27b/cloud.json`. If the shared bucket
 doesn't have these weights cached yet, deploy fetches them in the background
 (15–20 minutes) — wait for that before your first `start`.
 
 ### Start it, use it, stop it
 
 ```sh
-eval "$(spinloop remote start --env qwen3.8-27b)"   # boots the instance
+eval "$(spinloop cloud start --env qwen3.8-27b)"   # boots the instance
                                                     # (~10 min cold), exports
                                                     # OPENAI_BASE_URL / OPENAI_API_KEY
 spinloop status --env <name> --env qwen3.8-27b            # is it up, is it healthy
 spinloop harness apply --env qwen3.8-27b                    # point opencode at the running endpoint
 spinloop harness open --env qwen3.8-27b             # work
-spinloop remote stop --env qwen3.8-27b              # done — shut it down now rather
+spinloop cloud stop --env qwen3.8-27b              # done — shut it down now rather
                                                     # than waiting for the idle timer
 ```
 
@@ -242,7 +242,7 @@ Once deployed, this box has the memory to run past the 32768-token default —
 raise `CONTEXT`/`ctx-size` in the Spinloop and preset together (up to the
 model's native 262144) before your next `deploy`.
 
-See [`spinloop remote`](../../../docs/commands/remote.md) for `logs`, `metrics`,
+See [`spinloop cloud`](../../../docs/commands/cloud.md) for `logs`, `metrics`,
 and how to name and switch between multiple deployed environments.
 
 ## Vision input (optional)

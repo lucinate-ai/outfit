@@ -79,14 +79,14 @@ the base URL never changes.
 ## The deploy-config control plane
 
 The seam between "what infra exists" (CDK's job, provisioned once) and "what to
-serve" (per deployment). `spinloop remote deploy` reads a Spinloop file and POSTs a
+serve" (per deployment). `spinloop cloud deploy` reads a Spinloop file and POSTs a
 DeployConfig to the deploy Lambda; the Lambda validates it and writes the
 `/cloud-vm-llm/deploy-config` SSM parameter. The next wake reads it.
 
 ```mermaid
 flowchart LR
   spinloopfile["Spinloop file<br/>(runner, MODEL, CONTEXT, preset)"]
-  spinloop["spinloop remote deploy"]
+  spinloop["spinloop cloud deploy"]
   deploy["DeployFn<br/>(validate)"]
   param[("deploy-config<br/>SSM param")]
   seed["seed instance<br/>(if weights missing)"]
@@ -113,10 +113,10 @@ never encode the S3 layout (and a prefix sent in the body is ignored). If those
 weights are not in the bucket, the Lambda launches a seed itself and replies
 `{seeding: true, seedId}`; a wake before it finishes would sync an incomplete
 prefix, so wait for it. The id is stable (derived from the weights), unlike the
-instance it replaced, so it is what `spinloop remote seed status` takes.
+instance it replaced, so it is what `spinloop cloud seed status` takes.
 
 The environment's engine API key is the same shape: a property of the *request*,
-not of what the environment serves. `spinloop remote deploy --api-key-env VAR`
+not of what the environment serves. `spinloop cloud deploy --api-key-env VAR`
 resolves the variable and sends the value beside the deploy body; the Lambda
 stores it in the environment's Secrets Manager secret (the one the start Lambda
 fetches into the daemon) and never writes it into the SSM parameter. A supplied
@@ -132,7 +132,7 @@ A seed is a supervised job, not a fire-and-forget script.
 
 ```mermaid
 flowchart TB
-  cli["spinloop remote seed<br/>start | status | ls | stop"]
+  cli["spinloop cloud seed<br/>start | status | ls | stop"]
   seedfn["SeedFn (Function URL)"]
   deployfn["DeployFn<br/>(auto-seed on missing weights)"]
   inst["c7g.large, stock AL2023<br/>no bake"]
@@ -183,21 +183,21 @@ fails the wake loudly rather than guessing.
 
 The parameter is **spinloop/manual-owned**. CDK creates it with a constant
 `unconfigured` placeholder — deliberately *not* the cfg-derived config — so a
-later `cdk deploy` can never clobber what `spinloop remote deploy` (or a manual
+later `cdk deploy` can never clobber what `spinloop cloud deploy` (or a manual
 edit) put there. `pnpm run deploy`'s seed step (`scripts/seed-deploy-config.mjs`)
 writes a cfg-derived initial config over the placeholder *only* while it is still
 unconfigured, and only when CDK knows the full serve config (vLLM); llama.cpp's
-serve args come from a Spinloop, so its config is left for `spinloop remote deploy`
+serve args come from a Spinloop, so its config is left for `spinloop cloud deploy`
 to set.
 
 ## Wake lifecycle
 
-`spinloop remote start` (or any POST to the start Function URL) blocks until the
+`spinloop cloud start` (or any POST to the start Function URL) blocks until the
 server is answering, so the caller gets one "ready" with the base URL + key.
 
 ```mermaid
 sequenceDiagram
-  participant O as spinloop remote start
+  participant O as spinloop cloud start
   participant S as StartFn
   participant P as deploy-config (SSM)
   participant E as EC2
@@ -205,7 +205,7 @@ sequenceDiagram
   O->>S: POST (SigV4)
   S->>P: read deploy-config
   alt unconfigured
-    S-->>O: 503 "run spinloop remote deploy"
+    S-->>O: 503 "run spinloop cloud deploy"
   end
   S->>E: RunInstances (try each g6e AZ until capacity)
   S->>E: associate Elastic IP
@@ -274,8 +274,8 @@ release — so a fresh boot always reports it. A stopped instance with no
 self-healed: the next sweep records the stop time and gives it the full
 retention. A `Retain-Until` instance tag (UTC ISO-8601) overrides both the idle
 timer and the max-runtime cap (and, on a stopped instance, its termination);
-`spinloop remote pause` stops an instance on purpose, and a manual
-`spinloop remote stop` still terminates it immediately.
+`spinloop cloud pause` stops an instance on purpose, and a manual
+`spinloop cloud stop` still terminates it immediately.
 
 ## Image stack
 

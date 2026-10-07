@@ -47,14 +47,14 @@ export function errorName(err: unknown): string {
  * Instance tag holding an ISO-8601 UTC datetime before which automatic
  * termination (idle check and the max-runtime cap) must not fire — a manual
  * "keep this alive until" override, e.g. while debugging on the box. A manual
- * `spinloop remote stop` still terminates it: the tag guards against accidental
+ * `spinloop cloud stop` still terminates it: the tag guards against accidental
  * death, not deliberate shutdown.
  */
 export const RETAIN_UNTIL_TAG = 'Retain-Until';
 
 /**
  * Instance tag holding the ISO-8601 UTC time the control plane last issued a
- * stop for this instance (idle sweep or a manual `spinloop remote pause`).
+ * stop for this instance (idle sweep or a manual `spinloop cloud pause`).
  * Stopped instances are billed for storage while they sleep, so the sweep
  * counts stop retention from this tag; EC2 itself exposes no stop time.
  */
@@ -434,7 +434,7 @@ export async function startEngineDaemon(instanceId: string, body: string): Promi
 /**
  * Read the deploy-config (what to serve) from its SSM parameter. Throws via
  * parseDeployConfig if unset/invalid — the start Lambda surfaces that as a
- * clear "run spinloop remote deploy" rather than launching a mis-configured box.
+ * clear "run spinloop cloud deploy" rather than launching a mis-configured box.
  */
 export async function readDeployConfig(paramName: string): Promise<DeployConfig> {
   const result = await ssm.send(new GetParameterCommand({ Name: paramName }));

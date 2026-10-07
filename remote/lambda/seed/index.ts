@@ -150,7 +150,7 @@ async function start(event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLRe
     joined: false,
     modelId,
     weightsPrefix: cfg.weightsPrefix,
-    message: `seeding ${modelId} — follow it with \`spinloop remote seed status ${seedId}\``,
+    message: `seeding ${modelId} — follow it with \`spinloop cloud seed status ${seedId}\``,
   });
 }
 

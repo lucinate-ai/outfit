@@ -49,7 +49,7 @@ caveats).
    an escape hatch).
 5. **README** — deploy walkthrough gains the one-time Tailscale setup; the
    security notes and cost table are updated (EIP line goes away).
-6. **spinloop** — no code change. `spinloop remote start` prints whatever
+6. **spinloop** — no code change. `spinloop cloud start` prints whatever
    `base_url` the start Lambda returns, which now carries the MagicDNS URL.
 
 ## One-time setup (manual, in the Tailscale admin console)

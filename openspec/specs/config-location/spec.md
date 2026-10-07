@@ -5,7 +5,7 @@
 How spinloop resolves its own config directory, and why that resolution is
 explicit rather than inferred.
 
-Everything spinloop owns lives under one directory — `config.json`, `remote.json`,
+Everything spinloop owns lives under one directory — `config.json`, `cloud.json`,
 the environment registry, the daemon state dir, the CDK source cache — and the
 obvious way to find it leans on `$HOME`. A systemd service does not get one. On
 the cloud instance that meant the boot script wrote to `/root/.config/spinloop`
@@ -20,14 +20,14 @@ silently resolving to a bogus relative path.
 
 spinloop SHALL resolve one config directory and place every file it owns under
 it: its own `config.json` (default-harness preference and alias registry), the
-`remotes/<name>/` environment registry, the daemon state directory, and the CDK
+`clouds/<name>/` environment registry, the daemon state directory, and the CDK
 source directory. There SHALL be one resolver; the location SHALL NOT be
 computed independently in more than one place.
 
 #### Scenario: All spinloop-owned state shares one root
 
 - **WHEN** the config directory resolves to a given path
-- **THEN** `config.json`, the `remotes/<name>/` registry, and the daemon state
+- **THEN** `config.json`, the `clouds/<name>/` registry, and the daemon state
   directory all resolve beneath that same path
 
 ### Requirement: SPINLOOP_CONFIG_DIR override

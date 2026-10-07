@@ -142,7 +142,7 @@ one thing across the group.
 
 #### Scenario: A path is not an environment name
 
-- **WHEN** `spinloop fleet status --env ./remote.json` runs
+- **WHEN** `spinloop fleet status --env ./cloud.json` runs
 - **THEN** it fails saying an environment name is a plain identifier with no
   path
 
@@ -258,15 +258,15 @@ the variable, in the same way a missing daemon token is.
 ### Requirement: Fleet-wide API key reference
 
 A `fleet.yaml` MAY declare a top-level `apiKeyEnv` naming the environment
-variable that holds the API key shared by the fleet's remote nodes. The file
+variable that holds the API key shared by the fleet's cloud nodes. The file
 SHALL hold the variable's *name*, never the value — the same discipline as the
 daemon and engine-token references — and the reference SHALL be resolved exactly
 the way those are: the process environment first, then the `.env` beside the
 fleet file.
 
-The reference is the default key for a remote node. A remote node whose own
+The reference is the default key for a cloud node. A cloud node whose own
 entry names no `engineTokenEnv` takes the fleet-wide key. A node's own
-`engineTokenEnv` SHALL override the fleet-wide reference, so one remote may
+`engineTokenEnv` SHALL override the fleet-wide reference, so one cloud node may
 carry a distinct key while the rest of the fleet shares one. A daemon node SHALL
 NOT take the fleet-wide reference: it is gated only by its own `engineTokenEnv`,
 exactly as it is today.
@@ -277,12 +277,12 @@ naming the variable, in the same way a missing engine-token variable is.
 #### Scenario: A fleet shares one key across its remotes
 
 - **WHEN** a `fleet.yaml` declares `apiKeyEnv: SHARED_KEY`, that variable is
-  set, and it lists two `kind: remote` nodes that name no `engineTokenEnv`
+  set, and it lists two `kind: cloud` nodes that name no `engineTokenEnv`
 - **THEN** the value of `SHARED_KEY` is the key both remotes are reached with
 
 #### Scenario: A per-node reference overrides the fleet-wide one
 
-- **WHEN** a `fleet.yaml` declares `apiKeyEnv: SHARED_KEY` and one remote node
+- **WHEN** a `fleet.yaml` declares `apiKeyEnv: SHARED_KEY` and one cloud node
   names `engineTokenEnv: SPECIAL_KEY`
 - **THEN** that node is reached with the value of `SPECIAL_KEY` and the other
   remotes with the value of `SHARED_KEY`
@@ -295,7 +295,7 @@ naming the variable, in the same way a missing engine-token variable is.
 #### Scenario: An unset fleet-wide variable names itself
 
 - **WHEN** a `fleet.yaml` declares an `apiKeyEnv` that is set nowhere, and a
-  remote node naming no key of its own is reached for its key
+  cloud node naming no key of its own is reached for its key
 - **THEN** the failure names that variable, and no agent is launched without a
   key
 
@@ -309,7 +309,7 @@ naming the variable, in the same way a missing engine-token variable is.
 
 A fleet-file node, of either kind, MAY declare a `file` field naming the
 Spinloop file that describes what it runs — the same file `spinloop fleet
-deploy` reads to create a `kind: remote` node's environment, and the same
+deploy` reads to create a `kind: cloud` node's environment, and the same
 file `spinloop fleet start` reads to tell a `kind: daemon` node's engine what
 to run. The path SHALL resolve relative to the fleet file's directory, the
 same way other Spinloop-relative paths in the project resolve. The field
@@ -318,9 +318,9 @@ SHALL NOT be required to parse a fleet file — every fleet command other than
 SHALL require it (directly or via the fallbacks below) for the nodes they
 act on; see fleet-client's "Driving one node" requirement.
 
-#### Scenario: A remote node names its Spinloop file
+#### Scenario: A cloud node names its Spinloop file
 
-- **WHEN** a `kind: remote` node declares `file: ./envs/gpu.Spinloop`
+- **WHEN** a `kind: cloud` node declares `file: ./envs/gpu.Spinloop`
 - **THEN** `spinloop fleet deploy` for that node reads the Spinloop at that
   path, resolved relative to the fleet file's directory, to derive what to
   deploy
@@ -344,14 +344,14 @@ A node declaring no `file` field SHALL have its Spinloop source resolved
 from its own `name`, tried in order:
 
 1. `name` resolved as a registered `spinloop alias` — the same lookup a bare
-   argument to `spinloop remote deploy <name>` already performs.
+   argument to `spinloop cloud deploy <name>` already performs.
 2. Failing that, a subdirectory named `<name>` beside the fleet file,
    containing a Spinloop file — the same directory-to-default-file
    resolution an ordinary Spinloop path argument already gets when it names
    a directory.
 
 A node for which neither resolves SHALL fail the command acting on it —
-`fleet deploy` for a `kind: remote` node, `fleet start` for a `kind: daemon`
+`fleet deploy` for a `kind: cloud` node, `fleet start` for a `kind: daemon`
 node — for that node alone, naming all three ways a source could have been
 given: the `file` field, a `spinloop alias` named after the node, or a
 `<name>/` subdirectory beside the fleet file.
@@ -360,7 +360,7 @@ given: the `file` field, a `spinloop alias` named after the node, or a
 
 - **WHEN** a node named `gpu-env` declares no `file` field, and `spinloop
   alias` has `gpu-env` registered to a Spinloop path
-- **THEN** `fleet deploy` (if `gpu-env` is `kind: remote`) or `fleet start`
+- **THEN** `fleet deploy` (if `gpu-env` is `kind: cloud`) or `fleet start`
   (if `kind: daemon`) reads the Spinloop the alias names
 
 #### Scenario: Resolved through a named subdirectory
@@ -368,7 +368,7 @@ given: the `file` field, a `spinloop alias` named after the node, or a
 - **WHEN** a node named `dev-1` declares no `file` field, no alias named
   `dev-1` is registered, and a `dev-1/` directory containing a Spinloop file
   sits beside the fleet file
-- **THEN** `fleet deploy` (if `dev-1` is `kind: remote`) or `fleet start` (if
+- **THEN** `fleet deploy` (if `dev-1` is `kind: cloud`) or `fleet start` (if
   `kind: daemon`) reads the Spinloop from that subdirectory
 
 #### Scenario: An alias wins over a same-named subdirectory
@@ -378,9 +378,9 @@ given: the `file` field, a `spinloop alias` named after the node, or a
   file also sits beside the fleet file
 - **THEN** the alias is used, not the subdirectory
 
-#### Scenario: None of the three resolve for a remote node
+#### Scenario: None of the three resolve for a cloud node
 
-- **WHEN** a `kind: remote` node declares no `file` field, no alias is
+- **WHEN** a `kind: cloud` node declares no `file` field, no alias is
   registered under its name, and no same-named subdirectory sits beside the
   fleet file
 - **THEN** `fleet deploy` fails for that node, naming the `file` field, the
@@ -460,11 +460,11 @@ shape as the fleet-wide setting. When a node names one, it decides whether
 that node may be woken, taking precedence over the fleet-wide setting for
 that node alone; a node naming none is governed by the fleet-wide setting as
 before. This exists because waking is not free the same way on every node: a
-remote environment's wake boots and pays for a cloud instance, unlike a local
+cloud environment's wake boots and pays for a cloud instance, unlike a local
 daemon's engine, so an operator may want the fleet's daemons to wake freely
-while deciding a remote node's waking on its own terms — opted in under a
+while deciding a cloud node's waking on its own terms — opted in under a
 fleet that otherwise does not wake, or opted out under one that does —
-without a second fleet-wide flag governing every remote node in the file
+without a second fleet-wide flag governing every cloud node in the file
 alike.
 
 A file declaring nothing at either level SHALL wake, as routing does when no
@@ -585,7 +585,7 @@ section SHALL behave exactly as it does today.
 
 A `--env <name>` target SHALL be a fleet holding exactly one node: a cloud
 node named by the flag, whose registered configuration is the one
-`remotes/<name>/remote.json` holds. It SHALL be driven, observed and rendered
+`clouds/<name>/cloud.json` holds. It SHALL be driven, observed and rendered
 exactly as the same node listed in a fleet file is, so a command's output for
 one environment does not depend on how that environment was named.
 

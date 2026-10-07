@@ -15,7 +15,7 @@ export const AMI_RUNNER_TAG_KEY = 'cloud-vm-llm:runner';
 /**
  * Configuration of the control plane only. Everything per-environment — the
  * model, the runner, the context size, the serve args, the allowed ingress
- * CIDR — arrives later via `spinloop remote deploy`, which creates environments
+ * CIDR — arrives later via `spinloop cloud deploy`, which creates environments
  * on top of this stack; none of it is stack configuration any more.
  */
 export interface LlmConfig {
@@ -23,7 +23,7 @@ export interface LlmConfig {
   /**
    * The spinloop version this control plane was deployed with. Every Lambda
    * reports it in a response header so the CLI can warn when it differs from
-   * its own. `spinloop remote bootstrap` supplies it; "dev" when unset.
+   * its own. `spinloop cloud bootstrap` supplies it; "dev" when unset.
    */
   controlPlaneVersion: string;
   /** Optional Hugging Face token, used only for the seeding of gated repos. */

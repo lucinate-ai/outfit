@@ -1,13 +1,13 @@
-# remote-version-reporting Specification
+# cloud-version-reporting Specification
 
 ## Purpose
-Reports the spinloop version running on a remote instance or fleet node so the operator can answer "is this node on the release I expect?" without SSH access.
+Reports the spinloop version running on a cloud instance or fleet node so the operator can answer "is this node on the release I expect?" without SSH access.
 
 ## Requirements
 
 ### Requirement: An environment's status shows version
 
-`spinloop status --env <name>` SHALL display the spinloop version running on the remote instance alongside its existing state, health, and base URL fields.
+`spinloop status --env <name>` SHALL display the spinloop version running on the cloud instance alongside its existing state, health, and base URL fields.
 
 #### Scenario: Version is shown when the instance is running
 
@@ -87,12 +87,12 @@ Every response from a control plane Lambda SHALL include the header `x-spinloop-
 
 ### Requirement: The CLI warns when the control plane version differs
 
-When a `spinloop remote` command receives a control plane response whose `x-spinloop-control-plane-version` differs from the CLI's own version, the CLI SHALL print a single warning to stderr naming both versions and suggesting `spinloop remote bootstrap`. The version SHALL be read from the response to the command's own request, with no extra call. The warning SHALL be printed at most once per process and SHALL NOT change the command's exit status or stdout.
+When a `spinloop cloud` command receives a control plane response whose `x-spinloop-control-plane-version` differs from the CLI's own version, the CLI SHALL print a single warning to stderr naming both versions and suggesting `spinloop cloud bootstrap`. The version SHALL be read from the response to the command's own request, with no extra call. The warning SHALL be printed at most once per process and SHALL NOT change the command's exit status or stdout.
 
 #### Scenario: Versions differ
 
 - **WHEN** the CLI is `1.30.0` and a control plane call returns the header `1.28.0`
-- **THEN** stderr gets one warning naming `1.30.0` and `1.28.0` and suggesting `spinloop remote bootstrap`
+- **THEN** stderr gets one warning naming `1.30.0` and `1.28.0` and suggesting `spinloop cloud bootstrap`
 - **AND** the command carries on and exits as it would have without the warning
 
 #### Scenario: Several calls in one command

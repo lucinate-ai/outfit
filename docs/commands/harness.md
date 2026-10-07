@@ -78,7 +78,7 @@ variable chooses which Spinloop, never whether you are configured. See
 
 `--env <name>` on its own — no leading alias or path, no `--spinloop`/`-O` —
 configures the harness from what is actually deployed to that
-[environment](remote.md), rather than doing nothing with the flag:
+[environment](cloud.md), rather than doing nothing with the flag:
 
 ```sh
 spinloop harness open --env dev-3 --prompt "..."   # configured from dev-3's deployment, then launched
@@ -89,8 +89,8 @@ the model, and its context size (when set) becomes the context window — the
 same result a Spinloop stating the matching `PROVIDER`/`ALIAS`/`CONTEXT` with
 `--env dev-3` would produce, without writing one. This is what makes the
 two-machine flow work: deploy from one machine
-(`spinloop remote deploy <spinloop> --env dev-3`), then on any machine that
-can reach the same environment — one that has its `remote.json` in the
+(`spinloop cloud deploy <spinloop> --env dev-3`), then on any machine that
+can reach the same environment — one that has its `cloud.json` in the
 registry, however it got there — run `spinloop harness open --env dev-3` with no
 Spinloop and get the same configuration, live, so a later redeploy is picked
 up automatically rather than requiring anyone to re-copy anything.
@@ -102,8 +102,8 @@ registered address.
 
 A bare `--env` against an environment with nothing deployed — or a control
 plane too old to report what is deployed — fails before launching, naming the
-environment and how to fix it: `spinloop remote deploy <spinloop> --env
-<name>` to deploy something, or `spinloop remote bootstrap` to update the
+environment and how to fix it: `spinloop cloud deploy <spinloop> --env
+<name>` to deploy something, or `spinloop cloud bootstrap` to update the
 control plane.
 
 ### Flags
@@ -112,7 +112,7 @@ control plane.
 | ---- | ------- |
 | `-H`, `--harness` | Which harness to launch (or set `SPINLOOP_HARNESS`) |
 | `-O`, `--spinloop` | Apply this Spinloop before launching (bare: `./Spinloop`) |
-| `-e`, `--env` | The registered [environment](remote.md) to launch against; with no Spinloop applied, configures the harness from what is deployed there — mutually exclusive with fleet routing, since each names where the model is served from |
+| `-e`, `--env` | The registered [environment](cloud.md) to launch against; with no Spinloop applied, configures the harness from what is deployed there — mutually exclusive with fleet routing, since each names where the model is served from |
 | `--providers` | Path to a custom catalogue, for the applied Spinloop |
 | `-f`, `--fleet` | Route through this fleet file (default: `./fleet.yaml`, when the Spinloop is not named) |
 | `--node` | Pin the launch to one fleet node |
@@ -138,7 +138,7 @@ spinloop harness open --prefer active -f fleet.yaml
 
 spinloop queries the fleet, prefers a node already serving the Spinloop's model,
 and points the launched agent at that node's engine — the same injection that
-carries a [remote environment](remote.md)'s endpoint address and key, with a
+carries a [cloud environment](cloud.md)'s endpoint address and key, with a
 selection step in front. It reports which node it chose, and why, before the
 agent starts.
 
@@ -303,7 +303,7 @@ opencode. After applying, just launch your agent — or do both at once with
 
 | Flag | Meaning |
 | ---- | ------- |
-| `-e`, `--env` | The registered [environment](remote.md) the Spinloop points at: names the harness provider and, with no `BASEURL`, supplies the endpoint's address |
+| `-e`, `--env` | The registered [environment](cloud.md) the Spinloop points at: names the harness provider and, with no `BASEURL`, supplies the endpoint's address |
 | `-o`, `--output` | Max output tokens — overrides the Spinloop's `OUTPUT` |
 | `-H`, `--harness` | Which harness to configure (or set `SPINLOOP_HARNESS`) |
 | `--providers` | Path to a custom catalogue (a Spinloop never names one) |
@@ -318,13 +318,13 @@ Notes:
 - A Spinloop's `PRESET` line is for [`spinloop serve`](serve.md); `apply`
   ignores it — never fetched, even when it's a URL.
 - With `--env <name>`, the Spinloop points at a registered
-  [environment](remote.md): the harness provider is keyed on the environment
+  [environment](cloud.md): the harness provider is keyed on the environment
   name (so several environments built from the same engine keep their own
   entries), and a Spinloop with no `BASEURL` takes the endpoint's address from
-  the environment's `remote.json` `base_url`, which its deployment writes. A
+  the environment's `cloud.json` `base_url`, which its deployment writes. A
   `BASEURL` in the Spinloop wins over it. An unregistered name fails, naming
-  the `spinloop remote deploy --env <name>` that would create it. Without
-  `--env`, apply reads no remote config at all.
+  the `spinloop cloud deploy --env <name>` that would create it. Without
+  `--env`, apply reads no cloud config at all.
 
 ## spinloop harness unapply
 

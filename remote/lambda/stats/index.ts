@@ -48,7 +48,7 @@ function retainUntilIfActive(instance: InstanceInfo | null): string | undefined 
 }
 
 /**
- * The stats Lambda called by `spinloop remote metrics`. The control plane
+ * The stats Lambda called by `spinloop cloud metrics`. The control plane
  * contributes what only it knows — environment, instance id/type, uptime
  * since launch — and everything measured (engine token counters, GPU, CPU,
  * RAM) comes from the on-instance spinloop daemon's /v1/metrics, fetched with
@@ -69,7 +69,7 @@ export async function handler(event: LambdaFunctionURLEvent): Promise<LambdaFunc
     deployConfig = await readDeployConfig(deployConfigParam(env));
   } catch (err) {
     return jsonResponse(400, {
-      error: `cannot read deploy config: ${(err as Error).message}. Run \`spinloop remote deploy\` first.`,
+      error: `cannot read deploy config: ${(err as Error).message}. Run \`spinloop cloud deploy\` first.`,
     });
   }
 

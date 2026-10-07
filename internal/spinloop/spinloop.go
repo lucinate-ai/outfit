@@ -23,7 +23,7 @@
 //
 // ENV sets an environment variable for the local `spinloop` process — the one
 // keyword that may appear more than once. It carries a single KEY=VALUE token
-// and is used by the remote commands (which read it before signing AWS calls);
+// and is used by the cloud commands (which read it before signing AWS calls);
 // it is local-only and never reaches a deployed instance.
 //
 // Keywords are matched case-insensitively, but UPPERCASE is canonical (it is
@@ -129,7 +129,7 @@ func Parse(data []byte) (Selection, error) {
 		if canon == "" {
 			if kw == "remote" {
 				return Selection{}, fmt.Errorf(
-					"line %d: the REMOTE instruction was removed: name the environment with `spinloop remote deploy --env <name>` at deploy time, and pass --env <name> to the commands that act on it (remote subcommands, apply, unapply, harness)",
+					"line %d: the REMOTE instruction was removed: name the environment with `spinloop cloud deploy --env <name>` at deploy time, and pass --env <name> to the commands that act on it (cloud subcommands, apply, unapply, harness)",
 					line)
 			}
 			return Selection{}, fmt.Errorf("line %d: unknown keyword %q (expected PROVIDER, MODEL, ALIAS, CONTEXT, OUTPUT, PARALLEL, BASEURL, PRESET, or ENV)", line, fields[0])

@@ -9,7 +9,7 @@ import (
 
 // followUntilInterrupted runs a polling loop under a context that an interrupt
 // cancels, and treats that cancellation as success — the user asking a follow
-// to stop is not a failure. Both `spinloop remote logs -f` and `spinloop fleet
+// to stop is not a failure. Both `spinloop cloud logs -f` and `spinloop fleet
 // logs -f` follow output this way, and the wiring is the part they genuinely
 // share: what they poll, and what they do with the answers, is different
 // enough that a common loop would fit neither.

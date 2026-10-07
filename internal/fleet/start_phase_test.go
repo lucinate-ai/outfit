@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spinloop-ai/spinloop/internal/remote"
+	"github.com/spinloop-ai/spinloop/internal/cloud"
 )
 
 // Every line a phase renders is computed from the phase and the time it is
@@ -63,12 +63,12 @@ func TestStartPhasesSeeding(t *testing.T) {
 	var got []StartPhase
 	progress, onState := StartPhases(func(p StartPhase) { got = append(got, p) })
 
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	onState(stateSeeding)
 	progress("seeding the weights (seed llamacpp--org-model--Q4_K_M); retrying in 60s")
 	// The next attempt supersedes nothing: it polls the fetch the seeding
 	// reply reported, and the reply that follows reports the same fetch.
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	onState(stateSeeding)
 
 	want := []StartPhaseKind{PhaseAttempting, PhaseSeeding}
@@ -110,11 +110,11 @@ func TestStartPhasesHandsTheSeedingOffToTheBoot(t *testing.T) {
 	var got []StartPhase
 	progress, onState := StartPhases(func(p StartPhase) { got = append(got, p) })
 
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	onState(stateSeeding)
 	progress("seeding the weights (seed llamacpp--org-model--Q4_K_M); retrying in 60s")
 	// The weights are in: the next reply reports the instance coming up.
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	onState("starting")
 	progress("instance starting; retrying in 5s")
 
@@ -141,7 +141,7 @@ func TestStartPhasesHandsTheSeedingOffToTheBoot(t *testing.T) {
 	}
 }
 
-// The mapping from remote.Start's two callbacks onto phases: an attempt goes
+// The mapping from cloud.Start's two callbacks onto phases: an attempt goes
 // out, is refused for capacity with a due time for the next one, and the
 // attempt that follows retires the refusal rather than leaving it standing
 // while the instance boots — the defect this phase stream exists for.
@@ -149,10 +149,10 @@ func TestStartPhasesRetiresACapacityWait(t *testing.T) {
 	var got []StartPhase
 	progress, onState := StartPhases(func(p StartPhase) { got = append(got, p) })
 
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	onState("no-capacity")
 	progress("instance no-capacity; retrying in 120s")
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 
 	kinds := make([]StartPhaseKind, len(got))
 	for i, p := range got {
@@ -185,10 +185,10 @@ func TestStartPhasesHoldsTheBootAcrossPolls(t *testing.T) {
 	var got []StartPhase
 	progress, onState := StartPhases(func(p StartPhase) { got = append(got, p) })
 
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	onState("starting")
 	progress("instance starting; retrying in 5s")
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	onState("starting")
 
 	if len(got) != 2 {
@@ -205,7 +205,7 @@ func TestStartPhasesReportsADroppedConnection(t *testing.T) {
 	var got []StartPhase
 	progress, onState := StartPhases(func(p StartPhase) { got = append(got, p) })
 
-	onState(remote.StateInFlight)
+	onState(cloud.StateInFlight)
 	progress("connection dropped (unexpected EOF); retrying in 5s")
 
 	last := got[len(got)-1]

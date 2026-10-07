@@ -1,6 +1,6 @@
 name: Remote deployment
 
-# The CDK project under remote/ that `spinloop remote` drives. It is TypeScript
+# The CDK project under remote/ that `spinloop cloud` drives. It is TypeScript
 # rather than Go, so it has its own workflow; the paths filter keeps it off
 # pull requests that do not touch it.
 on:

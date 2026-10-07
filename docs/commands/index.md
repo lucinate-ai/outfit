@@ -19,7 +19,7 @@ help` the usage summary.
 | [`spinloop gateway`](gateway.md) | Serve the fleet under one OpenAI-compatible endpoint |
 | [`spinloop orchestrator`](orchestrator.md) | Work a backlog of items against the fleet, at the fleet's declared pace |
 | [`spinloop work`](work.md) | Drive the orchestrator's work list from the shell: add, list, logs, abort, remove — or watch it live on `board` |
-| [`spinloop remote`](remote.md) | Run the model on a cloud GPU that stops when you do |
+| [`spinloop cloud`](cloud.md) | Run the model on a cloud GPU that stops when you do |
 | [`spinloop hf`](hf.md) | Write a `Spinloop` for a Hugging Face model, from its page reference |
 | [`spinloop alias`](alias.md) | Name a `Spinloop` so the name works anywhere a path does |
 | [`spinloop unalias`](unalias.md) | Drop a registered name |

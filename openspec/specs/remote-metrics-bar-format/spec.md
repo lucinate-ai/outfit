@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the bar graph output format for `spinloop remote metrics` with colour-coded resource utilization indicators.
+Define the bar graph output format for `spinloop cloud metrics` with colour-coded resource utilization indicators.
 
 ## Requirements
 
@@ -12,27 +12,27 @@ The system SHALL support a `--format=bar` option that renders each resource seri
 
 #### Scenario: Bar format displays CPU utilization
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` with a running instance that has CPU data and a retained history
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` with a running instance that has CPU data and a retained history
 - **THEN** the output includes a row labelled "CPU" whose glyphs are the sampled CPU utilisation across the window and whose trailing figure is the latest sample's percentage
 
 #### Scenario: Bar format displays RAM utilization
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` with a running instance that has memory data
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` with a running instance that has memory data
 - **THEN** the output includes a row labelled "RAM" whose glyphs are the sampled used/total memory ratio across the window and whose trailing figure is the latest ratio
 
 #### Scenario: Bar format displays GPU utilization
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` with a running instance that has GPU data whose readings carry a memory total
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` with a running instance that has GPU data whose readings carry a memory total
 - **THEN** the output includes rows labelled "GPU util" and "GPU mem" (or "GPU N util"/"GPU N mem" for multiple GPUs), each drawn from the retained history
 
 #### Scenario: Bar format omits a GPU memory series with no total
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` with GPU data whose current reading and retained history report no memory total
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` with GPU data whose current reading and retained history report no memory total
 - **THEN** the output includes "GPU util" and no "GPU mem" row
 
 #### Scenario: Bar format header line
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` with a running instance
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` with a running instance
 - **THEN** the first line shows the environment, state, instance type, and model ID separated by double spaces
 
 ### Requirement: Colour thresholds
@@ -60,7 +60,7 @@ The system SHALL use gauge format as the default output when no `--format` flag 
 
 #### Scenario: Default format is gauge
 
-- **WHEN** the user runs `spinloop remote metrics` without `--format`
+- **WHEN** the user runs `spinloop cloud metrics` without `--format`
 - **THEN** the output is in gauge format
 
 ### Requirement: Bar format with stopped instance
@@ -69,17 +69,17 @@ When the instance is not running, bar format SHALL show the header line with env
 
 #### Scenario: Stopped instance shows header only
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` and the instance is stopped with no retained history and no recorded activity
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` and the instance is stopped with no retained history and no recorded activity
 - **THEN** the output shows the header with state "stopped" and no resource series
 
 #### Scenario: Stopped instance still reports its last activity
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar`, the instance is stopped, and a last-active time is known
+- **WHEN** the user runs `spinloop cloud metrics --format=bar`, the instance is stopped, and a last-active time is known
 - **THEN** the output shows the header, the last-active line, and the series drawn from the retained history where one exists
 
 #### Scenario: Stopped instance shows its history
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` and the instance's engine has been stopped after running, with a retained history
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` and the instance's engine has been stopped after running, with a retained history
 - **THEN** the output shows the series as sparklines drawn from the readings taken before the stop, ending at the stop
 
 ### Requirement: Last-active line in bar format
@@ -95,7 +95,7 @@ than shown empty or zeroed.
 
 #### Scenario: The figure sits under the header
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` against a
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` against a
   running endpoint whose engine has served work
 - **THEN** the line after the header shows how long ago that was, and the
   resource bars follow it
@@ -111,17 +111,17 @@ The system SHALL support a `--format=gauge` option that renders each resource se
 
 #### Scenario: Gauge format displays CPU utilization
 
-- **WHEN** the user runs `spinloop remote metrics --format=gauge` with a running instance that has CPU data
+- **WHEN** the user runs `spinloop cloud metrics --format=gauge` with a running instance that has CPU data
 - **THEN** the output includes a gauge labelled "CPU" with filled and unfilled segments proportional to the current utilization
 
 #### Scenario: Gauge format displays GPU utilisation
 
-- **WHEN** the user runs `spinloop remote metrics --format=gauge` with a running instance that has GPU data whose readings carry a memory total
+- **WHEN** the user runs `spinloop cloud metrics --format=gauge` with a running instance that has GPU data whose readings carry a memory total
 - **THEN** the output includes gauges labelled "GPU util" and "GPU mem" (or "GPU N util"/"GPU N mem" for multiple GPUs)
 
 #### Scenario: Gauge omits a GPU memory gauge with no total
 
-- **WHEN** the user runs `spinloop remote metrics --format=gauge` with a GPU whose current reading reports no memory total
+- **WHEN** the user runs `spinloop cloud metrics --format=gauge` with a GPU whose current reading reports no memory total
 - **THEN** the output includes "GPU util" and no "GPU mem" gauge
 
 #### Scenario: Gauge colours the fill
@@ -139,7 +139,7 @@ Where the daemon reports no history — a daemon that predates the feature, or a
 
 #### Scenario: One-shot bar shows the daemon's window
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` without `--watch` against an engine that has been running
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` without `--watch` against an engine that has been running
 - **THEN** the output shows each series as a sparkline covering up to the last 10 minutes of the daemon's retained samples
 
 #### Scenario: More samples than width are downsampled
@@ -149,7 +149,7 @@ Where the daemon reports no history — a daemon that predates the feature, or a
 
 #### Scenario: No history falls back to the gauge drawing
 
-- **WHEN** the user runs `spinloop remote metrics --format=bar` against a daemon that reports no history
+- **WHEN** the user runs `spinloop cloud metrics --format=bar` against a daemon that reports no history
 - **THEN** each series is drawn from the current reading in the gauge's filled style
 
 ### Requirement: Sparkline never draws a full block

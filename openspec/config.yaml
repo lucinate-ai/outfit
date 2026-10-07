@@ -6,16 +6,16 @@ schema: spec-driven
 context: |
   spinloop is a Go CLI that configures a coding agent — a "harness" (opencode,
   Pi or lucinate) — to use a model provider, by deep-merging provider settings
-  into that harness's config; it also serves, fleets and remotely deploys local
+  into that harness's config; it also serves, fleets and deploys local
   inference engines.
 
   Tech stack: Go; domain logic in internal/ packages (catalog, config,
   contextsize, daemon, fleet, harness, lucinate, opencode, spinloop, spinloopsrc,
-  pi, preset, remote), CLI in cmd/spinloop on Cobra (command tree + pflag flags)
-  with Viper as the CLI-layer binding surface for SPINLOOP_ALIAS, SPINLOOP_REMOTE_*
-  and SPINLOOP_REMOTE_PACKAGE_MANAGER; shell tab completion is Cobra's own
+  pi, preset, cloud), CLI in cmd/spinloop on Cobra (command tree + pflag flags)
+  with Viper as the CLI-layer binding surface for SPINLOOP_ALIAS, SPINLOOP_CLOUD_*
+  and SPINLOOP_CLOUD_PACKAGE_MANAGER; shell tab completion is Cobra's own
   __complete engine plus the scripts it generates. The only AWS/network
-  dependency is aws-sdk-go-v2 in internal/remote. Providers/models are data in
+  dependency is aws-sdk-go-v2 in internal/cloud. Providers/models are data in
   internal/catalog/providers.yaml, not Go code.
 
   Conventions: keep test coverage >= 80% (go test ./... -cover); gofmt before

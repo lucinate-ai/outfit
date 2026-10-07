@@ -35,7 +35,7 @@ const DirEnvVar = "SPINLOOP_CONFIG_DIR"
 
 // Dir returns spinloop's config directory — the single root every file spinloop
 // owns resolves under (this package's config.json, and, via
-// internal/remote.ConfigHome, remote.json, the environment registry, the
+// internal/cloud.ConfigHome, cloud.json, the environment registry, the
 // daemon state dir and the CDK source cache). Resolution order:
 //
 //  1. SPINLOOP_CONFIG_DIR, used verbatim;

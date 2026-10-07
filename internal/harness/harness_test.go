@@ -158,7 +158,7 @@ func TestNamesAndLookup(t *testing.T) {
 	}
 }
 
-// A config written with no key for a remote endpoint succeeds and then fails on
+// A config written with no key for a cloud endpoint succeeds and then fails on
 // the first request, so it has to be called out at the time.
 func TestMissingKeyWarning(t *testing.T) {
 	keyed := &catalog.Provider{APIKeyEnv: "OPENAI_API_KEY"}
@@ -166,7 +166,7 @@ func TestMissingKeyWarning(t *testing.T) {
 	set := func(string) string { return "sk-test" }
 
 	if w := missingKeyWarning(keyed, "http://198.51.100.1:8000/v1", unset); w == "" {
-		t.Error("a remote endpoint with no key should warn")
+		t.Error("a cloud endpoint with no key should warn")
 	} else if !strings.Contains(w, "OPENAI_API_KEY") {
 		t.Errorf("the warning should name the variable to set, got %q", w)
 	}

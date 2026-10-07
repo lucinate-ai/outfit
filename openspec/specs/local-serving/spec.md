@@ -42,7 +42,7 @@ running SHALL be written to stderr there, since stdout is the view's screen.
 ### Requirement: Choosing the engine
 
 `spinloop serve` SHALL launch the inference engine the Spinloop's `PROVIDER` names,
-the local counterpart of the runner `spinloop remote deploy` selects from the same
+the local counterpart of the runner `spinloop cloud deploy` selects from the same
 instruction. `llamacpp` SHALL run `llama-server`; `omlx` SHALL run the oMLX CLI;
 `vllm` SHALL run `vllm serve`, with the model passed as its positional
 argument, the served name as `--served-model-name`, and the context window as
@@ -149,7 +149,7 @@ Spinloop was fetched from a URL — so the pair can travel together either way. 
 `PRESET` MAY itself be an absolute `http://`/`https://` URL regardless of
 where the Spinloop lives, in which case it is fetched over HTTP. Fetching a
 remote `PRESET` SHALL happen only when a command that consumes it (`spinloop
-serve`, `spinloop remote deploy`) actually builds its launch or deploy
+serve`, `spinloop cloud deploy`) actually builds its launch or deploy
 configuration — never merely because the Spinloop was read or applied. The
 preset's `[*]`/`[global]` section holds shared defaults; each named section is
 one model whose keys are server arguments with dashes stripped. The served
@@ -254,7 +254,7 @@ request slots, translated per engine so that `CONTEXT`'s meaning holds:
 A Spinloop stating no `PARALLEL` SHALL produce a command identical to one from
 before this capability existed, for all four engines. A `PARALLEL` value
 SHALL be validated as a positive integer at the point it is used (`serve`, a
-daemon-pushed config, or `remote deploy`); a value that is not SHALL fail
+daemon-pushed config, or `cloud deploy`); a value that is not SHALL fail
 naming the invalid value rather than being passed to the engine.
 
 When `CONTEXT` is supplied by a `PRESET` section's own `ctx-size` rather than

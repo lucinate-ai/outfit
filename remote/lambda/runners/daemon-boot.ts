@@ -10,7 +10,7 @@
 import type { DeployConfig } from '../shared/deploy-config';
 
 /**
- * Render the daemon's stored deploy config: the same shape `spinloop remote
+ * Render the daemon's stored deploy config: the same shape `spinloop cloud
  * deploy` produces, with the cloud-owned settings resolved in — the model as
  * the synced local path, the bind address and port, and the runner's key
  * delivery — so the daemon's ordinary start serves exactly what the old

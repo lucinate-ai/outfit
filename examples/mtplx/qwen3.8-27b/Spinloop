@@ -6,5 +6,5 @@ CONTEXT  32768            # --context-window; raise it on a bigger box
 PARALLEL 4                # --max-active-requests; the scheduler mode is in the preset
 PRESET   ./preset.ini     # `spinloop serve` launches `mtplx serve` from this
 # BASEURL http://127.0.0.1:8000/v1   # uncomment for a non-default host/port
-# `spinloop remote` cannot deploy this: mtplx is Apple-Silicon-only and has no
+# `spinloop cloud` cannot deploy this: mtplx is Apple-Silicon-only and has no
 # machine image to run it on a cloud GPU

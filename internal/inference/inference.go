@@ -5,7 +5,7 @@
 // It is deliberately a leaf — standard library only — so a node kind can be
 // described without depending on how any other kind is reached. What is
 // specific to reaching one kind stays with that kind: the AWS control plane in
-// internal/remote, the control API in internal/daemon.
+// internal/cloud, the control API in internal/daemon.
 package inference
 
 // DeployConfig is what the deploy Lambda accepts: the runner-neutral

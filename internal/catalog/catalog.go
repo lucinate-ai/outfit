@@ -242,12 +242,12 @@ func BuildProviderBlock(id string, p *Provider, modelOverride, baseURLOverride s
 	return block, defaultModel, nil
 }
 
-// RemoteProviderLabel is the display name for a harness provider that a remote
+// CloudProviderLabel is the display name for a harness provider that a remote
 // environment has renamed, so it reads distinctly from a local engine of the
 // same kind: the engine's display name qualified by the environment, e.g.
 // "llama.cpp (dev-2)". With no engine name it is the environment alone, which is
 // still unique — no local provider shares it.
-func RemoteProviderLabel(engine, env string) string {
+func CloudProviderLabel(engine, env string) string {
 	if engine == "" {
 		return env
 	}
@@ -341,7 +341,7 @@ func BuildPiProvider(id string, p *Provider, modelOverride, baseURLOverride stri
 	// remote one, and for the local server a reference to a variable set
 	// nowhere would hide the models. That exception is deliberately conditioned
 	// on the endpoint rather than only on the key, because a placeholder
-	// written for a remote endpoint could not be repaired by exporting the key
+	// written for a cloud endpoint could not be repaired by exporting the key
 	// afterwards — Pi would keep sending the placeholder.
 	switch {
 	case p.APIKeyEnv != "" && p.APIKeyOptional && resolve(p.APIKeyEnv) == "" && IsLocalEndpoint(prov.BaseURL):

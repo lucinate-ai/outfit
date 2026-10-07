@@ -44,9 +44,9 @@ func opencodeBlock(p *catalog.Provider, sel spinloop.Selection, contextWindow, o
 	if !setDefaultModel {
 		defaultModel = ""
 	}
-	// A remote selection renames the provider after its environment and carries a
+	// A cloud selection renames the provider after its environment and carries a
 	// display name to match; opencode's model picker lists providers by that
-	// name, so use it in place of the catalogue engine's name to tell the remote
+	// name, so use it in place of the catalogue engine's name to tell the cloud
 	// provider apart from a local engine of the same kind.
 	if sel.DisplayName != "" {
 		block["name"] = sel.DisplayName
@@ -281,7 +281,7 @@ func (lucinateHarness) Apply(p *catalog.Provider, sel spinloop.Selection, contex
 	}
 
 	// The connection's display name is the provider's, or the selection's display
-	// name for a remote endpoint, so it reads distinctly from a local engine of
+	// name for a cloud endpoint, so it reads distinctly from a local engine of
 	// the same kind — mirroring the opencode adapter.
 	name := p.Name
 	if name == "" {

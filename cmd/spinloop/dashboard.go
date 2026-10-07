@@ -21,12 +21,12 @@ resource gauges, the token counters — repainted on an interval. A single
 registered environment (--env) opens as a board of one.
 
 The view is read-only apart from four keys: s starts the selected node, k
-keeps a remote environment for a duration you type — it asks how long,
+keeps a cloud environment for a duration you type — it asks how long,
 pre-filled with 4h, and reports the deadline the control plane set when the
 keep is done — a abandons a start still in flight on it (the wait ends, the
 node is free again — a wake the cloud is carrying goes on), x stops it after
 a confirmation. The arrow keys move the selection, r forces a refresh, q or
-Ctrl+C leaves. The keep key shows only for a node that can be kept — a remote
+Ctrl+C leaves. The keep key shows only for a node that can be kept — a cloud
 environment — and a kept environment's tile and detail view carry its
 deadline beside the last-active line, whatever the engine's state.
 
