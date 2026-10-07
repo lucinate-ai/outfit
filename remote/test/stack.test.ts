@@ -484,30 +484,39 @@ describe('LlmStack (control plane)', () => {
     expect(JSON.stringify(terminate!.Condition)).toContain('cloud-vm-llm');
   });
 
-  it('lets only the start Lambda delete SSM parameters, and only the start lock', () => {
+  it('lets only the start and schedule Lambdas delete SSM parameters, each only its own', () => {
     const policies = template.findResources('AWS::IAM::Policy') as Record<string, any>;
-    const withDelete = Object.values(policies).filter((p) =>
+    const fns = template.findResources('AWS::Lambda::Function') as Record<string, any>;
+    const deleters = Object.values(policies).filter((p) =>
       (p.Properties.PolicyDocument.Statement as Statement[]).some((s) =>
         [s.Action].flat().includes('ssm:DeleteParameter'),
       ),
     );
-    expect(withDelete).toHaveLength(1);
+    expect(deleters).toHaveLength(2);
 
-    const statements = (withDelete[0].Properties.PolicyDocument.Statement as Statement[]).filter((s) =>
-      [s.Action].flat().includes('ssm:DeleteParameter'),
-    );
-    expect(statements).toHaveLength(1);
-    expect([statements[0].Action].flat()).toEqual(['ssm:DeleteParameter']);
-    const resources = JSON.stringify(statements[0].Resource);
-    expect(resources).toContain('parameter/cloud-vm-llm/*/wake-lock');
-    expect(resources).not.toContain('"*"');
+    // What each may delete, keyed by the Lambda the role belongs to. The Lambdas
+    // are told apart by settings only they are given: the AMI settings for the
+    // start Lambda, the schedule group for the schedule Lambda.
+    const deletable: Record<string, string> = {};
+    for (const policy of deleters) {
+      const statements = (policy.Properties.PolicyDocument.Statement as Statement[]).filter((s) =>
+        [s.Action].flat().includes('ssm:DeleteParameter'),
+      );
+      expect(statements).toHaveLength(1);
+      const resources = JSON.stringify(statements[0].Resource);
+      expect(resources).not.toContain('"*"');
+      const roleId = (policy.Properties.Roles as { Ref: string }[])[0].Ref;
+      const owner = Object.values(fns).find((f) => f.Properties.Role['Fn::GetAtt'][0] === roleId);
+      const vars = owner?.Properties.Environment.Variables ?? {};
+      const who = vars.AMI_ROLE_TAG_KEY ? 'start' : vars.SCHEDULE_GROUP ? 'schedule' : 'other';
+      deletable[who] = resources;
+    }
 
-    // The role it is attached to belongs to the start Lambda, found by the
-    // AMI settings only that Lambda is given.
-    const roleId = (withDelete[0].Properties.Roles as { Ref: string }[])[0].Ref;
-    const fns = template.findResources('AWS::Lambda::Function') as Record<string, any>;
-    const owner = Object.values(fns).find((f) => f.Properties.Role['Fn::GetAtt'][0] === roleId);
-    expect(owner?.Properties.Environment.Variables.AMI_ROLE_TAG_KEY).toBeDefined();
+    expect(Object.keys(deletable).sort()).toEqual(['schedule', 'start']);
+    expect(deletable.start).toContain('parameter/cloud-vm-llm/*/wake-lock');
+    expect(deletable.start).not.toContain('schedules');
+    expect(deletable.schedule).toContain('parameter/cloud-vm-llm/*/schedules');
+    expect(deletable.schedule).not.toContain('wake-lock');
   });
 
   it('passes the AMI role tag, weights bucket and subnet list to the start Lambda', () => {
