@@ -6,9 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [1.43.0] - 2026-10-07
 ### Added
-- feat: watch the work list on a live kanban board with `spinloop work board` (#246)
+- feat(metrics): report GPU utilisation on macOS
+- feat(remote): start and stop environments on cron schedules
+- feat(remote): warn when the control plane version differs (#257)
+- feat(work): retry a failed item from the shell and the board
+- feat(work): watch the work list on a live kanban board
+
+### Changed
+- build(deps): bump docker/setup-qemu-action in the github-actions group (#241)
+- build(deps): bump the go-dependencies group across 1 directory with 11 updates
+- build(deps): bump the go-dependencies group across 1 directory with 2 updates (#243)
+- build(deps): bump the go-dependencies group across 1 directory with 9 updates
+- docs(openspec): archive the scheduled-remote-start-stop change
+- docs(openspec): archive the wake-lock change
+- docs(openspec): end a start whose instance is stopped under it
+- docs(openspec): propose a per-environment lock on remote starts
+- docs(openspec): propose scheduled start and stop for remote environments
+- docs(openspec): state the purpose of the remote-schedule capability
+- docs(remote): document scheduled start and stop
+- docs: drop the CNAME file the workflow deploy never reads
+- refactor: rename the remote command group to cloud (#261)
+- test(daemon): stop reading the stub engine's argv before it is written
+- test(remote): cover schedule validation edges and failures after the list is stored
+
+### Fixed
+- fix(daemon): drain the engine's pseudo-terminal before closing it
+- fix(daemon): present a captured engine's stdout as a pseudo-terminal
+- fix(examples): build the docker fleets on Go 1.26 (#244)
+- fix(gateway): refuse over-limit request bodies with 413
+- fix(remote): give the schedule Lambda the control plane version
+- fix(remote): serialise starts of one environment with a lock
+- fix(remote): take the start lock on a scheduled start and scope the schedule grant
+- fix: report no requests figure where the engine exposes none (#247)
 
 ## [1.42.0] - 2026-09-20
 ### Added
